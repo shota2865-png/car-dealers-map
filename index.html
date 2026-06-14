@@ -1,0 +1,132 @@
+<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>test</title></head><body>test</body></html><!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中古車販売店 マップ</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif; background: #111; }
+    #header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+      background: linear-gradient(135deg, #0d1b2a 0%, #1b263b 60%, #415a77 100%);
+      padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.6);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    #header h1 { color: #e0e8ff; font-size: 17px; font-weight: 700; letter-spacing: 0.06em; }
+    #header .badge {
+      margin-left: auto; background: rgba(100,160,255,0.2);
+      color: #a8ccff; padding: 3px 11px; border-radius: 20px; font-size: 12px;
+      border: 1px solid rgba(100,160,255,0.3);
+    }
+    #map { position: absolute; top: 48px; bottom: 0; left: 0; right: 0; }
+    .leaflet-tooltip {
+      background: rgba(10, 20, 40, 0.93) !important;
+      border: 1px solid rgba(80, 160, 255, 0.5) !important;
+      border-radius: 10px !important; color: #e8f4ff !important;
+      font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif !important;
+      font-size: 13px !important; padding: 8px 13px !important;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.5) !important;
+      pointer-events: auto !important; max-width: 280px !important;
+    }
+    .leaflet-tooltip::before { border-top-color: rgba(80,160,255,0.5) !important; }
+    .tt-name { font-weight: 700; font-size: 14px; color: #fff; margin-bottom: 5px; }
+    .tt-hp { font-size: 11px; margin-top: 4px; }
+    .tt-hp a { color: #5bc0ff; text-decoration: none; border-bottom: 1px dashed rgba(91,192,255,0.4); word-break: break-all; }
+    .tt-hp a:hover { color: #9edcff; }
+    .tt-no-hp { color: rgba(180,200,230,0.5); font-size: 11px; margin-top: 3px; }
+    .leaflet-popup-content-wrapper {
+      background: linear-gradient(160deg, #0d1b2a 0%, #1b2a40 100%) !important;
+      border: 1px solid rgba(80,160,255,0.35) !important;
+      border-radius: 14px !important;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6) !important;
+      color: #e0e8ff !important; padding: 0 !important; overflow: hidden !important;
+    }
+    .leaflet-popup-content { margin: 0 !important; }
+    .popup-inner { padding: 16px 20px; min-width: 220px; }
+    .popup-cat { font-size: 10px; color: rgba(130,180,255,0.6); letter-spacing: 0.1em; margin-bottom: 4px; }
+    .popup-name { font-size: 17px; font-weight: 800; color: #fff; margin-bottom: 10px; }
+    .popup-addr { font-size: 12px; color: rgba(180,210,255,0.8); line-height: 1.7; border-top: 1px solid rgba(80,120,200,0.2); padding-top: 9px; margin-bottom: 10px; }
+    .popup-hp a { display: inline-block; background: rgba(60,140,255,0.2); border: 1px solid rgba(60,140,255,0.4); border-radius: 6px; color: #7ac8ff; font-size: 12px; padding: 5px 10px; text-decoration: none; word-break: break-all; }
+    .popup-hp a:hover { background: rgba(60,140,255,0.35); color: #b8e0ff; }
+    .popup-no-hp { font-size: 12px; color: rgba(150,170,200,0.4); }
+    .leaflet-popup-tip { background: #0d1b2a !important; }
+    .leaflet-popup-close-button { color: rgba(150,180,220,0.6) !important; top: 8px !important; right: 10px !important; font-size: 18px !important; }
+    .leaflet-control-zoom { border: none !important; box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important; margin: 12px !important; }
+    .leaflet-control-zoom a { background: rgba(10,25,50,0.88) !important; color: #a0c8ff !important; border: 1px solid rgba(80,140,220,0.35) !important; width: 34px !important; height: 34px !important; line-height: 34px !important; font-size: 18px !important; }
+    .leaflet-control-zoom a:hover { background: rgba(40,80,160,0.85) !important; color: #fff !important; }
+    #legend { position: fixed; bottom: 18px; right: 14px; z-index: 1000; background: rgba(10,20,40,0.9); border: 1px solid rgba(80,140,220,0.3); border-radius: 10px; padding: 10px 14px; color: rgba(160,200,255,0.75); font-size: 11px; line-height: 2; backdrop-filter: blur(10px); }
+    .leaflet-control-attribution { background: rgba(0,0,0,0.55) !important; color: rgba(200,220,255,0.5) !important; font-size: 10px !important; }
+    .leaflet-control-attribution a { color: rgba(120,180,255,0.7) !important; }
+  </style>
+</head>
+<body>
+<div id="header">
+  <span style="font-size:20px">🚗</span>
+  <h1>中古車販売店 — 全国マップ</h1>
+  <span class="badge">全 20 店舗</span>
+</div>
+<div id="map"></div>
+<div id="legend">
+  📍 ピンをクリック → 店舗詳細<br>
+  🖱️ カーソルを合わせる → 店舗名 &amp; HP<br>
+  🔍 スクロール ／ ＋－ → ズーム<br>
+  🔵 円 → 商圏エリア（半径）
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map', { center: [36.0, 136.5], zoom: 6, zoomControl: true });
+L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', { attribution: '© Google', maxZoom: 20, subdomains: ['mt0','mt1','mt2','mt3'] }).addTo(map);
+L.tileLayer('https://mt1.google.com/vt/lyrs=h&x={x}&y={y}&z={z}', { attribution: '', maxZoom: 20, opacity: 1.0, subdomains: ['mt0','mt1','mt2','mt3'] }).addTo(map);
+const zones = [
+  { lat: 35.17, lng: 136.91, r: 40000, color: '#ff6b6b' },
+  { lat: 34.81, lng: 137.43, r: 47000, color: '#ffa500' },
+  { lat: 33.79, lng: 132.92, r: 29000, color: '#ffd93d' },
+  { lat: 33.91, lng: 130.96, r: 32000, color: '#6bcb77' },
+  { lat: 34.41, lng: 132.46, r: 19000, color: '#4d96ff' },
+  { lat: 42.99, lng: 141.47, r: 28000, color: '#c77dff' },
+  { lat: 34.10, lng: 134.45, r: 20000, color: '#ff9ff3' },
+  { lat: 34.58, lng: 136.53, r: 40000, color: '#00d2ff' },
+  { lat: 34.69, lng: 135.49, r: 78000, color: '#ff758c' },
+  { lat: 33.40, lng: 130.50, r: 40000, color: '#74c69d' },
+  { lat: 35.74, lng: 139.53, r: 123000, color: '#fdcb6e' }
+];
+zones.forEach(z => L.circle([z.lat, z.lng], { radius: z.r, color: z.color, weight: 1.5, opacity: 0.7, fillColor: z.color, fillOpacity: 0.12, interactive: false }).addTo(map));
+function makeIcon() {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40"><defs><radialGradient id="pg" cx="38%" cy="32%"><stop offset="0%" stop-color="#a8d8ff"/><stop offset="100%" stop-color="#4d96ff"/></radialGradient><filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-opacity="0.55"/></filter></defs><path d="M15 1.5C7.82 1.5 2 7.32 2 14.5c0 9.5 13 24 13 24s13-14.5 13-24C28 7.32 22.18 1.5 15 1.5Z" fill="url(#pg)" filter="url(#sh)" stroke="rgba(255,255,255,0.35)" stroke-width="0.8"/><circle cx="15" cy="14.5" r="5.5" fill="rgba(255,255,255,0.92)"/><circle cx="15" cy="14.5" r="2.8" fill="#4d96ff"/></svg>';
+  return L.divIcon({ html: svg, iconSize:[30,40], iconAnchor:[15,40], popupAnchor:[0,-42], tooltipAnchor:[15,-26], className:'' });
+}
+const icon = makeIcon();
+const stores = [
+  { name: 'OBUCHI MOTORS', address: '埼玉県鶴ヶ島市脚折町１丁目１０－１', lat: 35.931, lng: 139.395, url: 'https://obuchi-motors.com/' },
+  { name: 'ドライブアーツ', address: '茨城県東茨城郡茨城町長岡１８０４－２', lat: 36.302, lng: 140.536, url: 'https://www.carsensor.net/shop/ibaraki/330540001/' },
+  { name: 'U-car春日井', address: '愛知県春日井市東野町九丁目２０番地の１', lat: 35.248, lng: 136.972, url: 'https://www.netzchubu.co.jp/shop/54' },
+  { name: 'レガーレ', address: '千葉県我孫子市台田３丁目３－１４', lat: 35.867, lng: 140.028, url: 'https://www.carsensor.net/shop/tokyo/311550018/' },
+  { name: 'ジャパンエムオート', address: '広島県広島市西区田方２丁目18-1', lat: 34.395, lng: 132.428, url: 'https://jmauto.net/' },
+  { name: 'エイトワークス', address: '愛媛県東温市47-1', lat: 33.770, lng: 132.875, url: 'https://www.carsensor.net/shop/ehime/308754001/' },
+  { name: 'ING', address: '兵庫県姫路市山吹２丁目12番40号', lat: 34.831, lng: 134.682, url: 'https://www.granfy-japan.com/' },
+  { name: 'ラビット昭和店', address: '愛知県名古屋市昭和区広路通1-10', lat: 35.140, lng: 136.928, url: 'https://www.e-rabbit.jp/shop/detail/9236/' },
+  { name: 'Prosperity 1', address: '兵庫県加古郡播磨町南大中3-2-11', lat: 34.718, lng: 134.868, url: 'https://prosperity1.co.jp/' },
+  { name: 'Hangarage', address: '愛知県名古屋市名東区高針１丁目１１０', lat: 35.173, lng: 137.052, url: 'https://www.hangarage.co.jp/' },
+  { name: 'ウエオカ', address: '徳島県吉野川市山川町中須賀２１－１', lat: 34.052, lng: 134.098, url: 'https://www.carsensor.net/shop/tokushima/303352002/' },
+  { name: 'エース・ネット 親鼻', address: '埼玉県秩父郡皆野町皆野1812-1', lat: 36.073, lng: 139.102, url: 'https://www.goo-net.com/usedcar_shop/3000367/detail.html' },
+  { name: 'Lemis', address: '大阪府松原市天美我堂2-250', lat: 34.572, lng: 135.552, url: 'https://www.lemis.jp/' },
+  { name: 'LOOP', address: '兵庫県西宮市甲子園高潮２－１９', lat: 34.722, lng: 135.352, url: 'http://www.loopcar.net/' },
+  { name: 'アートスポーツ大阪', address: '大阪府吹田市青葉丘北２８', lat: 34.772, lng: 135.512, url: 'https://www.artsports.co.jp/shopinfo' },
+  { name: '服部モータース本社', address: '愛知県東海市名和町一枚畑３０－１', lat: 35.022, lng: 136.872, url: 'https://hattorimotors.co.jp/' },
+  { name: 'ラビット横大路店', address: '京都府京都市伏見区横大路芝生４６－１', lat: 34.932, lng: 135.748, url: 'https://www.e-rabbit.jp/shop/detail/9335' },
+  { name: 'ラビット黒川店', address: '愛知県名古屋市北区田幡１丁目１１－２４', lat: 35.218, lng: 136.912, url: 'https://hattorimotors.co.jp/' },
+  { name: 'ラディカル', address: '福岡県那珂川市西隈1-19-14', lat: 33.518, lng: 130.418, url: 'https://www.carsensor.net/shop/fukuoka/302714001/' },
+  { name: 'ロッソ・アーレア', address: '北海道札幌市白石区中央２条3丁目1-5', lat: 43.053, lng: 141.382, url: 'https://www.carsensor.net/shop/hokkaido/310290001/' }
+];
+stores.forEach(s => {
+  const d = s.url ? s.url.replace(/^https?:\/\//, '').replace(/\/$/, '') : '';
+  const tt = '<div class="tt-name">🚗 ' + s.name + '</div>' + (s.url ? '<div class="tt-hp">🔗 <a href="' + s.url + '" target="_blank" rel="noopener">' + d + '</a></div>' : '<div class="tt-no-hp">ウェブサイト情報なし</div>');
+  const pp = '<div class="popup-inner"><div class="popup-cat">🚗 中古車販売店</div><div class="popup-name">' + s.name + '</div><div class="popup-addr">📍 ' + s.address + '</div>' + (s.url ? '<div class="popup-hp"><a href="' + s.url + '" target="_blank" rel="noopener">🔗 公式サイト・詳細を見る</a></div>' : '') + '</div>';
+  L.marker([s.lat, s.lng], { icon }).addTo(map).bindTooltip(tt, { direction: 'top', permanent: false, interactive: true, offset: [0,-6], opacity: 1.0 }).bindPopup(pp, { maxWidth: 300 });
+});
+</script>
+</body>
+</html>
