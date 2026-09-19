@@ -170,18 +170,29 @@ def palette_of(paths, colors=6):
 # ------------------------------------------------------------
 # 1本ぶんの計測
 # ------------------------------------------------------------
+# 動画の形式指定。YouTube は「映像+音声が1ファイル」の形式をほぼ出さなく
+# なったので、height>=360 のような単一ファイル指定は失敗する。
+# 解析に音声は要らないので、映像だけを取るのがいちばん確実で軽い。
+VIDEO_FORMATS = "bv*[height<=480]/b[height<=480]/bv*/b"
+
+
 def measure_video(url, index):
     d = WORK / f"v{index}"
     d.mkdir(parents=True, exist_ok=True)
-    cmd = ["--no-playlist", "--retries", "3", "--write-info-json",
-           "--write-subs", "--write-auto-subs", "--sub-langs", "ja,ja-orig,ja.*",
-           "--sub-format", "vtt/best", "--convert-subs", "vtt",
-           "--write-thumbnail", "--convert-thumbnails", "jpg",
-           "-o", str(d / "ref.%(ext)s")]
-    cmd += (["-f", "worst[height>=360]/worst"] if DEEP else ["--skip-download"])
-    r = ytdlp(*cmd, url)
+
+    # --- 1段目: メタデータと字幕だけ取る（形式の指定が要らないので必ず通る）---
+    r = ytdlp("--no-playlist", "--retries", "3", "--skip-download",
+              "--write-info-json",
+              "--write-subs", "--write-auto-subs", "--sub-langs", "ja,ja-orig,ja.*",
+              "--sub-format", "vtt/best", "--convert-subs", "vtt",
+              "--write-thumbnail", "--convert-thumbnails", "jpg",
+              "-o", str(d / "ref.%(ext)s"), url, timeout=600)
     if r.returncode != 0:
-        print(f"    取得失敗: {r.stderr.strip().splitlines()[-1][:120]}")
+        msg = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "不明"
+        if "members-only" in msg or "Join this channel" in msg:
+            print("    メンバー限定なので飛ばします")
+        else:
+            print(f"    取得失敗: {msg[:150]}")
         return None
 
     infos = list(d.glob("*.info.json"))
@@ -189,7 +200,8 @@ def measure_video(url, index):
         return None
     info = json.loads(infos[0].read_text(encoding="utf-8"))
     duration = float(info.get("duration") or 0)
-    out = {"title": info.get("title", "")[:40], "duration_min": round(duration / 60, 1),
+    out = {"title": info.get("title", "")[:40],
+           "duration_min": round(duration / 60, 1),
            "chapters": len(info.get("chapters") or [])}
 
     vtts = sorted(d.glob("*.vtt"))
@@ -197,38 +209,58 @@ def measure_video(url, index):
         cues = parse_vtt(vtts[0].read_text(encoding="utf-8"))
         text = "".join(t for _s, _e, t in cues)
         chars = len(re.sub(r"\s", "", text))
-        sents = [s for s in re.split(r"[。！？!?]", text) if s.strip()]
+        sents = [x for x in re.split(r"[。！？!?]", text) if x.strip()]
         out["chars_per_min"] = round(chars / (duration / 60)) if duration else 0
         out["avg_sentence_chars"] = (
-            round(statistics.mean(len(re.sub(r"\s", "", s)) for s in sents))
+            round(statistics.mean(len(re.sub(r"\s", "", x)) for x in sents))
             if sents else 0)
         out["sample"] = text[:120]
     else:
-        print("    字幕なし（映像だけ測ります）")
+        print("    字幕なし")
 
-    if DEEP:
-        vids = [f for f in d.iterdir() if f.suffix in (".mp4", ".webm", ".mkv")]
-        if vids and duration:
-            cuts = detect_cuts(vids[0])
-            shots, prev = [], 0.0
-            for t in cuts:
-                shots.append(t - prev)
-                prev = t
-            shots.append(duration - prev)
-            shots = [s for s in shots if s > 0]
-            out["cuts_per_min"] = round(len(cuts) / (duration / 60), 1)
-            out["median_shot_sec"] = round(statistics.median(shots), 1) if shots else 0
-            out["shots_over_6s_ratio"] = (
-                round(sum(1 for s in shots if s > 6) / len(shots), 2) if shots else 0)
-            frames = WORK / f"f{index}"
-            frames.mkdir(exist_ok=True)
-            run(["ffmpeg", "-y", "-hide_banner", "-i", str(vids[0]),
-                 "-vf", "fps=1/10,scale=320:-1", str(frames / "f_%03d.png")],
-                timeout=600)
-            fs = sorted(frames.glob("*.png"))
-            if fs:
-                out["colors"] = palette_of(fs)
-            vids[0].unlink(missing_ok=True)      # 容量を空ける
+    if not DEEP:
+        return out
+
+    # --- 2段目: 映像を取る。ここが失敗しても、上で取れた字幕は捨てない ---
+    rv = ytdlp("--no-playlist", "--retries", "3", "-f", VIDEO_FORMATS,
+               "--format-sort", "+size",
+               "-o", str(d / "vid.%(ext)s"), url, timeout=1800)
+    vids = [f for f in d.iterdir()
+            if f.name.startswith("vid.") and f.suffix in (".mp4", ".webm", ".mkv")]
+    if rv.returncode != 0 or not vids:
+        msg = rv.stderr.strip().splitlines()[-1] if rv.stderr.strip() else "不明"
+        print(f"    映像は取れませんでした（字幕の数値だけ使います）: {msg[:110]}")
+        # 何が取れるのかを一度だけ表示して、原因が分かるようにする
+        if index == 1:
+            lf = ytdlp("--no-playlist", "--list-formats", url, timeout=300)
+            head = [ln for ln in lf.stdout.splitlines() if ln.strip()][:12]
+            print("      利用できる形式（先頭12行）:")
+            for ln in head:
+                print("        " + ln[:110])
+        return out
+
+    if duration:
+        cuts = detect_cuts(vids[0])
+        shots, prev = [], 0.0
+        for t in cuts:
+            shots.append(t - prev)
+            prev = t
+        shots.append(duration - prev)
+        shots = [x for x in shots if x > 0]
+        out["cuts_per_min"] = round(len(cuts) / (duration / 60), 1)
+        out["median_shot_sec"] = round(statistics.median(shots), 1) if shots else 0
+        out["shots_over_6s_ratio"] = (
+            round(sum(1 for x in shots if x > 6) / len(shots), 2) if shots else 0)
+
+        frames = WORK / f"f{index}"
+        frames.mkdir(exist_ok=True)
+        run(["ffmpeg", "-y", "-hide_banner", "-i", str(vids[0]),
+             "-vf", "fps=1/10,scale=320:-1", str(frames / "f_%03d.png")],
+            timeout=600)
+        fs = sorted(frames.glob("*.png"))
+        if fs:
+            out["colors"] = palette_of(fs)
+        vids[0].unlink(missing_ok=True)      # 容量を空ける
     return out
 
 

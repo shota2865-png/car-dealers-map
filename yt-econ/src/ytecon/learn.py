@@ -165,11 +165,8 @@ def fetch(url: str, lang: str = "ja", deep: bool = False,
             "--write-thumbnail", "--convert-thumbnails", "jpg",
             "-o", str(out / "ref.%(ext)s"),
         ]
-        if deep:
-            # 解析にしか使わないので最低画質で十分。帯域と時間を節約する
-            cmd += ["-f", "worst[height>=360]/worstvideo[height>=360]+worstaudio/worst"]
-        else:
-            cmd += ["--skip-download"]
+        # 映像は別コマンドで取る。形式の指定で失敗しても字幕を失わないため
+        cmd += ["--skip-download"]
         cmd.append(url)
 
         try:
@@ -218,8 +215,21 @@ def fetch(url: str, lang: str = "ja", deep: bool = False,
         from . import analyze
 
         if deep and workdir:
+            # YouTube は「映像+音声が1ファイル」の形式をほぼ出さなくなったので、
+            # height>=360 のような単一ファイル指定は失敗する。解析に音声は
+            # 要らないため、映像だけを取るのがいちばん確実で軽い。
+            rv = subprocess.run(
+                [exe, "--no-playlist", "--retries", "3",
+                 "-f", "bv*[height<=480]/b[height<=480]/bv*/b",
+                 "--format-sort", "+size",
+                 "-o", str(out / "vid.%(ext)s"), url],
+                capture_output=True, text=True, timeout=timeout)
             videos = [f for f in out.iterdir()
-                      if f.suffix in (".mp4", ".webm", ".mkv")]
+                      if f.name.startswith("vid.")
+                      and f.suffix in (".mp4", ".webm", ".mkv")]
+            if rv.returncode != 0 and not videos:
+                log.warning("映像を取得できませんでした（字幕の数値だけ使います）: %s",
+                            (rv.stderr.strip().splitlines() or ["不明"])[-1][:120])
             if videos:
                 ref.visual = analyze.analyze_video(
                     videos[0], ref.duration, workdir / f"work_{_stable_id(url)}",
