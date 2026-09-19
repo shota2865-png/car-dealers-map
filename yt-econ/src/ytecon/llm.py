@@ -13,14 +13,28 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
-
-import anthropic
 
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-5"
 REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# どの経路で Claude を呼ぶか
+#   claude_code : claude -p を使う。すでに認証している枠を使うので
+#                 サブスクリプションなら台本生成に追加の請求が出ない
+#   api         : ANTHROPIC_API_KEY で直接叩く。トークン従量課金
+#   auto        : claude コマンドがあれば claude_code、無ければ api
+PROVIDER_ENV = "YTECON_LLM_PROVIDER"
+
+
+def _provider() -> str:
+    choice = os.environ.get(PROVIDER_ENV, "auto").lower()
+    if choice == "auto":
+        from . import llm_claudecode
+        return "claude_code" if llm_claudecode.available() else "api"
+    return choice
 
 # サーバサイド fallback が使えない環境（プロキシ/旧デプロイ）では
 # 1度 400 を食らった時点で以降は標準エンドポイントに切り替える
@@ -31,7 +45,13 @@ class LLMError(RuntimeError):
     pass
 
 
-def _client() -> anthropic.Anthropic:
+def _anthropic():
+    import anthropic
+    return anthropic
+
+
+def _client():
+    anthropic = _anthropic()
     # ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ant auth profile のいずれかを
     # SDK が自動解決する。明示的にキーを渡す必要はない。
     return anthropic.Anthropic()
@@ -51,7 +71,7 @@ def _final_message(client: anthropic.Anthropic, **kwargs: Any):
                 betas=[REFUSAL_FALLBACK_BETA], fallbacks="default", **kwargs
             ) as stream:
                 return stream.get_final_message()
-        except anthropic.BadRequestError as exc:
+        except _anthropic().BadRequestError as exc:
             if "fallback" not in str(exc).lower() and "beta" not in str(exc).lower():
                 raise
             log.warning("サーバサイドfallbackが使えないため標準経路に切替: %s", exc)
@@ -81,6 +101,9 @@ def complete_text(
     max_tokens: int = 32000,
 ) -> str:
     """自由記述のテキストを1回で得る."""
+    if _provider() == "claude_code":
+        from . import llm_claudecode
+        return llm_claudecode.complete_text(system, user, model=_cli_model(model))
     client = _client()
     message = _final_message(
         client,
@@ -105,6 +128,10 @@ def complete_json(
     max_tokens: int = 32000,
 ) -> dict[str, Any]:
     """JSON スキーマを強制して構造化データを得る."""
+    if _provider() == "claude_code":
+        from . import llm_claudecode
+        return llm_claudecode.complete_json(system, user, schema,
+                                            model=_cli_model(model))
     client = _client()
     message = _final_message(
         client,
@@ -126,6 +153,18 @@ def complete_json(
         return json.loads(text)
     except json.JSONDecodeError as exc:  # スキーマ強制下では基本起きない
         raise LLMError(f"JSON を解釈できませんでした: {exc}\n---\n{text[:500]}") from exc
+
+
+# CLI は API のモデルIDではなく別名を取る
+_CLI_MODEL_ALIAS = {
+    "claude-opus-5": "opus",
+    "claude-sonnet-5": "sonnet",
+    "claude-haiku-4-5": "haiku",
+}
+
+
+def _cli_model(model: str) -> str:
+    return _CLI_MODEL_ALIAS.get(model, model)
 
 
 def obj(props: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:

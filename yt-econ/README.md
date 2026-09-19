@@ -93,11 +93,18 @@ python -m ytecon learn https://youtu.be/xxxx https://youtu.be/yyyy https://youtu
 cd yt-econ
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-bash scripts/install_fonts.sh                        # 日本語フォント
+python scripts/install_fonts.py                      # 日本語フォント
 ```
 
 `ffmpeg` はシステムに無くても `imageio-ffmpeg`（requirements に同梱）の
 バイナリに自動で切り替わるので、sudo が使えない環境でも動きます。
+
+日本語フォントは Noto Sans JP の **Bold(700) と Black(900)** を入れます。
+システムに入っている IPAGothic は線が細く、動画のテロップだと潰れて読めません。
+本文・字幕は Bold、サムネと見出しは Black を使います。
+
+取得は npm の `@fontsource/noto-sans-jp` 経由で、woff2 を TTF に戻しています。
+Google Fonts に直接繋げない環境でも npm さえ通れば入ります。
 
 ### 2. 音声エンジンを立てる（無料）
 
@@ -106,9 +113,20 @@ bash scripts/start_voicevox.sh
 # = docker run --rm -p 50021:50021 voicevox/voicevox_engine:cpu-ubuntu20.04-latest
 ```
 
+既定の話者は **ずんだもん（ノーマル / 話者ID 3）** です。
+`python -m ytecon speakers` で一覧が出ます。
+
+**声を変えたら口調も変えてください。** ずんだもんの声で です・ます調 を
+読ませると、視聴者に強い違和感が出ます。`channel.speech_style` が
+`zundamon` のとき、台本の語尾が「〜のだ」調になります。
+`doctor` が両者の食い違いを警告します。
+
+口調は可愛くても中身は手を抜かない設計にしてあります（数字と出典はむしろ
+丁寧に出す）。そのギャップが差別化になるためです。
+語尾は3文に1回程度に留めています。毎文「のだ」だと音声が単調になります。
+
 VOICEVOX は商用利用可ですが、**キャラクター名のクレジット表記が必要**です。
-`python -m ytecon speakers` で話者一覧が出るので、選んだ話者名を
-概要欄に入れてください（`config/channel.yaml` の説明文に追記できます）。
+概要欄への記載は `metadata.py` が話者IDから自動で入れます。
 
 ### 3. 鍵を入れる
 
@@ -206,22 +224,40 @@ VOICEVOX は service コンテナとして起動するので、別途用意は�
 
 ---
 
-## 費用の目安（1日2本 = 月60本）
+## 費用（追加の課金が出ない構成にしてあります）
 
-| 項目 | 月額の目安 |
-|---|---|
-| Claude API（台本＋校閲＋メタデータ、1本あたり3〜5回の呼び出し） | 約 1,500〜4,000円 |
-| VOICEVOX | 0円 |
-| Pexels | 0円 |
-| YouTube Data API | 0円（1日2本ならクォータ内） |
-| 合計 | **月 2,000〜4,000円程度** |
+| 項目 | 手段 | 費用 |
+|---|---|---|
+| 台本・企画・メタデータ | `claude -p`（Claude Code の枠） | **サブスクの利用枠内** |
+| 音声 | VOICEVOX（ローカル） | 0円 |
+| 図表 | matplotlib | 0円 |
+| テロップ・カード | Pillow / Remotion | 0円 |
+| 写真 | Pexels 無料枠 | 0円 |
+| フォント | Noto Sans JP（OFL） | 0円 |
+| 動画合成 | ffmpeg | 0円 |
+| YouTube 投稿 | Data API v3 | 0円（1日2本ならクォータ内） |
 
-コストを下げたいときは `config/channel.yaml` の
-`script.effort` を `high` → `medium`、`script.fact_check` を `false` に。
-ただしファクトチェックを切ると収益化審査のリスクが上がるので、
-落とすなら effort のほうを先に落としてください。
+### 台本生成の課金を避ける仕組み
 
----
+`ANTHROPIC_API_KEY` で直接叩くとトークン従量課金になります。
+代わりに Claude Code の headless モード（`claude -p`）を使います。
+既定は `auto` で、`claude` コマンドがあれば自動でこちらを選びます。
+
+```bash
+YTECON_LLM_PROVIDER=auto          # 既定。claude があれば claude_code
+YTECON_LLM_PROVIDER=claude_code   # 強制
+YTECON_LLM_PROVIDER=api           # ANTHROPIC_API_KEY を使う（従量課金）
+```
+
+`python -m ytecon doctor` を実行すると、いまどちらの経路かが表示されます。
+
+> **正確に言うと** これは「どんな場合でも無料」ではありません。
+> Claude Code を**サブスクリプションで認証している**なら、台本生成のぶんは
+> プランの利用枠に含まれるので追加の請求が出ない、という意味です。
+> Claude Code 自体を API キーで認証しているなら、結局は従量課金になります。
+>
+> 呼び出しは毎回まっさらなセッションで行っています。会話履歴を引き継ぐと
+> コンテキストが膨らんで利用枠を無駄に食うためです。
 
 ## 品質を上げるつまみ
 
@@ -232,6 +268,7 @@ VOICEVOX は service コンテナとして起動するので、別途用意は�
 | 参考動画に寄せる | `ytecon learn <URL>` → `config/style.yaml` |
 | 話し方のトーンを手で変える | `channel.tone`（style.yaml があるとそちらが優先的に効く） |
 | 声を変える | `tts.voicevox.speaker`（`ytecon speakers` で一覧） |
+| 口調を変える | `channel.speech_style`（`plain` / `zundamon`） |
 | 尺を変える | `video.target_minutes_min/max` |
 | 尺がいつもズレる | `video.chars_per_minute`（実行ログに実測値が出ます） |
 | 配色を変える | `visuals.palette` |

@@ -25,18 +25,30 @@ from .script import Section, VideoScript
 
 log = logging.getLogger(__name__)
 
-# 日本語フォントの探索順（assets/fonts に置いたものを最優先）
-_FONT_CANDIDATES = [
-    "assets/fonts/NotoSansJP-Bold.otf",
-    "assets/fonts/NotoSansJP-Bold.ttf",
-    "assets/fonts/NotoSansCJKjp-Bold.otf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf",
-    "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
-    "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-    "C:/Windows/Fonts/meiryob.ttc",
-    "C:/Windows/Fonts/YuGothB.ttc",
-]
+# 日本語フォントの探索順（assets/fonts に置いたものを最優先）。
+# IPAGothic は線が細く、動画のテロップだと潰れて読めない。
+# 必ず Bold 以上を使うこと。scripts/install_fonts.py で用意できる。
+_FONT_CANDIDATES = {
+    # 本文・字幕・図表まわり
+    "bold": [
+        "assets/fonts/NotoSansJP-Bold.ttf",
+        "assets/fonts/NotoSansJP-Bold.otf",
+        "assets/fonts/NotoSansCJKjp-Bold.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+        "C:/Windows/Fonts/YuGothB.ttc",
+        "C:/Windows/Fonts/meiryob.ttc",
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",   # 最後の手段
+    ],
+    # サムネ・見出し。遠目でも読める太さが要る
+    "black": [
+        "assets/fonts/NotoSansJP-Black.ttf",
+        "assets/fonts/NotoSansJP-Black.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
+    ],
+}
 
 _font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
@@ -45,23 +57,28 @@ class AssetError(RuntimeError):
     pass
 
 
-def font_path(cfg: Config) -> str:
-    """使える日本語フォントのパスを返す."""
-    for cand in _FONT_CANDIDATES:
-        p = Path(cand)
-        if not p.is_absolute():
-            p = cfg.root / cand
-        if p.exists():
-            return str(p)
+def font_path(cfg: Config, weight: str = "bold") -> str:
+    """使える日本語フォントのパスを返す.
+
+    weight="black" はサムネと見出し用。無ければ bold に落ちる。
+    """
+    for candidates in (_FONT_CANDIDATES.get(weight, []),
+                       _FONT_CANDIDATES["bold"] if weight != "bold" else []):
+        for cand in candidates:
+            p = Path(cand)
+            if not p.is_absolute():
+                p = cfg.root / cand
+            if p.exists():
+                return str(p)
     raise AssetError(
         "日本語フォントが見つかりません。\n"
-        "  scripts/install_fonts.sh を実行するか、\n"
-        "  assets/fonts/NotoSansJP-Bold.otf を配置してください。"
+        "  python scripts/install_fonts.py\n"
+        "を実行するか、assets/fonts/NotoSansJP-Bold.ttf を配置してください。"
     )
 
 
-def load_font(cfg: Config, size: int) -> ImageFont.FreeTypeFont:
-    key = (font_path(cfg), size)
+def load_font(cfg: Config, size: int, weight: str = "bold") -> ImageFont.FreeTypeFont:
+    key = (font_path(cfg, weight), size)
     if key not in _font_cache:
         _font_cache[key] = ImageFont.truetype(key[0], size)
     return _font_cache[key]
@@ -125,7 +142,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
     d = ImageDraw.Draw(img)
 
     # 見出し
-    f_head = load_font(cfg, 76)
+    f_head = load_font(cfg, 76, "black")
     head_lines = _wrap(d, heading, f_head, w - 320)[:2]
     y = 230
     d.rectangle([150, y - 24, 150 + 10, y + 96 * len(head_lines) - 24], fill=pal["accent"])
@@ -313,7 +330,7 @@ def _overlay_heading(cfg: Config, image_path: Path, heading: str,
     pal = palette(cfg)
     img = Image.open(image_path).convert("RGB")
     d = ImageDraw.Draw(img)
-    f_head = load_font(cfg, 68)
+    f_head = load_font(cfg, 68, "black")
     lines = _wrap(d, heading, f_head, img.width - 360)[:2]
     y = 170
     d.rectangle([150, y - 16, 160, y + 88 * len(lines) - 16], fill=pal["accent"])
@@ -365,7 +382,7 @@ def build_title_card(cfg: Config, title: str, out: Path) -> Path:
     w, h = cfg.get("video.resolution", [1920, 1080])
     img = gradient((w, h), pal["surface"], pal["bg"])
     d = ImageDraw.Draw(img)
-    f = load_font(cfg, 92)
+    f = load_font(cfg, 92, "black")
     lines = _wrap(d, title, f, w - 300)[:3]
     total = len(lines) * 120
     y = (h - total) // 2
@@ -387,7 +404,7 @@ def build_outro_card(cfg: Config, out: Path) -> Path:
     w, h = cfg.get("video.resolution", [1920, 1080])
     img = gradient((w, h), pal["bg"], pal["surface"])
     d = ImageDraw.Draw(img)
-    f = load_font(cfg, 78)
+    f = load_font(cfg, 78, "black")
     for i, line in enumerate(["毎日 朝と夜に更新", "チャンネル登録で見逃しなく"]):
         tw = d.textlength(line, font=f)
         d.text(((w - tw) / 2, h / 2 - 110 + i * 120), line, font=f,

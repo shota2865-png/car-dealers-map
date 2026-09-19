@@ -93,9 +93,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ok = False
         print(f"[NG] 日本語フォント     {exc}")
 
+    # LLM の経路（ここが費用を左右する）
+    from .llm import _provider
+
+    provider = _provider()
+    if provider == "claude_code":
+        print(f"[ok] {'LLM 経路':16s} claude -p（Claude Code の枠を使う）")
+        print("     サブスク認証なら台本生成に追加の請求は出ません")
+    else:
+        print(f"[--] {'LLM 経路':16s} ANTHROPIC_API_KEY で直接（トークン従量課金）")
+        print("     claude コマンドを入れると課金経路を避けられます")
+
     # 鍵類
     checks = [
-        ("ANTHROPIC_API_KEY", True, "台本生成に必須"),
+        ("ANTHROPIC_API_KEY", False, "api 経路を使う場合のみ必要"),
         ("PEXELS_API_KEY", False, "無くても背景はグラデーションで出ます"),
         ("YOUTUBE_CLIENT_ID", False, "自動投稿するなら必要"),
         ("YOUTUBE_CLIENT_SECRET", False, "自動投稿するなら必要"),
@@ -117,7 +128,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         url = cfg.env("VOICEVOX_URL", "http://127.0.0.1:50021")
         try:
             r = requests.get(f"{url.rstrip('/')}/version", timeout=3)
-            print(f"[ok] VOICEVOX           {url} (v{r.text.strip()})")
+            from .metadata import _VOICEVOX_SPEAKERS
+            sid = int(cfg.get("tts.voicevox.speaker", 3))
+            name = _VOICEVOX_SPEAKERS.get(sid, f"話者ID {sid}")
+            print(f"[ok] VOICEVOX           {url} (v{r.text.strip()}) 話者: {name}")
+            style = cfg.get("channel.speech_style", "plain")
+            if sid in (1, 3, 5, 7, 22, 38) and style != "zundamon":
+                print("     [注意] ずんだもんの声なのに speech_style が "
+                      f"'{style}' です。台本が です・ます調 になり違和感が出ます")
         except Exception:
             ok = False
             print(f"[NG] VOICEVOX           {url} に繋がりません\n"

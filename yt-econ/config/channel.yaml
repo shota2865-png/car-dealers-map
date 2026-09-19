@@ -6,6 +6,11 @@ channel:
   name: "3分で腹落ち経済"          # 仮。お好みで
   # 誰に向けて話すか（台本のトーンを決める最重要パラメータ）
   audience: "高校生・大学生・20代のビジネスパーソン"
+  # 話者のキャラクター。台本の語尾がこれに合わせて変わる。
+  #   plain    : です・ます調（アナウンサー的）
+  #   zundamon : ずんだもん口調（〜のだ / 〜なのだ）
+  speech_style: "zundamon"
+
   # 守るべき語り口
   tone: |
     - 中学生でも分かる言葉に言い換える。専門用語は必ず初出で1文の言い換えを添える
@@ -112,11 +117,14 @@ tts:
   # voicevox | google
   provider: "voicevox"
   voicevox:
-    # 話者ID。1回 `python -m ytecon speakers` で一覧が見られる
-    speaker: 13          # 青山龍星 などお好みで
-    speed: 1.08
+    # 話者ID。`python -m ytecon speakers` で一覧が見られる
+    #   3 = ずんだもん ノーマル   1 = ずんだもん あまあま
+    #   7 = ずんだもん ツンツン   5 = ずんだもん セクシー
+    speaker: 3
+    # ずんだもんは少し速めのほうが聞きやすい
+    speed: 1.15
     pitch: 0.0
-    intonation: 1.1
+    intonation: 1.2
     # 文末の無音（秒）
     pause_sentence: 0.28
     pause_section: 0.65

@@ -128,6 +128,31 @@ def build_chapters(script: VideoScript, track: VoiceTrack) -> list[str]:
     return rows if len(rows) >= 3 else []
 
 
+# VOICEVOX は商用利用できるが、キャラクター名のクレジット表記が要る。
+# 表記が無いと規約違反になるので、概要欄に自動で入れる。
+_VOICEVOX_SPEAKERS = {
+    1: "ずんだもん（あまあま）", 3: "ずんだもん（ノーマル）",
+    5: "ずんだもん（セクシー）", 7: "ずんだもん（ツンツン）",
+    22: "ずんだもん（ささやき）", 38: "ずんだもん（ヒソヒソ）",
+    2: "四国めたん（ノーマル）", 8: "春日部つむぎ", 10: "雨晴はう",
+    13: "青山龍星", 11: "玄野武宏", 14: "冥鳴ひまり", 16: "九州そら",
+}
+
+
+def _voice_credit(cfg: Config) -> str:
+    """音声合成の使用明記とクレジット."""
+    provider = str(cfg.get("tts.provider", "")).lower()
+    if provider != "voicevox":
+        return "この動画のナレーションは音声合成を使用しています。"
+    speaker_id = int(cfg.get("tts.voicevox.speaker", 3))
+    name = _VOICEVOX_SPEAKERS.get(speaker_id, f"話者ID {speaker_id}")
+    return (
+        "この動画のナレーションは音声合成ソフト VOICEVOX を使用しています。\n"
+        f"VOICEVOX：{name}\n"
+        "https://voicevox.hiroshiba.jp/"
+    )
+
+
 def build(cfg: Config, script: VideoScript, track: VoiceTrack,
           title: str | None = None) -> Metadata:
     title = title or (script.title_candidates or [script.topic_title])[0]
@@ -154,7 +179,7 @@ def build(cfg: Config, script: VideoScript, track: VoiceTrack,
         "ご指摘いただけると助かります。"
     )
 
-    parts.append("■ 音声\nこの動画のナレーションは音声合成ソフトを使用しています。")
+    parts.append("■ 音声\n" + _voice_credit(cfg))
 
     description = "\n\n".join(p for p in parts if p.strip())[:MAX_DESCRIPTION]
 

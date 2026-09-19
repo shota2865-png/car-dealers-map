@@ -47,10 +47,10 @@ def build(cfg: Config, script: VideoScript, out: str | Path) -> Path:
     d.rectangle([0, 0, 18, SIZE[1]], fill=pal["accent"])
 
     # 主コピー: 1行12字前後、最大3行
-    f_main = load_font(cfg, 108)
+    f_main = load_font(cfg, 108, "black")
     lines = _wrap(d, main, f_main, SIZE[0] - 140)[:3]
     if len(lines) == 3:
-        f_main = load_font(cfg, 92)
+        f_main = load_font(cfg, 92, "black")
         lines = _wrap(d, main, f_main, SIZE[0] - 140)[:3]
     line_h = f_main.size + 16
     y = (SIZE[1] - line_h * len(lines)) // 2 - (40 if sub else 0)
@@ -61,7 +61,7 @@ def build(cfg: Config, script: VideoScript, out: str | Path) -> Path:
 
     # 補足コピー: 黄色の帯に黒文字で、視認性を上げる
     if sub:
-        f_sub = load_font(cfg, 54)
+        f_sub = load_font(cfg, 54, "black")
         sub = sub[:24]
         tw = d.textlength(sub, font=f_sub)
         pad = 22

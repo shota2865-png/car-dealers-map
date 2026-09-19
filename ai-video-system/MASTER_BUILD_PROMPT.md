@@ -253,8 +253,8 @@ Remotion 経路が動くまではフォールバックとして残し、
 | `chart` | 数値の推移・比較 | 無料（matplotlib） |
 | `motion_text` | 定義・3つのポイント・引用 | 無料（Remotion） |
 | `diagram` | 仕組み・フロー・因果 | 無料（Remotion） |
-| `ai_image` | 抽象概念・場所・雰囲気 | 安い |
-| `ai_video` | **hook と山場のみ** | 高い |
+| `pattern` | 図表・文字の下地 | 無料（自前生成） |
+| `photo` | 場所・雰囲気（多用しない） | 無料（Pexels） |
 
 **`ai_video` は1本あたり最大6カットまで**にハード制約をかけること。
 理由は次章。
@@ -267,135 +267,143 @@ Remotion 経路が動くまではフォールバックとして残し、
 3. 6秒を超える無変化区間があるプランを、検査が critical として弾くこと
 4. motion の継続中は変化とみなさないこと
    （ゆっくりズームだけで6秒ルールを満たせないことの確認）
-5. ai_video の本数が上限を超えたら、超過分が ai_image に降格されること
+5. 有料バックエンドが未設定でも、全シーンに背景が割り当てられること
 6. シーンの start/end が narration のタイムコードと矛盾しないこと
    （隙間・重なりが無い、合計が総尺と一致する）
 ```
 
 ---
 
-## 6. Phase 2 — 生成コストの制御（先に作る）
+## 6. Phase 2 — 費用ゼロで作る（設計の前提）
 
-**これを後回しにすると破産します。** 先に上限機構を作ってください。
+**このシステムは、追加の課金を一切発生させずに完成させます。**
+有料の画像生成・動画生成サービスは使いません。
 
-### 見積り
+理由は単純で、割に合わないからです。8分の動画を全部AI動画で埋めると
+1本あたり数千〜数万円、月60本なら月18万〜180万円になります。
+一方で、**視聴維持率を決めているのはAI動画の有無ではなく、
+画面が変化し続けているかどうか**です。そこはモーショングラフィックで
+足ります。金をかけるべき場所ではありません。
 
-8分 = 480秒。仮に全編を5秒のAI動画で埋めると 96カット。
-1カット 30〜300円とすると、**1本あたり 3,000〜30,000円**。
-1日2本・月60本なら **月18万〜180万円**。成立しません。
+### 使える素材と、その費用
 
-現実的な配分（1本あたり）:
+| 種別 | 手段 | 費用 |
+|---|---|---|
+| 図表 | matplotlib（既存の `assets.py`） | 0円 |
+| モーションテキスト | Remotion | 0円 |
+| 図解・ダイアグラム | Remotion（SVG を組む） | 0円 |
+| 手続き的な背景 | グラデーション・幾何パターンを自前生成 | 0円 |
+| 写真 | Pexels API（無料枠） | 0円 |
+| 音声 | VOICEVOX（ローカル） | 0円 |
+| フォント | Noto Sans JP（OFL） | 0円 |
+| 台本・企画 | `claude -p`（後述） | サブスクの枠内 |
 
-| 種別 | 本数 | 単価目安 | 小計 |
-|---|---|---|---|
-| AI動画 | 4カット | 100円 | 400円 |
-| AI画像 | 20枚 | 10円 | 200円 |
-| 図表 | 6枚 | 0円 | 0円 |
-| モーション/テキスト | 10枚 | 0円 | 0円 |
-| 台本・企画（Claude） | — | — | 50〜120円 |
-| 音声（VOICEVOX） | — | 0円 | 0円 |
-| **合計** | | | **約 650〜750円/本** |
+### 台本生成の費用をゼロにする
 
-月60本で **約4万円**。ここが上限ラインです。
+`ANTHROPIC_API_KEY` で直接叩くとトークン従量課金になります。
+代わりに **Claude Code の headless モード**を使ってください。
 
-### 実装するもの
-
-`yt-econ/src/ytecon/budget.py`
-
-```python
-class Budget:
-    """1本あたり・1日あたりの生成コスト上限を管理する。
-
-    超過したら例外ではなく**より安い種別に降格**させる。
-    パイプラインを止めるより、絵が少し地味になるほうがましなため。
-    """
-    def reserve(self, kind: str, count: int = 1) -> bool: ...
-    def downgrade(self, kind: str) -> str: ...   # ai_video -> ai_image -> motion_text
-    def report(self) -> dict: ...
+```bash
+claude -p "<プロンプト>" --output-format json --model sonnet \
+  --max-turns 1 --session-id <毎回新しいUUID> \
+  --disallowedTools Bash Edit Write Read Glob Grep WebFetch WebSearch Task \
+  --strict-mcp-config
 ```
 
-`presets/budget.json`
+`yt-econ/src/ytecon/llm_claudecode.py` に実装済みです。
+`YTECON_LLM_PROVIDER=claude_code`（既定は `auto` で、`claude` コマンドが
+あれば自動でこちら）。
 
-```json
-{
-  "per_video_jpy": 800,
-  "per_day_jpy": 2000,
-  "unit_cost_jpy": {"ai_video": 100, "ai_image": 10, "chart": 0, "motion_text": 0, "diagram": 0},
-  "max_ai_video_per_video": 6,
-  "on_exceed": "downgrade"
-}
-```
+**正確に言うと:** これは「どんな場合でも無料」ではありません。
+Claude Code をサブスクリプションで認証しているなら、台本生成のぶんは
+プランの利用枠に含まれるので追加の請求が出ない、という意味です。
+Claude Code 自体を API キーで認証しているなら、結局は従量課金です。
 
-### 生成物のキャッシュ
+呼び出しは毎回まっさらなセッションで行ってください。
+プロジェクトの会話履歴を引き継ぐと、コンテキストが膨らんで利用枠を無駄に食います。
 
-**同じプロンプトで二度生成しない。**
-`cache_key = sha256(provider + model + prompt + negative + seed + size)` で
-`assets/generated/` に保存し、再実行時は再利用します。
-これが無いと、パイプラインを1回やり直すたびに満額かかります。
+### 有料サービスを足したくなったら
 
-### 受け入れテスト
-
-```
-1. per_video_jpy を超える計画が、ai_video → ai_image に降格されること
-2. 降格しても scene_plan の整合が壊れないこと
-3. 同じプロンプトで2回呼んでも、生成が1回しか走らないこと（キャッシュ）
-4. プロンプトが1文字違えばキャッシュが効かないこと
-5. budget.report() が種別ごとの内訳を返すこと
-```
-
----
-
-## 7. Phase 3 — 画像・動画生成のバックエンド
-
-`yt-econ/src/ytecon/generate/` に、差し替え可能な形で実装する。
+`generate/` に `ImageBackend` / `VideoBackend` のインターフェースだけ
+用意しておき、**既定では未設定**にしてください。
+無料素材だけで動画が完成することが先で、生成AIは後から差せる飾りです。
 
 ```python
 class ImageBackend(Protocol):
-    def generate(self, prompt: str, *, negative: str, size: tuple[int, int],
-                 seed: int | None) -> Path: ...
-
-class VideoBackend(Protocol):
-    def generate(self, prompt: str, *, seconds: float, size: tuple[int, int],
-                 first_frame: Path | None) -> Path: ...
+    def generate(self, prompt: str, *, negative: str,
+                 size: tuple[int, int], seed: int | None) -> Path: ...
 ```
 
-**具体的なサービス名を仕様に固定しません。** 価格も API も変わるためです。
-`backends/` に実装を置き、`presets/generation.json` で選択させてください。
-未設定なら、図表とモーションテキストだけで成立するようにフォールバックします
-（**生成AIが使えなくても動画は完成する**こと）。
-
-### 一貫性の維持
-
-**毎回バラバラの絵柄になると、チャンネルとして見えません。**
-
-- `presets/brand.json` の `image_style` を全プロンプトの末尾に必ず付ける
-- 同一動画内はシード固定またはシード連番にする
-- 人物の顔を生成しない（不気味の谷・肖像の問題を避ける）
-  → `negative_prompt` に必ず含める
-- 文字を画像内に生成させない（日本語がまず崩れる）
-  → テキストは必ず Remotion 側で載せる
-
-```json
-{
-  "image_style": "minimal isometric editorial illustration, dark navy #0E1525 background, cyan #4CC2FF and amber #FFC857 accents, flat vector, generous negative space, no text, no human faces",
-  "negative_prompt": "text, letters, watermark, logo, human face, portrait, photorealistic skin, cluttered",
-  "aspect": "16:9"
-}
-```
+未設定時は、そのシーンを `chart` / `motion_text` / `diagram` に自動で
+振り替えます。**バックエンドが1つも無くても QC を通る動画ができること**を
+受け入れテストで保証してください。
 
 ### 受け入れテスト
 
 ```
-1. バックエンド未設定でも scene_plan が成立し、動画が完成すること
-   （全シーンが chart / motion_text / diagram に降格される）
-2. 生成プロンプトに image_style と negative_prompt が必ず付くこと
-3. 生成失敗時に、そのシーンだけ motion_text に降格して続行すること
-   （1シーンの失敗でパイプライン全体を止めない）
+1. 画像・動画生成バックエンドを一切設定せずに、動画が完成すること
+2. そのとき QC の critical が 0 件であること（特に6秒ルールを満たすこと）
+3. YTECON_LLM_PROVIDER=claude_code で台本が生成できること
+4. claude コマンドが無い環境では api 経路に自動で落ちること
+5. Pexels のキーが無くても、手続き的な背景で成立すること
 ```
 
-**3 は重要です。** 生成APIは普通に失敗します。
+**2 が肝です。** 「無料素材だけだと画面が持たない」なら設計が負けています。
+モーショングラフィックで6秒ルールを満たせることを、ここで証明してください。
 
 ---
+
+## 7. Phase 3 — 無料素材で画面を作る
+
+有料生成を使わないぶん、**Remotion 側の作り込みが全てになります。**
+
+### 背景の種別（すべて無料）
+
+| kind | 中身 | 使いどころ |
+|---|---|---|
+| `chart` | matplotlib の図表 | 数値の推移・比較 |
+| `motion_text` | Remotion。文字が主役 | 定義・3つのポイント・引用 |
+| `diagram` | Remotion。箱と矢印を組む | 仕組み・フロー・因果関係 |
+| `pattern` | 手続き的に生成する幾何背景 | 上記を置く下地 |
+| `photo` | Pexels | 場所・雰囲気（多用しない） |
+
+**`photo` に頼らないこと。** ストック写真は内容と無関係なことが多く、
+連発すると安っぽく見えます。**図解とモーションテキストが主役**です。
+経済の解説は元々「目に見えないものを説明する」ので、写真より図のほうが合います。
+
+### 手続き的背景
+
+`pattern` は Remotion で自前生成します。ライセンスも費用も発生しません。
+
+- グラデーション（`brand.json` の2色を補間）
+- 等間隔のグリッド / ドット（ゆっくり流す）
+- 同心円・斜線などの幾何パターン（低コントラストで背景に置く）
+- 図表の下地として使うと、白背景より締まって見えます
+
+### 図解（diagram）を主力にする
+
+経済の話は**因果**が本体です。箱と矢印で描けるものが多い。
+
+```
+[米の金利上昇] ──→ [ドルが買われる] ──→ [円安] ──→ [輸入品が高くなる]
+```
+
+これを Remotion で**1要素ずつ順に出す**と、それだけで変化イベントが4回稼げます。
+`Diagram` コンポーネントは次を受け取れるようにしてください。
+
+```json
+{
+  "type": "diagram",
+  "props": {
+    "nodes": [{"id": "a", "label": "米の金利上昇"}, {"id": "b", "label": "ドルが買われる"}],
+    "edges": [{"from": "a", "to": "b", "label": ""}],
+    "layout": "horizontal",
+    "reveal": "sequential"
+  }
+}
+```
+
+**`reveal: "sequential"` が6秒ルールを満たす主力です。**
 
 ## 8. Phase 4 — Remotion モーショングラフィック
 
