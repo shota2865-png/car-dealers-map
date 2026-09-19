@@ -7,7 +7,7 @@
 #  使い方:
 #    1. ▶ を押す
 #    2. ファイルを選ぶ画面が出たら ytecon_colab.zip を選ぶ
-#    3. 待つ（VOICEVOX を使う場合は15〜25分、使わない場合は5分ほど）
+#    3. 待つ（VOICEVOX を使う場合は初回15〜20分・2回目以降8分ほど、使わない場合は5分ほど）
 #    4. できた mp4 が自動でダウンロードされる
 # ============================================================
 
@@ -71,45 +71,101 @@ sh([sys.executable, "-m", "pip", "install", "-q",
 # ------------------------------------------------------------
 if USE_VOICEVOX:
     print("③ VOICEVOX（ずんだもんの声）を用意します")
-    vv_dir = (CACHE / "voicevox") if CACHE else (WORK / "vv")
-    runs = list(vv_dir.glob("**/run")) if vv_dir.exists() else []
-    if runs:
-        print("   Drive に保存済みのものを使います（速い）")
-    else:
-        print("   初回なので取得します（10〜15分。次回からは不要）")
-        sh("apt-get install -y -qq p7zip-full")
-        r = sh("curl -sL https://api.github.com/repos/VOICEVOX/voicevox_engine/releases/latest"
-               " | grep browser_download_url | grep linux-cpu-x64 | cut -d'\"' -f4")
-        urls = sorted(u.strip() for u in r.stdout.splitlines() if u.strip())
-        if urls:
-            print(f"   {len(urls)} 個のファイルを取得します")
-            for u in urls:
-                sh(f"curl -fsSL -O '{u}'")
-            vv_dir.mkdir(parents=True, exist_ok=True)
-            first = sorted(Path(".").glob("*.7z.001"))
-            if first:
-                sh(f"7z x '{first[0]}' -o'{vv_dir}' -y")
+    import shutil
+    REPO = "VOICEVOX/voicevox_engine"
+    local_vv = WORK / "vv"
+    parts_cache = (CACHE / "voicevox_parts") if CACHE else None   # Drive には圧縮ファイルだけ置く
+
+    def _fail(msg, r=None):
+        print("   ✗", msg)
+        if r is not None and (r.stderr or "").strip():
+            print("     ", (r.stderr or "").strip().splitlines()[-1][:200])
+
+    def _resolve_version():
+        """最新版の番号を取る。GitHub API は Colab から使えないことが多いので、
+        まず /releases/latest のリダイレクト先から読む."""
+        r = sh(f"curl -sIL -o /dev/null -w '%{{url_effective}}' https://github.com/{REPO}/releases/latest")
+        tag = r.stdout.strip().rstrip("/").rsplit("/", 1)[-1]
+        if tag and tag[0].isdigit():
+            return tag
+        r = sh(f"curl -sL https://api.github.com/repos/{REPO}/releases/latest")
+        import json as _json
+        try:
+            return _json.loads(r.stdout)["tag_name"]
+        except Exception:
+            return None
+
+    def _download_parts(tag, dest):
+        """linux-cpu-x64 の 7z 分割ファイルを 001 から順に落とす（無くなるまで）."""
+        dest.mkdir(parents=True, exist_ok=True)
+        base = f"https://github.com/{REPO}/releases/download/{tag}/voicevox_engine-linux-cpu-x64-{tag}.7z"
+        got = []
+        for i in range(1, 40):
+            name = f"voicevox_engine-linux-cpu-x64-{tag}.7z.{i:03d}"
+            out = dest / name
+            if out.exists() and out.stat().st_size > 1_000_000:
+                got.append(out)
+                continue
+            r = sh(f"curl -fL --retry 3 --retry-delay 3 -o '{out}' '{base}.{i:03d}'")
+            if r.returncode != 0 or not out.exists() or out.stat().st_size < 1_000_000:
+                if out.exists():
+                    out.unlink()
+                if i == 1:
+                    _fail(f"ダウンロードできませんでした: {base}.001", r)
+                break
+            got.append(out)
+            print(f"   取得 {name}（{out.stat().st_size / 1e6:.0f} MB）")
+        return got
+
+    def _extract(parts, dest):
+        if shutil.which("7z") is None:
+            sh("apt-get install -y -qq p7zip-full")
+        exe = shutil.which("7z") or shutil.which("7za") or shutil.which("7zr")
+        if exe is None:
+            _fail("7z が入れられませんでした")
+            return False
+        dest.mkdir(parents=True, exist_ok=True)
+        r = sh(f"'{exe}' x '{parts[0]}' -o'{dest}' -y")
+        if r.returncode != 0:
+            _fail("展開に失敗しました", r)
+            return False
+        return True
+
+    runs = list(local_vv.glob("**/run")) if local_vv.exists() else []
+    if not runs:
+        parts = []
+        if parts_cache and parts_cache.exists():
+            cached = sorted(parts_cache.glob("*.7z.001"))
+            if cached:
+                print("   Drive に保存済みの圧縮ファイルを使います（速い）")
+                parts = sorted(parts_cache.glob(cached[0].name[:-4] + ".*"))
+        if not parts:
+            tag = _resolve_version()
+            if not tag:
+                _fail("最新版の番号が分かりませんでした（GitHub に届いていない可能性）")
             else:
-                for z in Path(".").glob("*.zip"):
-                    sh(f"unzip -qo '{z}' -d '{vv_dir}'")
-            for part in Path(".").glob("*.7z.*"):
-                part.unlink()
-        runs = list(vv_dir.glob("**/run")) if vv_dir.exists() else []
-    if runs and CACHE:
-        # Drive 上から直接起動すると遅いので、ローカルに複製してから起動する
-        import shutil
-        local_vv = WORK / "vv"
-        if not local_vv.exists():
-            print("   ローカルに展開しています…")
-            shutil.copytree(runs[0].parent, local_vv)
-        runs = list(local_vv.glob("**/run"))
+                print(f"   初回なので取得します（版 {tag}。1.5GB ほど、3〜10分）")
+                parts = _download_parts(tag, WORK / "vv_parts")
+                if parts and parts_cache:
+                    print("   次回のために Drive へ保存しています…")
+                    parts_cache.mkdir(parents=True, exist_ok=True)
+                    for pth in parts:
+                        shutil.copy2(pth, parts_cache / pth.name)
+        if parts:
+            print("   展開しています（1〜3分）…")
+            if _extract(parts, local_vv):
+                runs = list(local_vv.glob("**/run"))
+                if not runs:
+                    _fail("展開はできましたが起動ファイル(run)が見つかりません")
     if runs:
         sh(f"chmod +x '{runs[0]}'")
+        vv_log = open(WORK / "voicevox.log", "w")
         subprocess.Popen([str(runs[0]), "--host", "127.0.0.1", "--port", "50021"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stdout=vv_log, stderr=subprocess.STDOUT)
         print("   起動を待っています…")
     else:
         print("   VOICEVOX を用意できませんでした（代替の音声で続けます）")
+        print("   ↑ うまくいかない場合は、この上に出た ✗ の行をそのまま貼ってください")
 
     import requests
     for _ in range(60):
@@ -121,6 +177,11 @@ if USE_VOICEVOX:
             time.sleep(5)
     else:
         print("   起動しませんでした → 代替の音声に切り替えます")
+        log_p = WORK / "voicevox.log"
+        if log_p.exists():
+            print("   起動ログ(末尾):")
+            for ln in log_p.read_text(errors="ignore").splitlines()[-8:]:
+                print("     ", ln[:200])
 else:
     print("③ VOICEVOX は使いません（代替の音声で進めます）")
 
