@@ -221,7 +221,7 @@ def cmd_learn(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     out = learn(cfg, args.urls, out=Path(args.out) if args.out else None,
-                lang=args.lang)
+                lang=args.lang, deep=args.deep, per_channel=args.per_channel)
 
     style = load_style(cfg) or {}
     measured = style.get("measured", {})
@@ -238,6 +238,17 @@ def cmd_learn(args: argparse.Namespace) -> int:
         print(f"\n  語り口: {voice['summary']}")
     if voice.get("opening_pattern"):
         print(f"  導入の型: {voice['opening_pattern']}")
+    visual = style.get("visual", {})
+    if visual:
+        print(f"\n  カット     : {visual.get('cuts_per_minute')}回/分"
+              f"  1ショット {visual.get('median_shot_seconds')}秒")
+        colors = visual.get("dominant_colors") or []
+        if colors:
+            print("  支配色     : " + "  ".join(
+                f"{c['hex']}({c['share']*100:.0f}%)" for c in colors[:5]))
+        if visual.get("thumbnail_text_area_ratio") is not None:
+            print(f"  サムネ文字量: {visual['thumbnail_text_area_ratio']}"
+                  f"  鮮やかさ {visual.get('thumbnail_vivid_ratio')}")
     if voice.get("what_not_to_copy"):
         print(f"\n  真似しないほうがいい点: {voice['what_not_to_copy']}")
     print(f"\n  → {out}")
@@ -348,6 +359,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("urls", nargs="+", help="参考にしたい動画のURL（複数可）")
     p.add_argument("-o", "--out", help="出力先（既定 config/style.yaml）")
     p.add_argument("--lang", default="ja", help="字幕の言語（既定 ja）")
+    p.add_argument("--deep", action="store_true",
+                   help="映像も落としてカット頻度・配色まで測る（低画質・時間がかかる）")
+    p.add_argument("--per-channel", type=int, default=5,
+                   help="チャンネルURLを渡したとき、何本さかのぼるか（既定5）")
     p.set_defaults(func=cmd_learn)
 
     p = sub.add_parser("run", help="当日分を作って投稿する")

@@ -1,0 +1,72 @@
+{
+  "_note": "編集の文法。テロップ・色・効果音の意味をここで一元管理する。感覚で都度決めるとブレるので、意味と見た目を1対1で固定する。",
+
+  "caption_types": {
+    "NORMAL":    {"role": "通常の字幕。読めればよい",
+                  "color": "text", "size_scale": 1.0, "animation": "fade",
+                  "se": null},
+    "KEYWORD":   {"role": "重要な単語だけを強調する",
+                  "color": "accent", "size_scale": 1.0, "animation": "fade",
+                  "se": null},
+    "EMPHASIS":  {"role": "その回の主張。ここだけは覚えて帰ってほしい一文",
+                  "color": "text", "size_scale": 1.25, "animation": "scale_in",
+                  "se": "IMPACT"},
+    "PUNCHLINE": {"role": "オチ・ツッコミ。意外性のある一言",
+                  "color": "accent2", "size_scale": 1.45, "animation": "pop",
+                  "se": "COMEDY"},
+    "EDITORIAL": {"role": "編集者視点の注釈。※この時まだ何も知らない、など",
+                  "color": "muted", "size_scale": 0.8, "animation": "slide_in",
+                  "se": "POP"},
+    "DATA":      {"role": "数字・金額・割合",
+                  "color": "positive", "size_scale": 1.15, "animation": "count_up",
+                  "se": "CLICK"}
+  },
+
+  "color_semantics": {
+    "text":     {"hex": "#F2F5FA", "means": "通常"},
+    "accent":   {"hex": "#4CC2FF", "means": "重要・新情報"},
+    "accent2":  {"hex": "#FFC857", "means": "オチ・注目"},
+    "positive": {"hex": "#5BD99A", "means": "増加・金額・成功"},
+    "negative": {"hex": "#FF6B6B", "means": "減少・リスク・否定"},
+    "muted":    {"hex": "#9AA7BE", "means": "編集者の声・補足"}
+  },
+
+  "se_semantics": {
+    "POP":        "テロップの出現",
+    "CLICK":      "数値・箇条書きの提示",
+    "WHOOSH":     "場面転換",
+    "IMPACT":     "重大な発言",
+    "COMEDY":     "オチ・ツッコミ",
+    "ERROR":      "失敗・矛盾の指摘",
+    "RISER":      "次の展開への引き",
+    "TRANSITION": "章の切り替え"
+  },
+
+  "se_density": {
+    "_note": "効果音は入れすぎると安っぽくなる。1つあたりの最小間隔（秒）",
+    "min_interval_seconds": 5.0,
+    "max_per_minute": 8
+  },
+
+  "editorial_caption": {
+    "_note": "編集者の声。入れすぎると本人より編集が目立つ",
+    "per_minute_min": 0,
+    "per_minute_max": 3
+  },
+
+  "story_beats": {
+    "_note": "動画全体の骨格。open_loop は必ず payoff で回収する",
+    "sequence": ["HOOK", "PROOF", "PROMISE", "CONTEXT", "QUESTION",
+                 "STORY", "REVEAL", "PAYOFF", "CONCLUSION"],
+    "hook_seconds": {"min": 0, "max": 5},
+    "proof_seconds": {"min": 5, "max": 15},
+    "promise_seconds": {"min": 15, "max": 30},
+    "forbid_fake_suspense": true
+  },
+
+  "visual_reset": {
+    "_note": "画が変わらない時間の上限。超えたら何か動かす",
+    "max_static_seconds": 8.0,
+    "hard_limit_seconds": 15.0
+  }
+}

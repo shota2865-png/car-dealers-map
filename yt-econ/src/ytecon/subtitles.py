@@ -8,14 +8,27 @@ TTS が返した文ごとのタイムコードをそのまま使うので、音�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import ImageFont
 
 from .assets import font_path
 from .config import Config
+from .script import VideoScript
 from .tts import VoiceTrack
+
+
+def load_semantics(cfg: Config) -> dict:
+    """テロップ・色・効果音の意味の定義を読む."""
+    path = cfg.root / "config" / "style_semantics.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 @dataclass
@@ -23,6 +36,16 @@ class Cue:
     start: float
     end: float
     lines: list[str]
+    style: str = "Default"      # ASS のスタイル名
+
+
+@dataclass
+class TelopCue:
+    """意味付きテロップ。字幕とは別レイヤーに出す."""
+    start: float
+    end: float
+    text: str
+    type: str = "NORMAL"
 
 
 def _chunk(text: str, per_line: int, max_lines: int = 2) -> list[list[str]]:
@@ -45,6 +68,41 @@ def build_cues(cfg: Config, track: VoiceTrack) -> list[Cue]:
             cues.append(Cue(start=t, end=max(end, t + 0.4), lines=group))
             t = end
     return cues
+
+
+def build_telops(cfg: Config, script: VideoScript,
+                 track: VoiceTrack) -> list[TelopCue]:
+    """台本のテロップ指定を、音声の実測時刻に貼り付ける.
+
+    after_sentence（何文目の後か）を、その文の終了時刻に変換する。
+    音声から時刻が確定しているので、ここで推定は一切要らない。
+    """
+    telops: list[TelopCue] = []
+    default_hold = 2.6
+
+    for i, section in enumerate(script.sections):
+        block = f"s{i}"
+        lines = [ln for ln in track.lines if ln.block_id == block]
+        if not lines:
+            continue
+        for cap in section.captions:
+            idx = max(0, min(cap.after_sentence, len(lines) - 1))
+            start = lines[idx].end
+            # 次の文の終わりまで、または既定の表示時間
+            nxt = lines[idx + 1].end if idx + 1 < len(lines) else start + default_hold
+            telops.append(TelopCue(
+                start=start,
+                end=min(nxt, start + 4.5),
+                text=cap.text[:16],
+                type=cap.type,
+            ))
+
+    telops.sort(key=lambda t: t.start)
+    # 重なりを解消する（同時に2つ出すと読めない）
+    for a, b in zip(telops, telops[1:]):
+        if a.end > b.start:
+            a.end = max(b.start - 0.1, a.start + 0.6)
+    return telops
 
 
 def _ass_time(seconds: float) -> str:
@@ -71,17 +129,63 @@ def _ass_color(hex_color: str) -> str:
 
 
 def font_family(cfg: Config) -> str:
-    """libass にフォントを名指しするためのファミリ名を実ファイルから取る."""
-    family, _style = ImageFont.truetype(font_path(cfg), 20).getname()
+    """libass にフォントを名指しするためのファミリ名を実ファイルから取る.
+
+    字幕も本文と同じ Black を使う。細いと動画上で潰れて読めない。
+    """
+    family, _style = ImageFont.truetype(font_path(cfg, "black"), 20).getname()
     return family
 
 
-def write_ass(cfg: Config, cues: list[Cue], out: str | Path) -> Path:
-    pal = {"text": "#FFFFFF", "outline": "#0B1120"}
-    pal.update({"text": cfg.get("visuals.palette.text", "#FFFFFF")})
-    size = int(cfg.get("visuals.subtitle.font_size", 58))
+def _style_line(name: str, family: str, size: int, primary: str,
+                outline_color: str, outline: int, alignment: int,
+                margin_v: int, bold: int = -1) -> str:
+    return (
+        f"Style: {name},{family},{size},{_ass_color(primary)},&H000000FF,"
+        f"{_ass_color(outline_color)},&H64000000,{bold},0,0,0,100,100,1,0,1,"
+        f"{outline},2,{alignment},120,120,{margin_v},1"
+    )
+
+
+def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
+              telops: list[TelopCue] | None = None) -> Path:
+    """字幕とテロップを1つの ASS にまとめる.
+
+    字幕は画面下に出しっぱなし、テロップは意味ごとに色と大きさを変えて
+    上寄りに出す。両方を同じファイルに入れるのは、焼き込みが1パスで済み、
+    重なり順も ASS 側で決まるため。
+    """
+    sem = load_semantics(cfg)
+    types = sem.get("caption_types", {})
+    colors = {k: v.get("hex", "#FFFFFF")
+              for k, v in (sem.get("color_semantics", {}) or {}).items()}
+    colors.setdefault("text", cfg.get("visuals.palette.text", "#FFFFFF"))
+
+    base_size = int(cfg.get("visuals.subtitle.font_size", 58))
     outline = int(cfg.get("visuals.subtitle.outline", 5))
     w, h = cfg.get("video.resolution", [1920, 1080])
+    family = font_family(cfg)
+    stroke = "#0B1120"
+
+    styles = [
+        # 字幕。画面下（alignment 2 = 下中央）
+        _style_line("Default", family, base_size, colors["text"], stroke,
+                    outline, 2, 72),
+    ]
+    # テロップは字幕のすぐ上（下三分の一）に置く。
+    # 画面上部は背景側の見出しが使うので、そこへ出すと必ずぶつかる。
+    sub_margin = 72
+    telop_margin = sub_margin + base_size + 44
+    for name, spec in types.items():
+        color = colors.get(spec.get("color", "text"), colors["text"])
+        size = int(base_size * float(spec.get("size_scale", 1.0)))
+        if name == "EDITORIAL":
+            # 編集者の声は隅に小さく。本人より目立たせない
+            alignment, margin = 7, 150
+        else:
+            alignment, margin = 2, telop_margin
+        styles.append(_style_line(f"T_{name}", family, size, color, stroke,
+                                  outline + 1, alignment, margin))
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -92,20 +196,30 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_family(cfg)},{size},{_ass_color(pal['text'])},&H000000FF,{_ass_color(pal['outline'])},&H64000000,-1,0,0,0,100,100,1,0,1,{outline},2,2,120,120,72,1
+""" + "\n".join(styles) + """
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    body = "\n".join(
-        "Dialogue: 0,{},{},Default,,0,0,0,,{}".format(
-            _ass_time(c.start), _ass_time(c.end), r"\N".join(c.lines)
+
+    events = [
+        "Dialogue: 0,{},{},{},,0,0,0,,{}".format(
+            _ass_time(c.start), _ass_time(c.end), c.style, r"\N".join(c.lines)
         )
         for c in cues
-    )
+    ]
+    for t in telops or []:
+        style = f"T_{t.type}" if f"T_{t.type}" in {f"T_{k}" for k in types} \
+            else "T_NORMAL"
+        events.append(
+            "Dialogue: 1,{},{},{},,0,0,0,,{}".format(
+                _ass_time(t.start), _ass_time(t.end), style, t.text
+            )
+        )
+
     p = Path(out)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(header + body + "\n", encoding="utf-8")
+    p.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return p
 
 
@@ -121,10 +235,13 @@ def write_srt(cues: list[Cue], out: str | Path) -> Path:
     return p
 
 
-def build(cfg: Config, track: VoiceTrack, outdir: str | Path) -> dict[str, Path]:
+def build(cfg: Config, track: VoiceTrack, outdir: str | Path,
+          script: VideoScript | None = None) -> dict[str, Path]:
     outdir = Path(outdir)
     cues = build_cues(cfg, track)
+    telops = build_telops(cfg, script, track) if script else []
     return {
-        "ass": write_ass(cfg, cues, outdir / "subtitles.ass"),
+        "ass": write_ass(cfg, cues, outdir / "subtitles.ass", telops=telops),
+        # SRT は YouTube に渡す字幕なので、テロップは入れない
         "srt": write_srt(cues, outdir / "subtitles.srt"),
     }

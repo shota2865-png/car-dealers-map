@@ -99,7 +99,7 @@ class Pipeline:
                       track: tts.VoiceTrack) -> tuple[dict[str, Path], dict[str, Path]]:
         art = self.art(slug)
         images = assets.build_all(self.cfg, s, art.images)
-        subs = subtitles.build(self.cfg, track, art.dir)
+        subs = subtitles.build(self.cfg, track, art.dir, script=s)
         return images, subs
 
     def stage_render(self, slug: str, s: script_mod.VideoScript,

@@ -56,6 +56,9 @@ class Reference:
     tags: list[str] = field(default_factory=list)
     transcript: str = ""
     cues: list[tuple[float, float, str]] = field(default_factory=list)
+    visual: Any = None              # analyze.VisualProfile（deep のときだけ）
+    video_path: Path | None = None
+    thumbnail_path: Path | None = None
 
 
 def ensure_ytdlp() -> str:
@@ -69,21 +72,61 @@ def ensure_ytdlp() -> str:
     )
 
 
-def fetch(url: str, lang: str = "ja") -> Reference:
+def expand_channels(urls: list[str], per_channel: int = 5) -> list[str]:
+    """チャンネルURLが混ざっていたら、最新動画のURLに展開する.
+
+    @handle / /channel/ / /c/ / /videos を渡せる。個別動画URLはそのまま通す。
+    """
+    exe = ensure_ytdlp()
+    out: list[str] = []
+    for url in urls:
+        if not _is_channel(url):
+            out.append(url)
+            continue
+        target = url.rstrip("/")
+        if not target.endswith("/videos"):
+            target += "/videos"
+        proc = subprocess.run(
+            [exe, "--flat-playlist", "--print", "%(url)s",
+             "--playlist-end", str(per_channel), target],
+            capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            log.warning("チャンネルを展開できませんでした %s: %s",
+                        url, proc.stderr.strip()[-200:])
+            continue
+        found = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        log.info("%s から %d本", url, len(found))
+        out.extend(found)
+    return out
+
+
+def _is_channel(url: str) -> bool:
+    return any(token in url for token in ("/@", "/channel/", "/c/", "/user/"))
+
+
+def fetch(url: str, lang: str = "ja", deep: bool = False,
+          workdir: Path | None = None) -> Reference:
     """字幕とメタデータだけ取得する（動画本体は落とさない）."""
     exe = ensure_ytdlp()
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp)
         cmd = [
-            exe, "--skip-download",
+            exe,
             "--write-info-json",
             "--write-subs", "--write-auto-subs",
             "--sub-langs", f"{lang},{lang}-orig,{lang}.*",
             "--sub-format", "vtt/best",
             "--convert-subs", "vtt",
+            "--write-thumbnail", "--convert-thumbnails", "jpg",
             "-o", str(out / "ref.%(ext)s"),
-            url,
         ]
+        if deep:
+            # 解析にしか使わないので最低画質で十分。帯域と時間を節約する
+            cmd += ["-f", "worstvideo[height>=360]+worstaudio/worst"]
+        else:
+            cmd += ["--skip-download"]
+        cmd.append(url)
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if proc.returncode != 0:
             tail = "\n".join(proc.stderr.strip().splitlines()[-6:])
@@ -112,6 +155,31 @@ def fetch(url: str, lang: str = "ja") -> Reference:
             )
         ref.cues = parse_vtt(vtts[0].read_text(encoding="utf-8"))
         ref.transcript = "".join(text for _s, _e, text in ref.cues)
+
+        thumbs = sorted(out.glob("*.jpg"))
+        if thumbs and workdir:
+            workdir.mkdir(parents=True, exist_ok=True)
+            dest = workdir / f"thumb_{abs(hash(url)) % 100000}.jpg"
+            shutil.copy2(thumbs[0], dest)
+            ref.thumbnail_path = dest
+
+        if deep and workdir:
+            from . import analyze
+
+            videos = [f for f in out.iterdir()
+                      if f.suffix in (".mp4", ".webm", ".mkv")]
+            if videos:
+                ref.visual = analyze.analyze_video(
+                    videos[0], ref.duration, workdir / "work",
+                    thumbnail=ref.thumbnail_path,
+                )
+            else:
+                log.warning("映像を取得できなかったので見た目の解析をスキップ: %s", url)
+        elif ref.thumbnail_path:
+            from . import analyze
+
+            ref.visual = analyze.VisualProfile(
+                thumbnail=analyze.analyze_thumbnail(ref.thumbnail_path))
         return ref
 
 
@@ -319,9 +387,23 @@ def profile(cfg: Config, refs: list[Reference],
 """
         )
 
+    visual_note = ""
+    withvis = [r for r in refs if r.visual and r.visual.cuts]
+    if withvis:
+        lines = ["", "## 映像の実測値（参考）"]
+        for r in withvis:
+            c = r.visual.cuts
+            lines.append(
+                f"- {r.title[:24]}: カット {c.get('cuts_per_minute')}回/分 / "
+                f"中央ショット {c.get('median_shot_seconds')}秒 / "
+                f"6秒超のショット比率 {c.get('shots_over_6s_ratio')}"
+            )
+        lines.append("この数値から、話の区切りと画の切り替えの関係も推測してください。")
+        visual_note = "\n".join(lines)
+
     user = (
         "次の参照動画を分析し、同じ語り口で書くための型を出してください。\n\n"
-        + "\n\n".join(blocks)
+        + "\n\n".join(blocks) + visual_note
     )
     return llm.complete_json(
         _STYLE_SYSTEM, user, _STYLE_SCHEMA,
@@ -331,23 +413,44 @@ def profile(cfg: Config, refs: list[Reference],
 
 # ----------------------------------------------------------------------
 def learn(cfg: Config, urls: list[str], out: Path | None = None,
-          lang: str = "ja") -> Path:
-    """参照動画を分析して config/style.yaml を書き出す."""
-    refs, measurements = [], []
+          lang: str = "ja", deep: bool = False, per_channel: int = 5) -> Path:
+    """参照動画（またはチャンネル）を分析して config/style.yaml を書き出す."""
+    from . import analyze
+
+    urls = expand_channels(urls, per_channel=per_channel)
+    if not urls:
+        raise LearnError("分析対象の動画がありません")
+
+    workdir = cfg.workdir / "reference"
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    refs, measurements, visuals = [], [], []
     for url in urls:
         log.info("取得中: %s", url)
-        ref = fetch(url, lang=lang)
+        try:
+            ref = fetch(url, lang=lang, deep=deep, workdir=workdir)
+        except LearnError as exc:
+            log.warning("スキップ: %s", exc)
+            continue
         m = measure(ref)
         log.info("  「%s」%.1f分 / %d文字per分 / 1文%d字 / チャプター%d個",
                  ref.title[:30], m["duration_minutes"], m["chars_per_minute"],
                  m["avg_sentence_chars"], m["chapters"])
+        if ref.visual and ref.visual.cuts:
+            log.info("    カット %.1f回/分 / 中央ショット %.1f秒",
+                     ref.visual.cuts.get("cuts_per_minute", 0),
+                     ref.visual.cuts.get("median_shot_seconds", 0))
         refs.append(ref)
         measurements.append(m)
+        if ref.visual:
+            visuals.append(ref.visual)
 
     if not refs:
         raise LearnError("分析できる動画がありませんでした")
 
     stats = aggregate(measurements)
+    visual_stats = analyze.aggregate_visual(visuals) if visuals else {}
+
     log.info("文体を言語化しています…")
     style = profile(cfg, refs, measurements)
 
@@ -359,6 +462,7 @@ def learn(cfg: Config, urls: list[str], out: Path | None = None,
         "sources": [{"url": r.url, "title": r.title, "channel": r.channel}
                     for r in refs],
         "measured": stats,
+        "visual": visual_stats,
         "per_video": measurements,
         "voice": style,
     }
@@ -418,6 +522,21 @@ def render_for_prompt(style: dict[str, Any]) -> str:
 
     if voice.get("what_not_to_copy"):
         rows.append(f"- ただし真似しないこと: {voice['what_not_to_copy']}")
+
+    visual = style.get("visual", {}) or {}
+    if visual:
+        rows += [
+            "",
+            "参照動画の映像の作り（中央値）:",
+            f"- カット {visual.get('cuts_per_minute', '?')}回/分",
+            f"- 1ショット {visual.get('median_shot_seconds', '?')}秒",
+        ]
+        if visual.get("dominant_colors"):
+            hexes = "、".join(c["hex"] for c in visual["dominant_colors"][:4])
+            rows.append(f"- 支配色 {hexes}")
+        rows.append(
+            "画の切り替わりがこの頻度で起きる前提で、セクションを設計してください。"
+        )
 
     if measured:
         rows += [

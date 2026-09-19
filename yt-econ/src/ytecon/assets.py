@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # IPAGothic は線が細く、動画のテロップだと潰れて読めない。
 # 必ず Bold 以上を使うこと。scripts/install_fonts.py で用意できる。
 _FONT_CANDIDATES = {
-    # 本文・字幕・図表まわり
+    # 予備。black が無い環境ではこちらに落ちる
     "bold": [
         "assets/fonts/NotoSansJP-Bold.ttf",
         "assets/fonts/NotoSansJP-Bold.otf",
@@ -41,7 +41,7 @@ _FONT_CANDIDATES = {
         "C:/Windows/Fonts/meiryob.ttc",
         "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",   # 最後の手段
     ],
-    # サムネ・見出し。遠目でも読める太さが要る
+    # 既定。テロップ・サムネ・見出し・図表すべてこれを使う
     "black": [
         "assets/fonts/NotoSansJP-Black.ttf",
         "assets/fonts/NotoSansJP-Black.otf",
@@ -57,10 +57,11 @@ class AssetError(RuntimeError):
     pass
 
 
-def font_path(cfg: Config, weight: str = "bold") -> str:
+def font_path(cfg: Config, weight: str = "black") -> str:
     """使える日本語フォントのパスを返す.
 
-    weight="black" はサムネと見出し用。無ければ bold に落ちる。
+    既定は black（900）。動画のテロップは遠目でも読める太さが要る。
+    無ければ bold に落ちる。
     """
     for candidates in (_FONT_CANDIDATES.get(weight, []),
                        _FONT_CANDIDATES["bold"] if weight != "bold" else []):
@@ -77,7 +78,7 @@ def font_path(cfg: Config, weight: str = "bold") -> str:
     )
 
 
-def load_font(cfg: Config, size: int, weight: str = "bold") -> ImageFont.FreeTypeFont:
+def load_font(cfg: Config, size: int, weight: str = "black") -> ImageFont.FreeTypeFont:
     key = (font_path(cfg, weight), size)
     if key not in _font_cache:
         _font_cache[key] = ImageFont.truetype(key[0], size)

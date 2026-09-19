@@ -182,3 +182,96 @@ def test_wav_concat_math(tmp_path: Path):
         w.writeframes(b"\x00\x00" * 24000)
     with wave.open(str(path), "rb") as w:
         assert w.getnframes() / w.getframerate() == 1.0
+
+
+# ----------------------------------------------------------------------
+def test_telops_are_placed_on_measured_sentence_ends(cfg: Config):
+    """テロップは after_sentence を、その文の実測終了時刻に変換して置く."""
+    from ytecon.script import Caption
+    from ytecon.subtitles import build_telops
+
+    script = VideoScript(
+        topic_title="t", hook="h",
+        sections=[Section(heading="h", narration="n", visual=Visual(),
+                          captions=[Caption("最初", "KEYWORD", 0),
+                                    Caption("2文目の後", "DATA", 1)])],
+        closing="c", title_candidates=[], description="", tags=[],
+        thumbnail_copy={}, sources=[],
+    )
+    track = VoiceTrack(wav_path=Path("x.wav"), lines=[
+        Line("s0", 0, "一文目。", 0.0, 3.0),
+        Line("s0", 1, "二文目。", 3.2, 6.0),
+        Line("s0", 2, "三文目。", 6.2, 9.0),
+    ])
+    telops = build_telops(cfg, script, track)
+    assert [t.text for t in telops] == ["最初", "2文目の後"]
+    assert telops[0].start == 3.0          # 1文目の終わり
+    assert telops[1].start == 6.0          # 2文目の終わり
+
+
+def test_telops_never_overlap(cfg: Config):
+    """同時に2つ出すと読めないので、重なりは自動で解消する."""
+    from ytecon.script import Caption
+    from ytecon.subtitles import build_telops
+
+    script = VideoScript(
+        topic_title="t", hook="h",
+        sections=[Section(heading="h", narration="n", visual=Visual(),
+                          captions=[Caption(f"c{i}", "NORMAL", i) for i in range(4)])],
+        closing="c", title_candidates=[], description="", tags=[],
+        thumbnail_copy={}, sources=[],
+    )
+    track = VoiceTrack(wav_path=Path("x.wav"), lines=[
+        Line("s0", i, f"文{i}。", i * 0.8, i * 0.8 + 0.7) for i in range(5)
+    ])
+    telops = build_telops(cfg, script, track)
+    for a, b in zip(telops, telops[1:]):
+        assert a.end <= b.start, f"{a.text} と {b.text} が重なっている"
+        assert a.end > a.start
+
+
+def test_each_caption_type_gets_its_own_ass_style(cfg: Config, tmp_path: Path):
+    """種類ごとに色と大きさが変わること（全部同じ見た目なら意味がない）."""
+    from ytecon.subtitles import TelopCue, write_ass
+
+    telops = [TelopCue(0.0, 2.0, "あ", t) for t in
+              ("NORMAL", "KEYWORD", "EMPHASIS", "PUNCHLINE", "EDITORIAL", "DATA")]
+    path = write_ass(cfg, [], tmp_path / "s.ass", telops=telops)
+    text = path.read_text(encoding="utf-8")
+
+    styles = {}
+    for line in text.splitlines():
+        if line.startswith("Style: T_"):
+            parts = line[7:].split(",")
+            styles[parts[0]] = (parts[1], parts[2], parts[3])   # family,size,color
+
+    assert len(styles) == 6
+    sizes = {name: int(v[1]) for name, v in styles.items()}
+    colors = {name: v[2] for name, v in styles.items()}
+    # 強調ほど大きい
+    assert sizes["T_PUNCHLINE"] > sizes["T_EMPHASIS"] > sizes["T_NORMAL"]
+    # 編集者の声はいちばん小さい
+    assert sizes["T_EDITORIAL"] < sizes["T_NORMAL"]
+    # 色が全部同じではない
+    assert len(set(colors.values())) >= 4
+
+
+def test_srt_has_no_telops(cfg: Config, tmp_path: Path):
+    """YouTube に渡す字幕にテロップを混ぜない（二重に出てしまう）."""
+    from ytecon.script import Caption
+    from ytecon.subtitles import build
+
+    script = VideoScript(
+        topic_title="t", hook="h",
+        sections=[Section(heading="h", narration="n", visual=Visual(),
+                          captions=[Caption("テロップだけの文言", "PUNCHLINE", 0)])],
+        closing="c", title_candidates=[], description="", tags=[],
+        thumbnail_copy={}, sources=[],
+    )
+    track = VoiceTrack(wav_path=Path("x.wav"), lines=[
+        Line("s0", 0, "喋った内容。", 0.0, 3.0)])
+    out = build(cfg, track, tmp_path, script=script)
+    srt = out["srt"].read_text(encoding="utf-8")
+    ass = out["ass"].read_text(encoding="utf-8")
+    assert "テロップだけの文言" not in srt
+    assert "テロップだけの文言" in ass

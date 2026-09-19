@@ -38,15 +38,40 @@ class Visual:
 
 
 @dataclass
+class Caption:
+    """画面に出すテロップ1つ。字幕とは別で、意味ごとに見た目が変わる."""
+    text: str
+    type: str = "NORMAL"     # NORMAL/KEYWORD/EMPHASIS/PUNCHLINE/EDITORIAL/DATA
+    after_sentence: int = 0  # そのセクションの何文目の後に出すか
+
+
+@dataclass
+class SoundCue:
+    """効果音1つ."""
+    type: str = "POP"        # POP/CLICK/WHOOSH/IMPACT/COMEDY/ERROR/RISER/TRANSITION
+    after_sentence: int = 0
+
+
+@dataclass
 class Section:
     heading: str                     # チャプター名 兼 画面見出し
     narration: str                   # 読み上げ本文
     on_screen: list[str] = field(default_factory=list)   # 画面に出す箇条書き
     visual: Visual = field(default_factory=Visual)
+    beat: str = "STORY"              # この節が構成上どこか
+    captions: list[Caption] = field(default_factory=list)
+    sounds: list[SoundCue] = field(default_factory=list)
 
     @property
     def char_count(self) -> int:
         return len(re.sub(r"\s", "", self.narration))
+
+
+@dataclass
+class OpenLoop:
+    """前半で投げて後半で回収する問い。回収しない伏線は禁止."""
+    question: str
+    payoff_section: int = -1         # 何番目のセクションで回収するか
 
 
 @dataclass
@@ -61,11 +86,18 @@ class VideoScript:
     thumbnail_copy: dict[str, str]
     sources: list[dict[str, str]]
     disclaimer: str = ""
+    proof: str = ""                  # 0-15秒。結論を裏づける具体
+    promise: str = ""                # 15-30秒。この動画で何が分かるか
+    open_loops: list[OpenLoop] = field(default_factory=list)
 
     @property
     def narration_blocks(self) -> list[tuple[str, str]]:
         """(セクションID, 読み上げテキスト) の並び。音声生成の入力になる."""
         blocks = [("hook", self.hook)]
+        if self.proof.strip():
+            blocks.append(("proof", self.proof))
+        if self.promise.strip():
+            blocks.append(("promise", self.promise))
         for i, sec in enumerate(self.sections):
             blocks.append((f"s{i}", sec.narration))
         blocks.append(("closing", self.closing))
@@ -89,6 +121,18 @@ class VideoScript:
                     heading=s.get("heading", ""),
                     narration=s.get("narration", ""),
                     on_screen=s.get("on_screen", []) or [],
+                    beat=s.get("beat", "STORY"),
+                    captions=[
+                        Caption(text=c.get("text", ""),
+                                type=c.get("type", "NORMAL"),
+                                after_sentence=int(c.get("after_sentence", 0) or 0))
+                        for c in (s.get("captions") or []) if c.get("text")
+                    ],
+                    sounds=[
+                        SoundCue(type=c.get("type", "POP"),
+                                 after_sentence=int(c.get("after_sentence", 0) or 0))
+                        for c in (s.get("sounds") or [])
+                    ],
                     visual=Visual(
                         kind=v.get("kind", "stock"),
                         query=v.get("query", ""),
@@ -108,6 +152,13 @@ class VideoScript:
             thumbnail_copy=d.get("thumbnail_copy", {}) or {},
             sources=d.get("sources", []) or [],
             disclaimer=d.get("disclaimer", ""),
+            proof=d.get("proof", ""),
+            promise=d.get("promise", ""),
+            open_loops=[
+                OpenLoop(question=o.get("question", ""),
+                         payoff_section=int(o.get("payoff_section", -1) or -1))
+                for o in (d.get("open_loops") or []) if o.get("question")
+            ],
         )
 
     def save(self, path: str | Path) -> Path:
@@ -146,16 +197,41 @@ _VISUAL_SCHEMA = llm.obj(
     }
 )
 
+_CAPTION_TYPES = ["NORMAL", "KEYWORD", "EMPHASIS", "PUNCHLINE", "EDITORIAL", "DATA"]
+_SE_TYPES = ["POP", "CLICK", "WHOOSH", "IMPACT", "COMEDY", "ERROR",
+             "RISER", "TRANSITION"]
+_BEATS = ["CONTEXT", "QUESTION", "STORY", "REVEAL", "PAYOFF",
+          "COMEDY", "CONCLUSION"]
+
 _SCRIPT_SCHEMA = llm.obj(
     {
         "topic_title": llm.STR,
         "hook": llm.STR,
+        "proof": llm.STR,
+        "promise": llm.STR,
+        "open_loops": llm.arr(
+            llm.obj({"question": llm.STR, "payoff_section": llm.INT})
+        ),
         "sections": llm.arr(
             llm.obj(
                 {
                     "heading": llm.STR,
                     "narration": llm.STR,
+                    "beat": {"type": "string", "enum": _BEATS},
                     "on_screen": llm.arr(llm.STR),
+                    "captions": llm.arr(
+                        llm.obj({
+                            "text": llm.STR,
+                            "type": {"type": "string", "enum": _CAPTION_TYPES},
+                            "after_sentence": llm.INT,
+                        })
+                    ),
+                    "sounds": llm.arr(
+                        llm.obj({
+                            "type": {"type": "string", "enum": _SE_TYPES},
+                            "after_sentence": llm.INT,
+                        })
+                    ),
                     "visual": _VISUAL_SCHEMA,
                 }
             )
@@ -191,15 +267,108 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 # この回の型
 {horizon_guide}
 
+# 視聴者を置き去りにしない（このチャンネルの生命線）
+
+解説動画で人が離脱する理由は「難しいから」ではなく、
+**「自分が置いていかれたと感じた瞬間」**です。これを構造で防ぎます。
+
+1. **新しい言葉を出したら、必ずその場で止まる。**
+   「〇〇という言葉が出てきたけど、これは要するに△△のこと」
+   後でまとめて説明する、は禁止。出した瞬間に払う。
+
+2. **1セクションに1回、視聴者に問いを投げる。**
+   「ここで一度考えてみてほしいのだ。もし〜だったらどうなるかな」
+   投げたら、すぐ答えずワンテンポ置いてから答える。
+   この間が、視聴者が自分で考える時間になります。
+
+3. **難所の直前で予告する。**
+   「ここから少しややこしくなるけど、結論だけ先に言うと〇〇なのだ」
+   結論を先に置くと、途中で分からなくなっても脱落しません。
+
+4. **セクションの終わりで必ず回収する。**
+   「つまりここまでで分かったのは〇〇ということなのだ」
+   次に進む前に、いま立っている場所を確認させます。
+
+5. **視聴者の反応を先回りして言語化する。**
+   「たぶん今、それって結局どういうことって思ったかな」
+   「ここ、ぼくも最初は分からなかったところなのだ」
+   一人で喋っている感じをなくし、会話しているように見せます。
+
+6. **専門用語を避けない。ただし必ず言い換えを添える。**
+   用語を避けると、視聴者は結局その言葉を知らないままになります。
+   正しい言葉を使って、隣に翻訳を置く。これが誠実なやり方です。
+
 # 構成の型（必ずこの流れ）
-1. hook（15〜25秒）: 視聴者の生活に起きている「違和感」から入る。
-   結論の予告を1文入れる。「今日は〜が分かります」で締める。
-2. 本編 {sections} セクション:
+
+## 冒頭30秒（ここで残るか決まる）
+
+1. **hook（0〜5秒）**: 結論・違和感・事件をいきなり置く。
+   「こんにちは」「今日は〜について話します」から始めない。
+   視聴者の生活に起きている違和感を1文で突きつける。
+2. **proof（5〜15秒）**: その違和感が本当にあることを、具体か数字で裏づける。
+   「実際、〇〇は△△まで上がっているのだ」
+3. **promise（15〜30秒）**: この動画を見ると何が分かるかを約束する。
+   「なぜそうなったのか、これからどうなるのか、今日は全部話すのだ」
+
+## 伏線（open_loops）
+
+前半で問いを投げ、後半で回収する。**投げたら必ず回収する。**
+回収しない引っ張りは視聴者への裏切りなので禁止。
+open_loops には「question」と「payoff_section（何番目のセクションで回収するか）」
+を入れること。0〜2本まで。無理に作らない。
+
+## 本編 {sections} セクション:
    - 各セクションは「問い → 事実（数字） → なぜそうなるか → だから何」の順
    - 数字を出したら必ず出典（機関名と年）を narration 内で口頭で言う
    - 前のセクションの結論を1句受けてから次に進む（接続を切らない）
+   - **各セクションに、視聴者への問いかけを1つ必ず入れる**
+   - **各セクションの最後に、そこで分かったことを1文で回収する**
+   - 各セクションに beat を付ける
+     （CONTEXT 前提 / QUESTION 問い / STORY 展開 / REVEAL 判明 /
+       PAYOFF 回収 / COMEDY 笑い / CONCLUSION 結論）
 3. closing: 3行でまとめ → 視聴者への問いかけ → チャンネル登録の一言。
    押し付けがましくしない。
+
+# テロップ（captions）の決め方
+
+字幕とは別物です。字幕は全部の発言を出しますが、テロップは
+**意味を圧縮して画面に置くもの**です。喋った通りに書かない。
+
+例) 発言「マレーシアに来て一番びっくりしたのが家賃なんですよ」
+    テロップ「一番驚いたこと → 家賃」
+
+種類は6つ。after_sentence で「そのセクションの何文目の後に出すか」を指定する。
+
+| type | 使いどころ | 目安 |
+|---|---|---|
+| NORMAL | 補助的な見出し | 少なめ |
+| KEYWORD | 重要な単語だけを置く | 1セクション1〜2回 |
+| EMPHASIS | その回の主張。ここだけは覚えて帰ってほしい一文 | 動画全体で2〜3回 |
+| PUNCHLINE | オチ・意外な一言 | 動画全体で1〜3回 |
+| EDITORIAL | 編集者視点の注釈「※ここ、ぼくも最初は分からなかった」 | 1分あたり0〜3回 |
+| DATA | 数字・金額・割合 | 数字を言うたび |
+
+- テロップは1つ**16字以内**。長いと読めません
+- EDITORIAL を入れすぎない。編集の声が本人より目立つと嘘くさくなります
+- PUNCHLINE は本当にオチのときだけ。連発すると効きません
+
+# 効果音（sounds）の決め方
+
+意味のあるところにだけ置く。**入れすぎると安っぽくなります。**
+
+| type | 意味 |
+|---|---|
+| POP | テロップの出現 |
+| CLICK | 数値・箇条書きの提示 |
+| WHOOSH | 場面転換 |
+| IMPACT | 重大な発言 |
+| COMEDY | オチ・ツッコミ |
+| ERROR | 失敗・矛盾の指摘 |
+| RISER | 次の展開への引き |
+| TRANSITION | 章の切り替え |
+
+**1分あたり8個まで、最低5秒は間隔を空ける。**
+静かな場面では意図的に何も鳴らさないこと。無音も設計のうちです。
 
 # 画面（visual）の決め方
 - kind="chart": 数値の推移・比較を語るセクション。実在する公開統計の
