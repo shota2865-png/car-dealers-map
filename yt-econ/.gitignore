@@ -1,5 +1,7 @@
 # 生成物（動画・音声・画像は重いので絶対にコミットしない）
 output/
+!output/demo/
+!output/demo/script.json
 capcut_drafts/
 logs/
 *.mp4
@@ -28,3 +30,4 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+yt-econ/colab/ytecon_colab.zip

@@ -1,5 +1,17 @@
 name: 毎日2本を自動生成して投稿
 
+# ------------------------------------------------------------
+# GitHub のサーバーで動くので、あなたのパソコンには何も入れません。
+# タブを閉じても消えません。決めた時刻に勝手に動きます。
+#
+# 必要な設定（リポジトリの Settings → Secrets and variables → Actions）:
+#   CLAUDE_CODE_OAUTH_TOKEN   claude setup-token で作る（サブスクの枠で台本生成）
+#   YOUTUBE_CLIENT_ID         Google Cloud Console
+#   YOUTUBE_CLIENT_SECRET     同上
+#   YOUTUBE_REFRESH_TOKEN     scripts/auth_youtube.py で取得
+#   PEXELS_API_KEY            任意（無ければグラデーション背景）
+# ------------------------------------------------------------
+
 on:
   schedule:
     # UTC 表記。JST 06:00 と JST 18:00 に生成を始め、予約投稿で 07:30 / 19:30 に公開する
@@ -11,7 +23,7 @@ on:
         description: "作る本数"
         default: "1"
       upload:
-        description: "YouTube に投稿するか"
+        description: "YouTube に投稿するか（false にすると mp4 を成果物として残すだけ）"
         type: boolean
         default: true
 
@@ -28,6 +40,7 @@ jobs:
         working-directory: yt-econ
 
     services:
+      # ずんだもんの声。コンテナとして横で立てるので、何も入れなくていい
       voicevox:
         image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
         ports:
@@ -42,16 +55,25 @@ jobs:
           cache: pip
           cache-dependency-path: yt-econ/requirements.txt
 
-      - name: ffmpeg と日本語フォントを入れる
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: ffmpeg を入れる
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          sudo apt-get install -y ffmpeg
 
       - name: Python 依存を入れる
         run: pip install -r requirements.txt
 
+      # 台本生成は Claude Code の headless モードで行う。
+      # サブスクのトークンを使うので、API の従量課金が発生しない
+      - name: Claude Code を入れる
+        run: npm install -g @anthropic-ai/claude-code
+
       # 過去に扱った話題の記憶（state.sqlite3）を持ち越す。
-      # これが無いと毎回同じテーマを作ってしまう。
+      # これが無いと毎回同じテーマを作ってしまう
       - name: 前回までの状態を復元
         uses: actions/cache/restore@v4
         with:
@@ -68,14 +90,16 @@ jobs:
 
       - name: 環境チェック
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          YTECON_LLM_PROVIDER: claude_code
           VOICEVOX_URL: http://127.0.0.1:50021
         run: python -m ytecon doctor || true
 
       - name: 生成して投稿
         env:
           PYTHONPATH: src
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          YTECON_LLM_PROVIDER: claude_code
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -92,7 +116,8 @@ jobs:
         if: always()
         env:
           PYTHONPATH: src
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          YTECON_LLM_PROVIDER: claude_code
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -110,13 +135,15 @@ jobs:
           path: yt-econ/output/state.sqlite3
           key: ytecon-state-${{ github.run_id }}
 
-      - name: 成果物を残す（動画本体は重いので除く）
+      # 投稿しない設定のときは、できた mp4 をここからダウンロードできる
+      - name: 成果物を残す
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ytecon-${{ github.run_id }}
           retention-days: 7
           path: |
+            yt-econ/output/**/video.mp4
             yt-econ/output/**/script.json
             yt-econ/output/**/metadata.json
             yt-econ/output/**/subtitles.srt

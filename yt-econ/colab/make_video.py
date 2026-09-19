@@ -12,6 +12,7 @@
 # ============================================================
 
 USE_VOICEVOX = True   # ずんだもんの声を使う。False にすると軽い代替音声で速く終わる
+USE_DRIVE = True      # Google Drive に道具を保存し、2回目以降を速くする（初回だけ許可を求められる）
 
 import os
 import subprocess
@@ -25,6 +26,22 @@ if WORK.exists():
     import shutil
     shutil.rmtree(WORK)
 WORK.mkdir(parents=True)
+
+# ------------------------------------------------------------
+# Colab は閉じると全部消える。1GB の音声エンジンを毎回落とし直すのは
+# 無駄なので、Google Drive に置いておく。初回 20 分 → 2回目以降 3 分。
+# ------------------------------------------------------------
+CACHE = None
+if USE_DRIVE:
+    try:
+        from google.colab import drive
+        drive.mount("/content/drive", force_remount=False)
+        CACHE = Path("/content/drive/MyDrive/ytecon_cache")
+        CACHE.mkdir(parents=True, exist_ok=True)
+        print(f"Drive に保存します: {CACHE}")
+    except Exception as e:
+        print("Drive は使いません:", e)
+        CACHE = None
 
 
 def sh(cmd, **kw):
@@ -53,22 +70,39 @@ sh([sys.executable, "-m", "pip", "install", "-q",
 
 # ------------------------------------------------------------
 if USE_VOICEVOX:
-    print("③ VOICEVOX（ずんだもんの声）を用意します（10〜15分）")
-    sh("apt-get install -y -qq p7zip-full")
-    r = sh("curl -sL https://api.github.com/repos/VOICEVOX/voicevox_engine/releases/latest"
-           " | grep browser_download_url | grep linux-cpu-x64 | cut -d'\"' -f4")
-    urls = sorted(u.strip() for u in r.stdout.splitlines() if u.strip())
-    if urls:
-        print(f"   {len(urls)} 個のファイルを取得します")
-        for u in urls:
-            sh(f"curl -fsSL -O '{u}'")
-        first = sorted(Path(".").glob("*.7z.001"))
-        if first:
-            sh(f"7z x '{first[0]}' -o./vv -y")
-        else:
-            for z in Path(".").glob("*.zip"):
-                sh(f"unzip -qo '{z}' -d ./vv")
-    runs = list(Path("./vv").glob("**/run")) if Path("./vv").exists() else []
+    print("③ VOICEVOX（ずんだもんの声）を用意します")
+    vv_dir = (CACHE / "voicevox") if CACHE else (WORK / "vv")
+    runs = list(vv_dir.glob("**/run")) if vv_dir.exists() else []
+    if runs:
+        print("   Drive に保存済みのものを使います（速い）")
+    else:
+        print("   初回なので取得します（10〜15分。次回からは不要）")
+        sh("apt-get install -y -qq p7zip-full")
+        r = sh("curl -sL https://api.github.com/repos/VOICEVOX/voicevox_engine/releases/latest"
+               " | grep browser_download_url | grep linux-cpu-x64 | cut -d'\"' -f4")
+        urls = sorted(u.strip() for u in r.stdout.splitlines() if u.strip())
+        if urls:
+            print(f"   {len(urls)} 個のファイルを取得します")
+            for u in urls:
+                sh(f"curl -fsSL -O '{u}'")
+            vv_dir.mkdir(parents=True, exist_ok=True)
+            first = sorted(Path(".").glob("*.7z.001"))
+            if first:
+                sh(f"7z x '{first[0]}' -o'{vv_dir}' -y")
+            else:
+                for z in Path(".").glob("*.zip"):
+                    sh(f"unzip -qo '{z}' -d '{vv_dir}'")
+            for part in Path(".").glob("*.7z.*"):
+                part.unlink()
+        runs = list(vv_dir.glob("**/run")) if vv_dir.exists() else []
+    if runs and CACHE:
+        # Drive 上から直接起動すると遅いので、ローカルに複製してから起動する
+        import shutil
+        local_vv = WORK / "vv"
+        if not local_vv.exists():
+            print("   ローカルに展開しています…")
+            shutil.copytree(runs[0].parent, local_vv)
+        runs = list(local_vv.glob("**/run"))
     if runs:
         sh(f"chmod +x '{runs[0]}'")
         subprocess.Popen([str(runs[0]), "--host", "127.0.0.1", "--port", "50021"],
