@@ -1,0 +1,146 @@
+# ============================================================
+#  チャンネル設定 — ここを書き換えれば全工程の挙動が変わる
+# ============================================================
+
+channel:
+  name: "3分で腹落ち経済"          # 仮。お好みで
+  # 誰に向けて話すか（台本のトーンを決める最重要パラメータ）
+  audience: "高校生・大学生・20代のビジネスパーソン"
+  # 守るべき語り口
+  tone: |
+    - 中学生でも分かる言葉に言い換える。専門用語は必ず初出で1文の言い換えを添える
+    - 上から目線で教えない。「一緒に考える」トーン
+    - 断定しすぎない。予測は「〜という見方がある」と出典付きで
+    - 不安を煽らない。「ヤバい」「終わった」等の煽り表現は使わない
+    - 1文は40〜60字。体言止めを多用しない
+  # 絶対に扱わない領域（収益化・法令リスク回避）
+  banned_topics:
+    - 個別銘柄の売買推奨・値上がり予想
+    - 「絶対儲かる」「確実に」等の断定的投資助言
+    - 特定の個人・企業への誹謗中傷
+    - 未確認の陰謀論・出典不明の統計
+
+video:
+  target_minutes_min: 8.0
+  target_minutes_max: 10.0
+  # 日本語ナレーションの体感速度（文字/分）。TTS実測に合わせて調整する
+  chars_per_minute: 340
+  resolution: [1920, 1080]
+  fps: 30
+  # 1本あたりの本編セクション数（導入・まとめを除く）
+  body_sections: 5
+
+script:
+  model: "claude-opus-5"
+  effort: "high"
+  # 生成後にファクトチェック用の第2パスを走らせる
+  fact_check: true
+  # 尺が目標レンジから外れたら自動で伸縮リライトする回数
+  max_length_repairs: 2
+
+topics:
+  model: "claude-opus-5"
+  effort: "medium"
+  # 1回の収集で何件の候補を評価するか
+  fetch_limit: 60
+  # 過去何日分の投稿済みトピックと重複チェックするか
+  dedupe_window_days: 120
+  # 類似度がこれを超えたら重複扱い
+  dedupe_threshold: 0.72
+  # ニュース由来と常設テーマの比率（1日2本なら 1本ずつが健全）
+  mix:
+    news: 1
+    evergreen: 1
+  rss_sources:
+    - name: "NHK 経済"
+      url: "https://www.nhk.or.jp/rss/news/cat5.xml"
+    - name: "Yahoo!ニュース 経済"
+      url: "https://news.yahoo.co.jp/rss/topics/business.xml"
+    - name: "日本銀行 新着"
+      url: "https://www.boj.or.jp/rss/whatsnew.xml"
+    - name: "IMF Blog"
+      url: "https://www.imf.org/en/Blogs/rss"
+  # ニュースが取れない日でも枯れない常設テーマの種
+  evergreen_seeds:
+    - "円安はなぜ起きる？ 生活にどう効いてくるのか"
+    - "金利が上がると私たちの財布に何が起きるのか"
+    - "インフレとデフレ、結局どっちが困るのか"
+    - "GDPって何を測っている数字なのか"
+    - "日銀は何をしている組織なのか"
+    - "新NISAの仕組みを制度設計から理解する"
+    - "年金は本当に破綻するのか、数字で確かめる"
+    - "なぜ日本の給料は30年上がらなかったのか"
+    - "株価と景気がズレるのはなぜか"
+    - "需要と供給の曲線が現実のどこに現れているか"
+    - "為替介入は何をしているのか"
+    - "国の借金1200兆円をどう捉えるべきか"
+    - "最低賃金を上げると雇用は減るのか"
+    - "半導体が経済の主役になった理由"
+    - "サブスク経済はなぜ強いのか"
+
+tts:
+  # voicevox | google
+  provider: "voicevox"
+  voicevox:
+    # 話者ID。1回 `python -m ytecon speakers` で一覧が見られる
+    speaker: 13          # 青山龍星 などお好みで
+    speed: 1.08
+    pitch: 0.0
+    intonation: 1.1
+    # 文末の無音（秒）
+    pause_sentence: 0.28
+    pause_section: 0.65
+  google:
+    voice_name: "ja-JP-Neural2-B"
+    speaking_rate: 1.12
+
+visuals:
+  # 背景画像の取得元（PEXELS_API_KEY 未設定なら自動で単色/グラデにフォールバック）
+  stock_provider: "pexels"
+  # 図表の配色
+  palette:
+    bg: "#0E1525"
+    surface: "#18223A"
+    text: "#F2F5FA"
+    accent: "#4CC2FF"
+    accent2: "#FFC857"
+    positive: "#5BD99A"
+    negative: "#FF6B6B"
+  # Ken Burns（ゆっくりズーム）を効かせる
+  ken_burns: true
+  subtitle:
+    font_size: 58
+    max_chars_per_line: 20
+    outline: 5
+
+render:
+  # ffmpeg | capcut
+  # ffmpeg = 完全自動で mp4 まで出力（推奨・無人運転できる）
+  # capcut = CapCut のドラフトを自動生成し、最後の書き出しだけ手動
+  backend: "ffmpeg"
+  bgm:
+    enabled: true
+    # assets/bgm/ に置いた著作権クリアな音源ファイル名（空なら BGM なし）
+    file: ""
+    volume_db: -26
+  capcut:
+    # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
+    draft_dir: ""
+
+upload:
+  # public | unlisted | private
+  privacy: "public"
+  # JST での投稿時刻。1日2本なので2つ
+  publish_times_jst: ["07:30", "19:30"]
+  category_id: "25"      # News & Politics（経済解説はここか 27:Education）
+  language: "ja"
+  playlist_title: "経済ニュースを噛み砕く"
+  made_for_kids: false
+  # 予約投稿を使う（privacy: public + publishAt）
+  schedule: true
+
+pipeline:
+  videos_per_day: 2
+  workdir: "output"
+  # 失敗時のリトライ回数
+  retries: 2

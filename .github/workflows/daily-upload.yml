@@ -1,0 +1,106 @@
+name: 毎日2本を自動生成して投稿
+
+on:
+  schedule:
+    # UTC 表記。JST 06:00 と JST 18:00 に生成を始め、予約投稿で 07:30 / 19:30 に公開する
+    - cron: "0 21 * * *"   # JST 06:00
+    - cron: "0 9 * * *"    # JST 18:00
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "作る本数"
+        default: "1"
+      upload:
+        description: "YouTube に投稿するか"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ytecon-daily
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: yt-econ
+
+    services:
+      voicevox:
+        image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+        ports:
+          - 50021:50021
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: yt-econ/requirements.txt
+
+      - name: ffmpeg と日本語フォントを入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+
+      - name: Python 依存を入れる
+        run: pip install -r requirements.txt
+
+      # 過去に扱った話題の記憶（state.sqlite3）を持ち越す。
+      # これが無いと毎回同じテーマを作ってしまう。
+      - name: 前回までの状態を復元
+        uses: actions/cache/restore@v4
+        with:
+          path: yt-econ/output/state.sqlite3
+          key: ytecon-state-${{ github.run_id }}
+          restore-keys: ytecon-state-
+
+      - name: VOICEVOX の起動待ち
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:50021/version && break
+            sleep 2
+          done
+
+      - name: 環境チェック
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOICEVOX_URL: http://127.0.0.1:50021
+        run: python -m ytecon doctor || true
+
+      - name: 生成して投稿
+        env:
+          PYTHONPATH: src
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          VOICEVOX_URL: http://127.0.0.1:50021
+        run: |
+          python -m ytecon run \
+            -n "${{ github.event.inputs.count || 1 }}" \
+            ${{ github.event.inputs.upload == 'false' && '--no-upload' || '' }}
+
+      - name: 状態を保存
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: yt-econ/output/state.sqlite3
+          key: ytecon-state-${{ github.run_id }}
+
+      - name: 成果物を残す（動画本体は重いので除く）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytecon-${{ github.run_id }}
+          retention-days: 7
+          path: |
+            yt-econ/output/**/script.json
+            yt-econ/output/**/metadata.json
+            yt-econ/output/**/subtitles.srt
+            yt-econ/output/**/thumbnail.jpg

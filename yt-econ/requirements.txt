@@ -1,0 +1,24 @@
+# --- コア ---
+anthropic>=1.0.0
+pydantic>=2.7
+PyYAML>=6.0
+python-dotenv>=1.0
+requests>=2.32
+feedparser>=6.0
+
+# --- 動画合成 ---
+# システムに ffmpeg があればそちらを優先。無ければこの同梱バイナリを使う
+imageio-ffmpeg>=0.4.9
+
+# --- 画像・図表・サムネ ---
+Pillow>=10.3
+matplotlib>=3.8
+
+# --- YouTube アップロード ---
+google-api-python-client>=2.130
+google-auth>=2.29
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+
+# --- 開発用 ---
+pytest>=8.0

@@ -1,0 +1,141 @@
+"""YouTube 用メタデータの組み立て.
+
+タイトルは台本生成時の候補から Claude に選び直させる（サムネ文言との
+重複を避け、クリック理由を1つに絞るため）。チャプターは音声の実測秒から
+機械的に作る。
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from . import llm
+from .config import Config
+from .script import VideoScript
+from .tts import VoiceTrack
+
+log = logging.getLogger(__name__)
+
+MAX_TITLE = 100
+MAX_DESCRIPTION = 5000
+
+
+@dataclass
+class Metadata:
+    title: str
+    description: str
+    tags: list[str] = field(default_factory=list)
+    category_id: str = "25"
+    language: str = "ja"
+
+
+_TITLE_SCHEMA = llm.obj(
+    {
+        "title": llm.STR,
+        "reason": llm.STR,
+        "thumbnail_main": llm.STR,
+        "thumbnail_sub": llm.STR,
+    }
+)
+
+_TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。視聴者は{audience}。
+
+良いタイトルの条件:
+- 40字以内。スマホで切れずに読めるのは冒頭28字程度なので、前半に要点を置く
+- 「知らないと損」「ヤバい」など煽り語を使わない。内容と一致させる
+- 数字か固有名詞を1つ入れる
+- サムネの文言と同じ言葉を繰り返さない（同じ情報を2回見せると密度が下がる）
+- 疑問形か、意外性のある事実の提示のどちらか
+
+サムネ文言の条件:
+- main は最大13字。遠目で読める短さ
+- sub は最大14字。main を補う一言。無理なら空文字
+"""
+
+
+def choose_title(cfg: Config, script: VideoScript) -> tuple[str, dict[str, str]]:
+    candidates = "\n".join(f"- {t}" for t in script.title_candidates) or "- (候補なし)"
+    user = f"""動画の内容:
+テーマ: {script.topic_title}
+導入: {script.hook}
+各セクション見出し: {', '.join(s.heading for s in script.sections)}
+まとめ: {script.closing[:200]}
+
+台本側のタイトル候補:
+{candidates}
+
+この動画に最適なタイトルを1つ決め、サムネ文言も併せて出してください。
+候補をそのまま使っても、書き直しても構いません。"""
+    data = llm.complete_json(
+        _TITLE_SYSTEM.format(audience=cfg.get("channel.audience", "")),
+        user,
+        _TITLE_SCHEMA,
+        model=cfg.get("script.model", llm.DEFAULT_MODEL),
+        effort="medium",
+    )
+    title = (data.get("title") or script.topic_title)[:MAX_TITLE]
+    thumb = {
+        "main": (data.get("thumbnail_main") or "")[:14],
+        "sub": (data.get("thumbnail_sub") or "")[:16],
+    }
+    log.info("タイトル決定: %s", title)
+    return title, thumb
+
+
+def build_chapters(script: VideoScript, track: VoiceTrack) -> list[str]:
+    """YouTube のチャプターは 0:00 始まり・3つ以上・各10秒以上が条件."""
+    rows = []
+    blocks = [("hook", "今日の話")] + [
+        (f"s{i}", s.heading) for i, s in enumerate(script.sections)
+    ] + [("closing", "まとめ")]
+    last = -10.0
+    for block_id, label in blocks:
+        start, end = track.block_span(block_id)
+        if end <= start or start - last < 10:
+            continue
+        m, s = divmod(int(start), 60)
+        rows.append(f"{m}:{s:02d} {label}")
+        last = start
+    if rows and not rows[0].startswith("0:00"):
+        rows[0] = "0:00 " + rows[0].split(" ", 1)[1]
+    return rows if len(rows) >= 3 else []
+
+
+def build(cfg: Config, script: VideoScript, track: VoiceTrack,
+          title: str | None = None) -> Metadata:
+    title = title or (script.title_candidates or [script.topic_title])[0]
+
+    parts = [script.description.strip()]
+
+    chapters = build_chapters(script, track)
+    if chapters:
+        parts.append("■ もくじ\n" + "\n".join(chapters))
+
+    if script.sources:
+        srcs = "\n".join(
+            f"・{s.get('name','')} {s.get('url','')}".rstrip() for s in script.sources
+        )
+        parts.append("■ 参考・出典\n" + srcs)
+
+    disclaimer = script.disclaimer.strip()
+    parts.append(
+        "■ ご注意\n"
+        + (disclaimer + "\n" if disclaimer else "")
+        + "この動画は経済の仕組みを解説するもので、特定の金融商品の購入を\n"
+        "推奨するものではありません。投資の判断はご自身の責任でお願いします。\n"
+        "内容には万全を期していますが、誤りにお気づきの際はコメントで\n"
+        "ご指摘いただけると助かります。"
+    )
+
+    parts.append("■ 音声\nこの動画のナレーションは音声合成ソフトを使用しています。")
+
+    description = "\n\n".join(p for p in parts if p.strip())[:MAX_DESCRIPTION]
+
+    tags = [t.strip() for t in script.tags if t.strip()][:15]
+    return Metadata(
+        title=title,
+        description=description,
+        tags=tags,
+        category_id=str(cfg.get("upload.category_id", "25")),
+        language=str(cfg.get("upload.language", "ja")),
+    )

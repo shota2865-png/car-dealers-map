@@ -1,0 +1,29 @@
+# 生成物（動画・音声・画像は重いので絶対にコミットしない）
+output/
+capcut_drafts/
+logs/
+*.mp4
+*.wav
+*.mp3
+
+# 鍵
+.env
+token.json
+client_secret*.json
+
+# フォント（ライセンス配布の都合で各自取得）
+assets/fonts/*.otf
+assets/fonts/*.ttf
+assets/fonts/*.ttc
+
+# BGM（著作権の都合で各自用意）
+assets/bgm/*
+!assets/bgm/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
