@@ -142,6 +142,19 @@ def load_font(cfg: Config, size: int, weight: str = "black") -> ImageFont.FreeTy
     return _font_cache[key]
 
 
+def content_width(cfg: Config) -> int:
+    """右下のキャラクターに隠れない、描画に使ってよい横幅（px）.
+
+    カード類の中央揃えや図表の右端はこれを基準にする。
+    """
+    w, _h = cfg.get("video.resolution", [1920, 1080])
+    if not cfg.get("character.enabled", False):
+        return w
+    from .character import reserved_width
+
+    return max(int(w * 0.55), w - reserved_width(cfg))
+
+
 def palette(cfg: Config) -> dict[str, str]:
     default = {
         "bg": "#0E1525", "surface": "#18223A", "text": "#F2F5FA",
@@ -316,13 +329,15 @@ def render_chart(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
             for text in leg.get_texts():
                 text.set_fontsize(26)
 
+    # 図表の右端はキャラクターの手前まで。字幕の帯（下 1/3）には何も置かない
+    right = min(0.94, content_width(cfg) / w - 0.02)
+    fig.subplots_adjust(left=0.12, right=right, top=0.82, bottom=0.34)
+
     note = spec.get("note") or ""
     if note:
-        # 左下ギリギリに置くと、後段のズームや YouTube の UI で隠れるため内側に寄せる
-        fig.text(0.08, 0.085, note, fontproperties=fp, fontsize=22, color="#9AA7BE")
-
-    # 上下左右に安全余白を取る。下 1/4 は字幕が乗るので特に広く空ける
-    fig.subplots_adjust(left=0.12, right=0.94, top=0.84, bottom=0.32)
+        # 下に置くと字幕と重なるので、タイトルの下・右寄せに小さく置く
+        fig.text(right, 0.845, note, fontproperties=fp, fontsize=20, color="#9AA7BE",
+                 ha="right", va="bottom")
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, facecolor=pal["bg"])
     plt.close(fig)
@@ -441,18 +456,15 @@ def build_title_card(cfg: Config, title: str, out: Path) -> Path:
     w, h = cfg.get("video.resolution", [1920, 1080])
     img = gradient((w, h), pal["surface"], pal["bg"])
     d = ImageDraw.Draw(img)
+    cw = content_width(cfg)
     f = load_font(cfg, 92, "black")
-    lines = _wrap(d, title, f, w - 300)[:3]
+    lines = _wrap(d, title, f, cw - 240)[:3]
     total = len(lines) * 120
     y = (h - total) // 2
     for line in lines:
-        tw = d.textlength(line, font=f)
-        d.text(((w - tw) / 2, y), line, font=f, fill=pal["text"])
-        y += 120
+        y = _center_text(d, line, f, y, cw, pal["text"]) + (120 - f.size - 18)
     f_small = load_font(cfg, 40)
-    name = cfg.get("channel.name", "")
-    tw = d.textlength(name, font=f_small)
-    d.text(((w - tw) / 2, y + 40), name, font=f_small, fill=pal["accent"])
+    _center_text(d, cfg.get("channel.name", ""), f_small, y + 40, cw, pal["accent"])
     img.save(out, quality=95)
     return out
 
@@ -463,11 +475,11 @@ def build_outro_card(cfg: Config, out: Path) -> Path:
     w, h = cfg.get("video.resolution", [1920, 1080])
     img = gradient((w, h), pal["bg"], pal["surface"])
     d = ImageDraw.Draw(img)
+    cw = content_width(cfg)
     f = load_font(cfg, 78, "black")
     for i, line in enumerate(["毎日 朝と夜に更新", "チャンネル登録で見逃しなく"]):
-        tw = d.textlength(line, font=f)
-        d.text(((w - tw) / 2, h / 2 - 110 + i * 120), line, font=f,
-               fill=pal["text"] if i == 0 else pal["accent"])
+        _center_text(d, line, f, int(h / 2 - 110 + i * 120), cw,
+                     pal["text"] if i == 0 else pal["accent"])
     img.save(out, quality=95)
     return out
 
@@ -490,10 +502,11 @@ def build_all(cfg: Config, script: VideoScript, outdir: str | Path) -> dict[str,
 # いろいろな見せ方で出せるようにする。
 # ======================================================================
 def _card_base(cfg: Config) -> tuple[Image.Image, ImageDraw.ImageDraw, dict[str, str], int, int]:
+    """返す w は『使ってよい幅』（キャラがいればその手前まで）。画像自体は全幅."""
     pal = palette(cfg)
     w, h = cfg.get("video.resolution", [1920, 1080])
     img = gradient((w, h), pal["bg"], pal["surface"])
-    return img, ImageDraw.Draw(img), pal, w, h
+    return img, ImageDraw.Draw(img), pal, content_width(cfg), h
 
 
 def _save(img: Image.Image, out: Path) -> Path:
@@ -504,6 +517,7 @@ def _save(img: Image.Image, out: Path) -> Path:
 
 def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
                  y: int, w: int, fill: str, stroke: int = 0, stroke_fill: str = "#000") -> int:
+    """w は『使ってよい幅』。キャラがいるときは呼び出し側が content_width を渡す."""
     text = _safe_for_font(font, text)
     tw = d.textlength(text, font=font)
     d.text(((w - tw) / 2, y), text, font=font, fill=fill,

@@ -85,10 +85,10 @@ def generate_pad(out: Path, seconds: float = 64.0, seed: int = 3) -> Path:
         lp[idx] = acc
     lp += rnd.normal(0, 0.0025, total)          # ごく薄いノイズの床
 
-    # 全体を 0.5 秒フェードで囲み、-20 dBFS 付近に揃える
+    # 全体を 0.5 秒フェードで囲み、-6 dBFS ピークに揃える（最終的な音量は render 側で決める）
     lp *= _env(total, RATE, attack=0.5, release=0.8)
     peak = float(np.max(np.abs(lp))) or 1.0
-    lp = lp / peak * 0.1
+    lp = lp / peak * 0.5
     pcm = (lp * 32767).astype("<i2")
 
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -48,10 +48,36 @@ class TelopCue:
     type: str = "NORMAL"
 
 
+_NO_LINE_START = "。、」』）｝】〕〉》・ーぁぃぅぇぉっゃゅょゎ々！？!?"
+
+
+def _balance(text: str, per_line: int) -> list[str]:
+    """1キュー分の文字列を、行の長さが揃うように割る（禁則つき）.
+
+    単純に per_line ごとに切ると「円安なのだ」+「。」のように句点だけが
+    次の行に落ちる。行数を先に決めて均等に割り、行頭に来てはいけない字は
+    前の行に送る。
+    """
+    text = text.strip()
+    if not text:
+        return [""]
+    n_lines = max(1, -(-len(text) // per_line))          # ceil
+    width = -(-len(text) // n_lines)
+    rows = [text[i:i + width] for i in range(0, len(text), width)]
+    # 禁則: 行頭の句読点などを前の行の末尾へ
+    for i in range(1, len(rows)):
+        while rows[i] and rows[i][0] in _NO_LINE_START and rows[i - 1]:
+            rows[i - 1] += rows[i][0]
+            rows[i] = rows[i][1:]
+    return [r for r in rows if r]
+
+
 def _chunk(text: str, per_line: int, max_lines: int = 2) -> list[list[str]]:
     """テキストを『最大 max_lines 行』の塊の列に割る."""
-    rows = [text[i:i + per_line] for i in range(0, len(text), per_line)] or [""]
-    return [rows[i:i + max_lines] for i in range(0, len(rows), max_lines)]
+    # 表示上は文末の句点を落とす（日本語字幕の慣習。行末の「。」だけの行も防げる）
+    text = text.strip().rstrip("。")
+    rows = _balance(text, per_line)
+    return [rows[i:i + max_lines] for i in range(0, len(rows), max_lines)] or [[""]]
 
 
 def build_cues(cfg: Config, track: VoiceTrack) -> list[Cue]:

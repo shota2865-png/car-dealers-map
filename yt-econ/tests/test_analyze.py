@@ -146,3 +146,66 @@ def test_aggregate_visual_uses_median(tmp_path):
 
 def test_aggregate_visual_with_nothing():
     assert aggregate_visual([])["videos"] == 0
+
+
+# ----------------------------------------------------------------------
+# BGM の混ぜ方（render.audio_chain）を実際に ffmpeg で通して測る
+# ----------------------------------------------------------------------
+def _rms_db(path: Path, seconds: float = 6.0) -> float:
+    import re
+
+    exe = ensure_ffmpeg()
+    r = subprocess.run(
+        [exe, "-hide_banner", "-t", str(seconds), "-i", str(path), "-vn",
+         "-af", "volumedetect", "-f", "null", "-"], capture_output=True, text=True)
+    m = re.search(r"mean_volume: (-?[\d.]+) dB", r.stderr)
+    return float(m.group(1)) if m else -99.0
+
+
+def _mix(tmp_path: Path, voice_expr: str, with_bgm: bool, cfg) -> Path:
+    from ytecon.bgm import generate_pad
+    from ytecon.render import audio_chain
+
+    exe = ensure_ffmpeg()
+    voice = tmp_path / "voice.wav"
+    r0 = subprocess.run([exe, "-y", "-f", "lavfi", "-i", voice_expr, "-t", "6",
+                         "-ac", "1", "-ar", "24000", str(voice)], capture_output=True, text=True)
+    assert r0.returncode == 0, r0.stderr[-400:]
+    video = tmp_path / "v.mp4"
+    subprocess.run([exe, "-y", "-f", "lavfi", "-i", "color=c=black:s=160x90:d=6:r=10",
+                    "-pix_fmt", "yuv420p", str(video)], capture_output=True, check=True)
+    args = [exe, "-y", "-i", str(video), "-i", str(voice)]
+    bgm_idx = None
+    if with_bgm:
+        pad = generate_pad(tmp_path / "pad.wav", seconds=8)
+        bgm_idx = 2
+        args += ["-stream_loop", "-1", "-i", str(pad)]
+    chain = ";".join(["[0:v]copy[v]"] + audio_chain(cfg, bgm_idx, 6.0))
+    out = tmp_path / "out.mp4"
+    args += ["-filter_complex", chain, "-map", "[v]", "-map", "[a]", "-t", "6",
+             "-c:v", "libx264", "-c:a", "aac", str(out)]
+    r = subprocess.run(args, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-600:]
+    return out
+
+
+def test_bgm_is_audible_when_voice_is_silent(tmp_path):
+    """声が無い区間では BGM が聞こえること（前回は -45dBFS で実質無音だった）."""
+    from ytecon.config import load_config
+
+    cfg = load_config()
+    out = _mix(tmp_path, "anullsrc=r=24000:cl=mono", with_bgm=True, cfg=cfg)
+    assert _rms_db(out) > -35, "BGM が小さすぎる／混ざっていない"
+
+
+def test_voice_stays_dominant_over_bgm(tmp_path):
+    """声がある区間では、声が BGM より十分大きいこと（3割程度の目安）."""
+    from ytecon.config import load_config
+
+    cfg = load_config()
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    with_voice = _mix(tmp_path / "a", "sine=frequency=220:sample_rate=24000", True, cfg)
+    voice_only = _mix(tmp_path / "b", "sine=frequency=220:sample_rate=24000", False, cfg)
+    # BGM を足しても全体の音量はほぼ変わらない（＝声が主役のまま）
+    assert abs(_rms_db(with_voice) - _rms_db(voice_only)) < 3.0

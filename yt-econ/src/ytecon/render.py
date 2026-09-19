@@ -131,6 +131,38 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     return out
 
 
+def audio_chain(cfg: Config, bgm_idx: int | None, total: float) -> list[str]:
+    """音声の filter_complex を組む（BGM の混ぜ方はここだけで決まる）.
+
+    考え方:
+      1. BGM をまず一定のラウドネス(-20 LUFS)に揃える。素材ごとの音量差を消す
+      2. そこから声に対する相対量(volume_db。既定 -8dB)を引く
+      3. 声が乗っている間だけ軽く下げる（ratio 2）。強く掛けると BGM が
+         「ある気配」すら消えて、無い動画と区別がつかなくなる
+      4. 最後に全体を YouTube 基準(-14 LUFS)へ
+
+    入力: [1:a] が声、[{bgm_idx}:a] が BGM。出力ラベルは [a]。
+    """
+    if bgm_idx is None:
+        return ["[1:a]apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]"]
+
+    vol = float(cfg.get("render.bgm.volume_db", -8))
+    fade_out_at = max(total - 3, 0)
+    chain = [
+        "[1:a]apad=pad_dur=0.8,asplit=2[voice][sc]",
+        f"[{bgm_idx}:a]aresample=48000,loudnorm=I=-20:TP=-2:LRA=7,volume={vol}dB,"
+        f"afade=t=in:st=0:d=2,afade=t=out:st={fade_out_at:.2f}:d=3[bgm0]",
+    ]
+    if cfg.get("render.bgm.ducking", True):
+        chain.append("[bgm0][sc]sidechaincompress=threshold=0.05:ratio=2:"
+                     "attack=20:release=500:makeup=1[bgm]")
+    else:
+        chain.append("[sc]anullsink;[bgm0]acopy[bgm]")
+    chain.append("[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0:"
+                 "normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+    return chain
+
+
 def render(
     cfg: Config,
     script: VideoScript,
@@ -197,23 +229,7 @@ def render(
         chain.append(f"{vout}[ch]overlay=W-w-{mr}:H-h-{mb}:format=auto:eof_action=repeat[v]")
         vout = "[v]"
 
-    # --- 音声: 声を基準に BGM を下げ、話している間はさらに下げる ---
-    if bgm_idx is not None:
-        vol = float(cfg.get("render.bgm.volume_db", -10))
-        chain.append("[1:a]apad=pad_dur=0.8,asplit=2[voice][sc]")
-        chain.append(
-            f"[{bgm_idx}:a]volume={vol}dB,afade=t=in:st=0:d=2,"
-            f"afade=t=out:st={max(total - 3, 0):.2f}:d=3[bgm0]"
-        )
-        if cfg.get("render.bgm.ducking", True):
-            chain.append("[bgm0][sc]sidechaincompress=threshold=0.03:ratio=6:"
-                         "attack=15:release=350[bgm]")
-        else:
-            chain.append("[sc]anullsink;[bgm0]acopy[bgm]")
-        chain.append("[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0,"
-                     "loudnorm=I=-14:TP=-1.5:LRA=11[a]")
-    else:
-        chain.append("[1:a]apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+    chain += audio_chain(cfg, bgm_idx, total)
 
     final = outdir / "video.mp4"
     args += [

@@ -125,9 +125,12 @@ def test_block_span():
 
 
 def test_chunk_two_lines_max():
+    """45字は均等に3行（15字×3）に割れ、1キューは最大2行."""
     groups = _chunk("あ" * 45, per_line=20)
-    assert [len("".join(g)) for g in groups] == [40, 5]
     assert all(len(g) <= 2 for g in groups)
+    lines = [ln for g in groups for ln in g]
+    assert len(lines) == 3 and all(len(ln) <= 20 for ln in lines)
+    assert max(map(len, lines)) - min(map(len, lines)) <= 1
 
 
 def test_cues_stay_inside_their_line(cfg: Config):
@@ -288,3 +291,18 @@ def test_missing_glyphs_are_substituted(cfg: Config):
     assert "→" not in out and "※" not in out
     assert "〜" in out                    # ある字はそのまま
     assert "110円" in out and "151円" in out
+
+
+def test_subtitle_lines_never_start_with_punctuation():
+    """「円安なのだ」+「。」のように句点だけの行ができないこと."""
+    from ytecon.subtitles import _balance, _chunk
+
+    expected = [["その一因として挙げられるのが、円安なのだ"]]
+    assert _chunk("その一因として挙げられるのが、円安なのだ。", 20) == expected
+    for text in ("あいうえおかきくけこさしすせそたちつてと、なにぬねの。",
+                 "短い文。", "あ" * 45 + "。"):
+        for group in _chunk(text, 20):
+            for line in group:
+                assert line and line[0] not in "。、」）", (text, group)
+    rows = _balance("あ" * 30, 20)
+    assert len(rows) == 2 and abs(len(rows[0]) - len(rows[1])) <= 1   # 均等に割れる

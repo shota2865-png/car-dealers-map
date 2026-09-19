@@ -178,7 +178,7 @@ visuals:
 character:
   enabled: true
   # 画面の高さに対する大きさ（0.42 = 画面の42%の高さ）
-  height_ratio: 0.42
+  height_ratio: 0.36
   # 右端・下端からの余白（px）
   margin_right: 24
   margin_bottom: 0
@@ -200,8 +200,9 @@ render:
     # 空なら、リラックス系のパッド音を自動生成して使う（仮の音。本番は差し替え推奨）
     # フリー音源の入手先は docs/BGMの用意.md を参照
     file: ""
-    # 声に対する BGM の大きさ。-10dB ≒ 体感で3割ほど
-    volume_db: -10
+    # 声に対する BGM の大きさ（BGM を一定の音量に揃えたあとの相対値）。
+    # -8dB ≒ 体感で3割ほど。目立つなら -12、寂しいなら -5
+    volume_db: -8
     # 声が乗っている間は BGM をさらに下げる（ダッキング）
     ducking: true
   capcut:
