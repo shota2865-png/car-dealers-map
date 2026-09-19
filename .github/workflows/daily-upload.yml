@@ -86,6 +86,23 @@ jobs:
             -n "${{ github.event.inputs.count || 1 }}" \
             ${{ github.event.inputs.upload == 'false' && '--no-upload' || '' }}
 
+      # 寝かせた動画のテーマが日本で話題化していないか毎日照合する。
+      # 生成が失敗した日でも、こちらは回しておく価値がある
+      - name: 寝かせた動画の掘り起こし
+        if: always()
+        env:
+          PYTHONPATH: src
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python -m ytecon revive | tee revive-report.txt
+
+      - name: 掘り起こしレポートをサマリに出す
+        if: always()
+        run: cat revive-report.txt >> "$GITHUB_STEP_SUMMARY" || true
+
       - name: 状態を保存
         if: always()
         uses: actions/cache/save@v4

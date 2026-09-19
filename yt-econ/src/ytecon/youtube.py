@@ -232,6 +232,49 @@ def upload_caption(cfg: Config, store: Store, video_id: str,
         log.warning("字幕の登録に失敗: %s", exc)
 
 
+def update_video_metadata(
+    cfg: Config,
+    store: Store,
+    video_id: str,
+    *,
+    title: str | None = None,
+    description_prefix: str | None = None,
+) -> None:
+    """公開済み動画のタイトル・概要欄を書き換える（掘り起こし用）.
+
+    snippet は部分更新ができず、送らなかったフィールドが消える。
+    必ず現在の snippet を読んでから、変える部分だけ差し替えて送り返す。
+    """
+    from googleapiclient.errors import HttpError
+
+    guard = QuotaGuard(store)
+    guard.check(COST_WRITE + 1)
+    service = build_service(cfg)
+
+    res = service.videos().list(part="snippet", id=video_id).execute()
+    items = res.get("items", [])
+    if not items:
+        raise UploadError(f"動画が見つかりません: {video_id}")
+    snippet = items[0]["snippet"]
+
+    if title:
+        snippet["title"] = title[:100]
+    if description_prefix:
+        current = snippet.get("description", "")
+        # 二重に足さないよう、既に同じ文が頭にあれば入れ替える
+        if not current.startswith(description_prefix.strip()):
+            snippet["description"] = (description_prefix.strip() + "\n\n" + current)[:5000]
+
+    # categoryId は必須。読み出した値をそのまま返す
+    body = {"id": video_id, "snippet": snippet}
+    try:
+        service.videos().update(part="snippet", body=body).execute()
+        guard.spend(COST_WRITE + 1)
+        log.info("メタデータを更新しました: %s", video_id)
+    except HttpError as exc:
+        raise UploadError(f"メタデータの更新に失敗しました: {exc}") from exc
+
+
 def ensure_playlist(cfg: Config, store: Store, title: str) -> str | None:
     from googleapiclient.errors import HttpError
 

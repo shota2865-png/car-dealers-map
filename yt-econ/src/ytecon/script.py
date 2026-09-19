@@ -184,6 +184,9 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 # 語り口の決まり
 {tone}
 
+# この回の型
+{horizon_guide}
+
 # 構成の型（必ずこの流れ）
 1. hook（15〜25秒）: 視聴者の生活に起きている「違和感」から入る。
    結論の予告を1文入れる。「今日は〜が分かります」で締める。
@@ -224,11 +227,41 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 - tags は日本語中心に12〜15個。
 """
 
+_HORIZON_GUIDE = {
+    "flow": """いま日本で話題になっている件です。視聴者はニュースを見た直後に
+来ます。**前提説明を長くしないこと。** 「何が起きたか」は30秒で流し、
+残りを「なぜ起きたか」と「自分にどう効くか」に使ってください。""",
+
+    "bridge": """海外で先に起きており、日本には数ヶ月以内に降りてくる件です。
+視聴者はまだ自分ごとだと思っていません。次の順で橋を架けてください。
+  1. 日本のいまの状況（視聴者が知っている足場）から入る
+  2. 海外ではすでにこうなっている、という事実を数字で示す
+  3. **なぜ日本には遅れて来るのか**を制度・商習慣・規制で説明する。
+     ここがこのチャンネルの独自性になる部分です。省略しないこと
+  4. 日本に来たとき何が変わるか。いつ頃かの見立ても言う
+  5. だから今のうちに何をしておくと得か""",
+
+    "stock": """海外のみで起きており、日本ではまだほとんど誰も話していない件です。
+**今日の再生数のために作る回ではありません。** 日本でこの話題が立ち上がった
+ときに、検索して最初に見つかる1本を作るのが目的です。そのため:
+  - 「先週」「今月」のような**時点に依存する表現を使わない**。1年後に見ても
+    古びない書き方にする。年号は「2026年時点では」と明示して使う
+  - 用語の定義を省略しない。後から来た初見の人がこの1本で足りる状態にする
+  - hook は煽らず、「この言葉を初めて聞いた人向けに、最初から説明します」
+    という入口にする。検索で来た人は説明を求めており、驚きを求めていない
+  - 日本にいつ・どういう形で来るかの見立てを必ず1セクション割く
+  - 最後に「この動画は日本で話題になる前に作りました」と言わない。
+    それは概要欄の仕事です""",
+}
+
+
 _USER = """# 今日つくる動画
 
 テーマ: {title}
 切り口: {angle}
+この回の位置づけ: {horizon}（日本での普及段階 {stage}/3、一般化まで推定 {lag}ヶ月）
 なぜ今か: {why_now}
+日本の視聴者への接続: {bridge}
 視聴者が自分ごと化できる点: {hook}
 answer すべき問い:
 {questions}
@@ -249,6 +282,7 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
     """台本を生成し、尺と事実の観点で補正して返す."""
     lo, hi = cfg.target_chars
     system = _SYSTEM.format(
+        horizon_guide=_HORIZON_GUIDE.get(topic.horizon, _HORIZON_GUIDE["flow"]),
         audience=cfg.get("channel.audience", ""),
         tone=cfg.get("channel.tone", ""),
         sections=int(cfg.get("video.body_sections", 5)),
@@ -261,6 +295,10 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
     user = _USER.format(
         title=topic.title,
         angle=topic.angle,
+        horizon=topic.horizon,
+        stage=topic.diffusion_stage,
+        lag=f"{topic.lag_months:.0f}",
+        bridge=topic.japan_bridge or "(指定なし)",
         why_now=topic.why_now or "(常設テーマ)",
         hook=topic.audience_hook,
         questions="\n".join(f"- {q}" for q in topic.key_questions) or "- (自由)",

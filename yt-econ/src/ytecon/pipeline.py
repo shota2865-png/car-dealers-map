@@ -130,14 +130,15 @@ class Pipeline:
         return art.video
 
     def stage_publish(self, slug: str, s: script_mod.VideoScript,
-                      track: tts.VoiceTrack, slot_index: int) -> dict[str, Any]:
+                      track: tts.VoiceTrack, slot_index: int,
+                      horizon: str = "flow") -> dict[str, Any]:
         art = self.art(slug)
         if not art.video.exists():
             raise RuntimeError(
                 f"{art.video} がありません。CapCut バックエンドの場合は、"
                 "書き出した mp4 をこのパスに置いてから upload を実行してください。"
             )
-        title, thumb_copy = metadata.choose_title(self.cfg, s)
+        title, thumb_copy = metadata.choose_title(self.cfg, s, horizon=horizon)
         if thumb_copy.get("main"):
             s.thumbnail_copy = thumb_copy
             s.save(art.script)
@@ -165,6 +166,7 @@ class Pipeline:
                 upload: bool = True) -> dict[str, Any]:
         slug = slugify(topic.title)
         self.store.create_video(slug, topic.id, topic.title)
+        self.store.update_video(slug, horizon=topic.horizon)
         if topic.id:
             self.store.mark_topic_used(topic.id)
         log.info("=== [%s] %s ===", slug, topic.title)
@@ -178,7 +180,8 @@ class Pipeline:
             result: dict[str, Any] = {"slug": slug, "title": s.topic_title,
                                       "dir": str(self.art(slug).dir)}
             if upload and str(self.cfg.get("render.backend")) == "ffmpeg":
-                result.update(self.stage_publish(slug, s, track, slot_index))
+                result.update(self.stage_publish(slug, s, track, slot_index,
+                                                 horizon=topic.horizon))
             else:
                 log.info("[%s] アップロードはスキップしました", slug)
             return result

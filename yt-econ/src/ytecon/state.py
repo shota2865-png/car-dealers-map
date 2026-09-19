@@ -27,6 +27,21 @@ CREATE TABLE IF NOT EXISTS topics (
 );
 CREATE INDEX IF NOT EXISTS idx_topics_created ON topics(created_at);
 
+-- 海外で先行している話題が日本に降りてくるまでの時差を扱うためのテーブル。
+-- 「いつ刺さるか」を記録しておき、実際に日本で話題化したら掘り起こす。
+CREATE TABLE IF NOT EXISTS revivals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id    INTEGER NOT NULL,
+    matched     TEXT,               -- 反応したキーワード
+    headline    TEXT,               -- 検知した見出し
+    source_url  TEXT,
+    applied     INTEGER NOT NULL DEFAULT 0,
+    plan_json   TEXT,
+    created_at  REAL NOT NULL,
+    FOREIGN KEY(video_id) REFERENCES videos(id)
+);
+CREATE INDEX IF NOT EXISTS idx_revivals_video ON revivals(video_id);
+
 CREATE TABLE IF NOT EXISTS videos (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     slug         TEXT UNIQUE NOT NULL,
@@ -51,6 +66,31 @@ CREATE TABLE IF NOT EXISTS quota (
 
 STATUSES = ("planned", "scripted", "voiced", "rendered", "uploaded", "failed")
 
+# 日本での普及段階。海外発の話題は S0 から順に降りてくる
+DIFFUSION_STAGES = {
+    0: "海外のみ。日本ではまだ誰も話していない",
+    1: "感度の高い一部の層が知り始めた",
+    2: "日本のメディアが報じ始めた",
+    3: "一般化して既出。競合が多い",
+}
+
+# 企画の賞味期限。ポートフォリオを組むときの単位
+HORIZONS = ("flow", "bridge", "stock")
+
+# あとから足した列。既存 DB でも起動時に自動で追加される
+_ADDED_COLUMNS = {
+    "topics": [
+        ("horizon", "TEXT"),            # flow | bridge | stock
+        ("diffusion_stage", "INTEGER"),  # 0..3
+        ("lag_months", "REAL"),          # 日本で一般化するまでの推定ヶ月数
+        ("watch_json", "TEXT"),          # 日本で話題化したら見出しに出る語
+    ],
+    "videos": [
+        ("horizon", "TEXT"),
+        ("revived_at", "REAL"),
+    ],
+}
+
 
 @dataclass
 class VideoRecord:
@@ -72,7 +112,21 @@ class Store:
         self._conn = sqlite3.connect(self.path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """後から増えた列を既存 DB にも足す（作り直さなくて済むように）."""
+        for table, columns in _ADDED_COLUMNS.items():
+            existing = {
+                row["name"]
+                for row in self._conn.execute(f"PRAGMA table_info({table})")
+            }
+            for name, sql_type in columns:
+                if name not in existing:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"
+                    )
 
     # ------------------------------------------------------------------
     @contextmanager
@@ -102,15 +156,35 @@ class Store:
         kind: str,
         sources: list[dict[str, Any]] | None = None,
         score: float = 0.0,
+        horizon: str = "flow",
+        diffusion_stage: int = 3,
+        lag_months: float = 0.0,
+        watch_keywords: list[str] | None = None,
     ) -> int:
         with self._tx() as conn:
             cur = conn.execute(
-                "INSERT INTO topics(title, angle, kind, source_json, score, created_at)"
-                " VALUES(?,?,?,?,?,?)",
+                "INSERT INTO topics(title, angle, kind, source_json, score, created_at,"
+                " horizon, diffusion_stage, lag_months, watch_json)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (title, angle, kind, json.dumps(sources or [], ensure_ascii=False),
-                 score, time.time()),
+                 score, time.time(), horizon, diffusion_stage, lag_months,
+                 json.dumps(watch_keywords or [], ensure_ascii=False)),
             )
         return int(cur.lastrowid)
+
+    def horizon_counts(self, days: int) -> dict[str, int]:
+        """直近の企画が flow/bridge/stock にどう振れているか."""
+        since = time.time() - days * 86400
+        rows = self._conn.execute(
+            "SELECT horizon, COUNT(*) AS n FROM topics"
+            " WHERE created_at >= ? GROUP BY horizon",
+            (since,),
+        ).fetchall()
+        counts = {h: 0 for h in HORIZONS}
+        for row in rows:
+            if row["horizon"] in counts:
+                counts[row["horizon"]] = int(row["n"])
+        return counts
 
     def mark_topic_used(self, topic_id: int) -> None:
         with self._tx() as conn:
@@ -151,6 +225,71 @@ class Store:
             statuses,
         ).fetchall()
         return [_to_record(r) for r in rows]
+
+    def watchlist(self) -> list[dict[str, Any]]:
+        """公開済みのうち、日本での話題化を待っている動画とその監視語."""
+        rows = self._conn.execute(
+            "SELECT v.id AS video_id, v.slug, v.title, v.youtube_id, v.revived_at,"
+            "       t.watch_json, t.horizon, t.lag_months, t.created_at"
+            "  FROM videos v JOIN topics t ON v.topic_id = t.id"
+            " WHERE v.status = 'uploaded' AND v.youtube_id IS NOT NULL"
+            "   AND t.horizon IN ('stock','bridge')"
+            " ORDER BY t.created_at",
+        ).fetchall()
+        out = []
+        for row in rows:
+            keywords = json.loads(row["watch_json"] or "[]")
+            if keywords:
+                out.append({
+                    "video_id": row["video_id"],
+                    "slug": row["slug"],
+                    "title": row["title"],
+                    "youtube_id": row["youtube_id"],
+                    "revived_at": row["revived_at"],
+                    "keywords": keywords,
+                    "horizon": row["horizon"],
+                    "lag_months": row["lag_months"],
+                    "published_at": row["created_at"],
+                })
+        return out
+
+    def add_revival(self, video_id: int, matched: str, headline: str,
+                    source_url: str, plan: dict[str, Any] | None = None) -> int:
+        with self._tx() as conn:
+            cur = conn.execute(
+                "INSERT INTO revivals(video_id, matched, headline, source_url,"
+                " plan_json, created_at) VALUES(?,?,?,?,?,?)",
+                (video_id, matched, headline, source_url,
+                 json.dumps(plan or {}, ensure_ascii=False), time.time()),
+            )
+        return int(cur.lastrowid)
+
+    def revival_seen(self, video_id: int, matched: str) -> bool:
+        """同じ動画×同じキーワードで二度通知しないための確認."""
+        row = self._conn.execute(
+            "SELECT 1 FROM revivals WHERE video_id=? AND matched=? LIMIT 1",
+            (video_id, matched),
+        ).fetchone()
+        return row is not None
+
+    def revived_recently(self, video_id: int, within_days: float) -> bool:
+        """直近で掘り起こし済みか.
+
+        1本の動画には監視語を複数持たせるので、キーワード単位で判定すると
+        同じニュースに別の語が反応して二度三度鳴る。動画単位で抑える。
+        """
+        since = time.time() - within_days * 86400
+        row = self._conn.execute(
+            "SELECT 1 FROM revivals WHERE video_id=? AND created_at >= ? LIMIT 1",
+            (video_id, since),
+        ).fetchone()
+        return row is not None
+
+    def mark_revival_applied(self, revival_id: int, video_id: int) -> None:
+        with self._tx() as conn:
+            conn.execute("UPDATE revivals SET applied=1 WHERE id=?", (revival_id,))
+            conn.execute("UPDATE videos SET revived_at=? WHERE id=?",
+                         (time.time(), video_id))
 
     def uploaded_count_today(self, day: str) -> int:
         row = self._conn.execute(

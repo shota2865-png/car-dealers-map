@@ -40,6 +40,9 @@ _TITLE_SCHEMA = llm.obj(
 
 _TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。視聴者は{audience}。
 
+# この回の戦い方
+{horizon_guide}
+
 良いタイトルの条件:
 - 40字以内。スマホで切れずに読めるのは冒頭28字程度なので、前半に要点を置く
 - 「知らないと損」「ヤバい」など煽り語を使わない。内容と一致させる
@@ -53,7 +56,28 @@ _TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。
 """
 
 
-def choose_title(cfg: Config, script: VideoScript) -> tuple[str, dict[str, str]]:
+_TITLE_HORIZON = {
+    "flow": """いま日本で話題の件です。**推薦（ブラウジング）で戦います。**
+一覧に並んだときクリックされる語を選んでください。検索されることは
+あまり期待しなくてよいので、意外性や問いを優先します。""",
+
+    "bridge": """数ヶ月後に日本で話題化する件です。**推薦と検索の両取り**を狙います。
+今クリックされる語を前半に、後から検索される語（制度名・カタカナ語など
+固有の名詞）を後半に入れてください。""",
+
+    "stock": """日本ではまだ話題になっていない件です。**検索で後から掘られるのが本番**で、
+今日のクリック率はほぼ意味がありません。したがって:
+  - 日本で話題化したときに人が打ち込む語を、**そのままの表記で**入れる
+    （略称と正式名称が両方あるなら、検索されるほうを優先）
+  - 「とは」「わかりやすく」「解説」のいずれかを入れる。後追いで調べる人は
+    この語を付けて検索します
+  - 意外性より説明性を優先する。煽ると、検索で来た人に不信感を与えます
+  - 時点に依存する語（速報、今週、最新）は入れない。1年後に古びます""",
+}
+
+
+def choose_title(cfg: Config, script: VideoScript,
+                 horizon: str = "flow") -> tuple[str, dict[str, str]]:
     candidates = "\n".join(f"- {t}" for t in script.title_candidates) or "- (候補なし)"
     user = f"""動画の内容:
 テーマ: {script.topic_title}
@@ -67,7 +91,10 @@ def choose_title(cfg: Config, script: VideoScript) -> tuple[str, dict[str, str]]
 この動画に最適なタイトルを1つ決め、サムネ文言も併せて出してください。
 候補をそのまま使っても、書き直しても構いません。"""
     data = llm.complete_json(
-        _TITLE_SYSTEM.format(audience=cfg.get("channel.audience", "")),
+        _TITLE_SYSTEM.format(
+            audience=cfg.get("channel.audience", ""),
+            horizon_guide=_TITLE_HORIZON.get(horizon, _TITLE_HORIZON["flow"]),
+        ),
         user,
         _TITLE_SCHEMA,
         model=cfg.get("script.model", llm.DEFAULT_MODEL),

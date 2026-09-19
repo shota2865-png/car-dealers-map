@@ -191,6 +191,56 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_revive(args: argparse.Namespace) -> int:
+    """寝かせた動画のテーマが日本で話題化していないか照合する."""
+    from .config import load_config
+    from .revive import format_report, run
+    from .state import Store
+
+    cfg = load_config(args.config)
+    if not cfg.get("revive.enabled", True):
+        print("revive.enabled が false です")
+        return 0
+    store = Store(cfg.workdir / "state.sqlite3")
+    apply = args.apply or bool(cfg.get("revive.auto_apply", False))
+    hits = run(cfg, store, apply=apply)
+    print(format_report(hits))
+    if hits and not apply:
+        print("\n反映するには --apply を付けて実行してください。")
+    return 0
+
+
+def cmd_portfolio(args: argparse.Namespace) -> int:
+    """flow / bridge / stock の偏りと、掘り起こし待ちの在庫を見る."""
+    from .config import load_config
+    from .state import Store
+
+    cfg = load_config(args.config)
+    store = Store(cfg.workdir / "state.sqlite3")
+
+    window = int(cfg.get("topics.horizon_window_days", 30))
+    recent = store.horizon_counts(window)
+    lifetime = store.horizon_counts(3650)
+    total = sum(lifetime.values())
+
+    label = {"flow": "flow   いま刺さる", "bridge": "bridge 半年以内に来る",
+             "stock": "stock  先行仕込み"}
+    print(f"== 企画の内訳 ==\n")
+    print(f"{'':22s} 直近{window}日   累計")
+    for h in ("flow", "bridge", "stock"):
+        share = f"{lifetime[h] / total * 100:.0f}%" if total else "-"
+        print(f"{label[h]:22s} {recent[h]:>5d}本 {lifetime[h]:>6d}本 ({share})")
+
+    watch = store.watchlist()
+    print(f"\n== 掘り起こし待ち {len(watch)}本 ==")
+    if not watch:
+        print("  まだありません（stock/bridge を公開すると貯まります）")
+    for item in watch[:20]:
+        mark = "済" if item["revived_at"] else "  "
+        print(f"  {mark} {item['title'][:34]:<34} 監視語: {'、'.join(item['keywords'][:3])}")
+    return 0
+
+
 def cmd_speakers(args: argparse.Namespace) -> int:
     from .config import load_config
     from .tts import VoiceVox
@@ -253,6 +303,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("status", help="進行状況一覧")
     p.add_argument("-n", "--number", type=int, default=20)
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("revive", help="寝かせた動画が日本で話題化したか照合する")
+    p.add_argument("--apply", action="store_true",
+                   help="タイトル・サムネ・概要欄を YouTube に反映する")
+    p.set_defaults(func=cmd_revive)
+
+    p = sub.add_parser("portfolio", help="flow/bridge/stock の偏りと在庫を見る")
+    p.set_defaults(func=cmd_portfolio)
 
     p = sub.add_parser("speakers", help="VOICEVOX の話者一覧")
     p.set_defaults(func=cmd_speakers)
