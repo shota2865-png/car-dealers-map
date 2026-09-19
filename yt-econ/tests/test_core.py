@@ -277,3 +277,14 @@ def test_srt_has_no_telops(cfg: Config, tmp_path: Path):
     ass = out["ass"].read_text(encoding="utf-8")
     assert "テロップだけの文言" not in srt
     assert "テロップだけの文言" in ass
+
+
+
+def test_missing_glyphs_are_substituted(cfg: Config):
+    """同梱フォントに無い記号（→ ※ など）が豆腐にならず、近い字に置き換わること."""
+    from ytecon.assets import safe_text
+
+    out = safe_text(cfg, "110円 → 151円 ※注 2021〜2024")
+    assert "→" not in out and "※" not in out
+    assert "〜" in out                    # ある字はそのまま
+    assert "110円" in out and "151円" in out

@@ -68,6 +68,15 @@ class Section:
 
 
 @dataclass
+class Term:
+    """ビジネス用語。用語カードとして画面に出す."""
+    term: str
+    meaning: str
+    example: str = ""
+    section: int = 0
+
+
+@dataclass
 class OpenLoop:
     """前半で投げて後半で回収する問い。回収しない伏線は禁止."""
     question: str
@@ -89,6 +98,7 @@ class VideoScript:
     proof: str = ""                  # 0-15秒。結論を裏づける具体
     promise: str = ""                # 15-30秒。この動画で何が分かるか
     open_loops: list[OpenLoop] = field(default_factory=list)
+    terms: list[Term] = field(default_factory=list)
 
     @property
     def narration_blocks(self) -> list[tuple[str, str]]:
@@ -158,6 +168,12 @@ class VideoScript:
                 OpenLoop(question=o.get("question", ""),
                          payoff_section=int(o.get("payoff_section", -1) or -1))
                 for o in (d.get("open_loops") or []) if o.get("question")
+            ],
+            terms=[
+                Term(term=t.get("term", ""), meaning=t.get("meaning", ""),
+                     example=t.get("example", ""),
+                     section=int(t.get("section", 0) or 0))
+                for t in (d.get("terms") or []) if t.get("term")
             ],
         )
 
@@ -242,6 +258,14 @@ _SCRIPT_SCHEMA = llm.obj(
         "tags": llm.arr(llm.STR),
         "thumbnail_copy": llm.obj({"main": llm.STR, "sub": llm.STR}),
         "sources": llm.arr(llm.obj({"name": llm.STR, "url": llm.STR})),
+        "terms": llm.arr(
+            llm.obj({
+                "term": llm.STR,
+                "meaning": llm.STR,
+                "example": llm.STR,
+                "section": llm.INT,     # 何番目のセクションで初出か
+            })
+        ),
         "disclaimer": llm.STR,
     }
 )
@@ -266,6 +290,28 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 
 # この回の型
 {horizon_guide}
+
+# 内容の難しさと、話し方の高さは別物
+
+- **内容は小学5年生に伝わる水準まで噛み砕く。**
+  仕組みの説明は、身近な物（お小遣い・スーパー・ゲーム）に置き換える。
+  数字は「多い/少ない」だけでなく「何と比べて」を必ず添える。
+- **話し方は大学生〜20代のビジネスパーソンに向ける。**
+  子ども扱いしない。「みんな」と呼びかけるが、口調は対等。
+  比喩は身近でも、結論は大人の判断材料になる形で言う。
+つまり「中身はやさしく、態度は対等」。この組み合わせを崩さないこと。
+
+# ビジネス用語を毎回 2〜4 個、正面から扱う
+
+このチャンネルの視聴者は、ニュースに出てくる**ビジネスの言葉**を
+知りたがっている。日常語ではなく、仕事や経済の場面でしか使わない語のこと。
+（例: 実質賃金 / 政策金利 / 貿易収支 / 購買力平価 / 名目と実質 / 為替介入）
+
+- 動画ごとに 2〜4 個を terms に入れる。term（用語）、meaning（一文の意味）、
+  example（**数字つきの具体例**。「〜を示す〇〇という数字が、アメリカは△△、
+  日本は□□」のような形）を必ず埋める
+- 本文でその用語を初めて出す文の直後に、言い換えを1文添える
+- example の数字には出典を口頭で添える（「〇〇によると」）
 
 # 視聴者を置き去りにしない（このチャンネルの生命線）
 
@@ -432,6 +478,12 @@ _SPEECH_STYLE = {
 - 専門用語を避けない。言い換えを添えたうえで、正しい語を使うのだ
 - **hook の最後の1文と closing の最後の1文は必ず「のだ」調で締める。**
   ここに です・ます が混ざると、声と合わずいちばん目立つ
+- **「のだ」調は読み上げ本文（hook / proof / promise / narration / closing）だけ。**
+  見出し(heading)・箇条書き(on_screen)・テロップ(captions)・タイトル案・
+  サムネ文言・用語カードは**すべて標準語**で書く。
+  画面に出る文字に「のだ」が入ると幼稚に見える。
+    悪い例) 見出し「じゃあ、ぼくらはどうするのだ」
+    良い例) 見出し「私たちはどうすればいいか」
 - **1文を20〜30字に収める。** 合成音声は長い文だと抑揚が単調になり、
   聞き手が置いていかれる。実測でも、ずんだもん音声のチャンネルは
   1文19.5字、人の声のチャンネルは41字と倍以上の差があった。
@@ -658,12 +710,44 @@ def tts_text(text: str) -> str:
     return out.strip()
 
 
+_QUESTION_WORDS = ("なぜ", "どう", "何", "なに", "どこ", "いつ", "誰", "だれ", "どれ", "どちら")
+
+
+def plain_heading(text: str) -> str:
+    """画面に出す文字から「のだ」調を落とす（プロンプトの指示が漏れたとき用の保険）.
+
+    疑問語を含む見出しは「〜のか」に、それ以外は語尾を削る。
+      「なぜ苦しいのだ」          → 「なぜ苦しいのか」
+      「じゃあ、ぼくらはどうするのだ」→ 「じゃあ、ぼくらはどうするのか」
+      「これが円安なのだ」        → 「これが円安」
+    """
+    t = text.strip()
+    for tail in ("なのだ", "のだ"):
+        if t.endswith(tail):
+            base = t[: -len(tail)]
+            if any(q in t for q in _QUESTION_WORDS):
+                return base + "のか"
+            return base
+    return t
+
+
 def _sanitize(script: VideoScript) -> None:
     script.hook = tts_text(script.hook)
+    script.proof = tts_text(script.proof)
+    script.promise = tts_text(script.promise)
     script.closing = tts_text(script.closing)
+    script.title_candidates = [plain_heading(t) for t in script.title_candidates]
+    if script.thumbnail_copy:
+        script.thumbnail_copy = {k: plain_heading(v) for k, v in script.thumbnail_copy.items()}
     for sec in script.sections:
+        sec.heading = plain_heading(sec.heading)
         sec.narration = tts_text(sec.narration)
-        sec.on_screen = [s.strip()[:24] for s in sec.on_screen][:4]
+        sec.on_screen = [plain_heading(s)[:24] for s in sec.on_screen][:4]
+        for cap in sec.captions:
+            cap.text = plain_heading(cap.text)[:16]
+    for term in script.terms:
+        term.term = plain_heading(term.term)
+        term.meaning = plain_heading(term.meaning)
 
 
 def split_sentences(text: str) -> list[str]:

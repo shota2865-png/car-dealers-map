@@ -14,7 +14,6 @@ import logging
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
@@ -31,18 +30,7 @@ class RenderError(RuntimeError):
 _ffmpeg_path: str | None = None
 
 
-@dataclass
-class Scene:
-    image: Path
-    start: float
-    end: float
-    # 図表やテキストカードはズームさせない。文字が滲むうえ、
-    # 端に置いた出典キャプションがズームで切れてしまうため。
-    still: bool = False
-
-    @property
-    def duration(self) -> float:
-        return max(self.end - self.start, 0.5)
+from .scenes import Scene  # noqa: E402  (Scene の定義は scenes.py に移した)
 
 
 # ----------------------------------------------------------------------
@@ -92,41 +80,6 @@ def _escape_filter_path(path: Path) -> str:
 
 
 # ----------------------------------------------------------------------
-def _is_still(script: VideoScript, block: str) -> bool:
-    """そのブロックの画面が『動かしてはいけない』ものかどうか."""
-    if block in ("hook", "closing"):
-        return True                      # タイトル/アウトロのカード
-    try:
-        index = int(block[1:])
-        return script.sections[index].visual.kind in ("chart", "textcard")
-    except (ValueError, IndexError):
-        return False
-
-
-def plan_scenes(script: VideoScript, track: VoiceTrack,
-                images: dict[str, Path]) -> list[Scene]:
-    """ブロックごとの音声区間に画像を割り当てる."""
-    scenes: list[Scene] = []
-    order = ["hook"] + [f"s{i}" for i in range(len(script.sections))] + ["closing"]
-    image_key = {"hook": "title", "closing": "outro"}
-    for block in order:
-        start, end = track.block_span(block)
-        if end <= start:
-            continue
-        key = image_key.get(block, block)
-        img = images.get(key)
-        if img is None:
-            log.warning("ブロック %s に対応する画像がありません", block)
-            continue
-        scenes.append(Scene(image=img, start=start, end=end,
-                            still=_is_still(script, block)))
-    if not scenes:
-        raise RenderError("シーンを1つも構成できませんでした")
-    # 最後のシーンは音声の終わりまで伸ばす（0.8秒の余韻）
-    scenes[-1].end = track.duration + 0.8
-    return scenes
-
-
 # Ken Burns の最大ズーム倍率。入力はこれより少しだけ大きく作れば足りる
 MAX_ZOOM = 1.12
 OVERSAMPLE = 1.25
@@ -163,6 +116,11 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
         vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
               f"loop=loop={frames}:size=1:start=0,fps={fps}")
 
+    # 切り替わった感を出す短いフェードイン（カットの手触りが硬すぎない程度）
+    fade_frames = int(cfg.get("visuals.fade_in_frames", 6))
+    if fade_frames > 0 and frames > fade_frames * 2:
+        vf += f",fade=t=in:st=0:d={fade_frames / fps:.3f}"
+
     _run(
         [ffmpeg, "-y", "-i", str(scene.image),
          "-vf", vf, "-frames:v", str(frames),
@@ -177,80 +135,98 @@ def render(
     cfg: Config,
     script: VideoScript,
     track: VoiceTrack,
-    images: dict[str, Path],
+    scenes: list[Scene],
     subtitle_ass: Path,
     outdir: str | Path,
 ) -> Path:
     """完成した mp4 のパスを返す."""
+    from . import bgm as bgm_mod
+    from . import character
+
     ffmpeg = ensure_ffmpeg()
     outdir = Path(outdir)
     seg_dir = outdir / "segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
+    if not scenes:
+        raise RenderError("シーンがありません")
 
-    scenes = plan_scenes(script, track, images)
     segments = [
-        render_segment(cfg, scene, seg_dir / f"seg_{i:02d}.mp4", i)
+        render_segment(cfg, scene, seg_dir / f"seg_{i:03d}.mp4", i)
         for i, scene in enumerate(scenes)
     ]
 
-    # concat demuxer 用のリスト
     list_file = seg_dir / "concat.txt"
-    list_file.write_text(
-        "".join(f"file '{p.name}'\n" for p in segments), encoding="utf-8"
-    )
+    list_file.write_text("".join(f"file '{p.name}'\n" for p in segments), encoding="utf-8")
     silent = outdir / "silent.mp4"
     _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
           "-c", "copy", str(silent)], "シーン連結")
 
-    # --- 最終合成 ---
+    total = track.duration + 0.8
+    w, h = cfg.get("video.resolution", [1920, 1080])
+
+    # --- 入力を組み立てる（任意のものは有る時だけ） ---
+    inputs = [silent, track.wav_path]
+    args = [ffmpeg, "-y", "-i", str(silent), "-i", str(track.wav_path)]
+
+    bgm_path = bgm_mod.resolve(cfg)
+    bgm_idx = None
+    if bgm_path:
+        bgm_idx = len(inputs)
+        inputs.append(bgm_path)
+        args += ["-stream_loop", "-1", "-i", str(bgm_path)]
+
+    char_path = character.build_track(cfg, track.wav_path, total, outdir)
+    char_idx = None
+    if char_path:
+        char_idx = len(inputs)
+        inputs.append(char_path)
+        args += ["-i", str(char_path)]
+
+    # --- 映像: 字幕を焼く → キャラクターを右下に重ねる ---
     fonts_dir = cfg.root / "assets" / "fonts"
     sub_filter = f"ass='{_escape_filter_path(subtitle_ass)}'"
     if fonts_dir.exists():
         sub_filter += f":fontsdir='{_escape_filter_path(fonts_dir)}'"
+    chain = [f"[0:v]{sub_filter}[v0]"]
+    vout = "[v0]"
+    if char_idx is not None:
+        ch_h = int(h * float(cfg.get("character.height_ratio", 0.42)))
+        mr = int(cfg.get("character.margin_right", 24))
+        mb = int(cfg.get("character.margin_bottom", 0))
+        chain.append(f"[{char_idx}:v]scale=-2:{ch_h}[ch]")
+        chain.append(f"{vout}[ch]overlay=W-w-{mr}:H-h-{mb}:format=auto:eof_action=repeat[v]")
+        vout = "[v]"
 
-    args = [ffmpeg, "-y", "-i", str(silent), "-i", str(track.wav_path)]
-
-    bgm_file = ""
-    if cfg.get("render.bgm.enabled", False):
-        name = cfg.get("render.bgm.file", "") or ""
-        if name:
-            candidate = cfg.root / "assets" / "bgm" / name
-            if candidate.exists():
-                bgm_file = str(candidate)
-            else:
-                log.warning("BGM ファイルが見つかりません: %s（BGM なしで続行）", candidate)
-
-    total = track.duration + 0.8
-    if bgm_file:
-        args += ["-stream_loop", "-1", "-i", bgm_file]
-        vol = cfg.get("render.bgm.volume_db", -26)
-        filter_complex = (
-            f"[0:v]{sub_filter}[v];"
-            f"[2:a]volume={vol}dB,afade=t=in:st=0:d=2,"
-            f"afade=t=out:st={max(total-3,0):.2f}:d=3[bgm];"
-            f"[1:a]apad=pad_dur=0.8[voice];"
-            f"[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0,"
-            f"loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+    # --- 音声: 声を基準に BGM を下げ、話している間はさらに下げる ---
+    if bgm_idx is not None:
+        vol = float(cfg.get("render.bgm.volume_db", -10))
+        chain.append("[1:a]apad=pad_dur=0.8,asplit=2[voice][sc]")
+        chain.append(
+            f"[{bgm_idx}:a]volume={vol}dB,afade=t=in:st=0:d=2,"
+            f"afade=t=out:st={max(total - 3, 0):.2f}:d=3[bgm0]"
         )
+        if cfg.get("render.bgm.ducking", True):
+            chain.append("[bgm0][sc]sidechaincompress=threshold=0.03:ratio=6:"
+                         "attack=15:release=350[bgm]")
+        else:
+            chain.append("[sc]anullsink;[bgm0]acopy[bgm]")
+        chain.append("[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0,"
+                     "loudnorm=I=-14:TP=-1.5:LRA=11[a]")
     else:
-        filter_complex = (
-            f"[0:v]{sub_filter}[v];"
-            f"[1:a]apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
-        )
+        chain.append("[1:a]apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
 
     final = outdir / "video.mp4"
     args += [
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "[a]",
+        "-filter_complex", ";".join(chain),
+        "-map", vout, "-map", "[a]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
         "-profile:v", "high", "-level", "4.1",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",
-        "-shortest", str(final),
+        "-t", f"{total:.3f}", str(final),
     ]
     _run(args, "最終合成")
-
-    log.info("動画を出力しました: %s (%.1f分)", final, total / 60)
+    log.info("動画を出力しました: %s (%.1f分 / %dシーン)", final, total / 60, len(scenes))
     return final
 
 

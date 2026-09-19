@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
-from .render import Scene, plan_scenes
+from .scenes import Scene
 from .script import VideoScript
 from .tts import VoiceTrack
 
@@ -172,7 +172,7 @@ def build_draft(
     cfg: Config,
     script: VideoScript,
     track_audio: VoiceTrack,
-    images: dict[str, Path],
+    images: list[Scene],
     subtitle_srt: Path,
     outdir: str | Path,
     draft_name: str,
@@ -190,7 +190,7 @@ def build_draft(
     mat_dir.mkdir(parents=True, exist_ok=True)
 
     # 素材をドラフト配下にコピー（元を消しても CapCut が壊れないように）
-    scenes = plan_scenes(script, track_audio, images)
+    scenes = list(images)
     copied: list[tuple[Path, Scene]] = []
     for i, scene in enumerate(scenes):
         dest = mat_dir / f"scene_{i:02d}{scene.image.suffix}"

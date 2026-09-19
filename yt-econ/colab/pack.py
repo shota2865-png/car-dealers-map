@@ -29,6 +29,13 @@ def build(script_json: Path, out: Path | None = None) -> Path:
         lic = ROOT / "assets" / "fonts" / "LICENSE.txt"
         if lic.exists():
             z.write(lic, "assets/fonts/LICENSE.txt")
+        # 右下のキャラクター（置いてあれば本物、無ければ仮キャラ）
+        for png in (ROOT / "assets" / "character").glob("*.png"):
+            z.write(png, f"assets/character/{png.name}")
+        # BGM（置いてあれば。無ければ実行時に合成音を作る）
+        for ext in ("*.mp3", "*.wav", "*.m4a", "*.ogg"):
+            for m in (ROOT / "assets" / "bgm").glob(ext):
+                z.write(m, f"assets/bgm/{m.name}")
         z.write(script_json, "script.json")
 
     return out

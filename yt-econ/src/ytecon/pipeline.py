@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import assets, capcut, metadata, render, script as script_mod, subtitles, thumbnail
+from . import capcut, character, metadata, render, scenes as scenes_mod, script as script_mod, subtitles, thumbnail
 from . import topics as topics_mod
 from . import tts, youtube
 from .config import Config, load_config
@@ -96,14 +96,16 @@ class Pipeline:
         return track
 
     def stage_visuals(self, slug: str, s: script_mod.VideoScript,
-                      track: tts.VoiceTrack) -> tuple[dict[str, Path], dict[str, Path]]:
+                      track: tts.VoiceTrack) -> tuple[list, dict[str, Path]]:
         art = self.art(slug)
-        images = assets.build_all(self.cfg, s, art.images)
-        subs = subtitles.build(self.cfg, track, art.dir, script=s)
-        return images, subs
+        scenes = scenes_mod.plan_and_render(self.cfg, s, track, art.images)
+        # 右下にキャラクターを置くぶん、字幕とテロップを左に寄せる
+        reserve = character.reserved_width(self.cfg)
+        subs = subtitles.build(self.cfg, track, art.dir, script=s, reserve_right=reserve)
+        return scenes, subs
 
     def stage_render(self, slug: str, s: script_mod.VideoScript,
-                     track: tts.VoiceTrack, images: dict[str, Path],
+                     track: tts.VoiceTrack, images: list,
                      subs: dict[str, Path]) -> Path:
         art = self.art(slug)
         backend = str(self.cfg.get("render.backend", "ffmpeg")).lower()

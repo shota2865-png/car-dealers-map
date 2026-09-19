@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,62 @@ def font_path(cfg: Config, weight: str = "black") -> str:
     )
 
 
+# フォントに無い記号の置き換え候補（左から順に、描ける最初のものを使う）
+_GLYPH_FALLBACKS = {
+    "\u2192": ["\u25b6", "\u25ba", "\u00bb", ">"],   # → ▶ ► » >
+    "\u2190": ["\u25c0", "\u00ab", "<"],
+    "\u21d2": ["\u25b6", ">"],                        # ⇒
+    "\u301c": ["\uff5e", "-"],                        # 〜 → ～
+    "\u2212": ["\uff0d", "-"],                        # −
+    "\u2013": ["\uff0d", "-"],
+    "\u2014": ["\uff0d", "-"],
+    "\u2022": ["\u30fb", "-"],                        # •
+    "\u2713": ["\u25cb", "o"],                        # ✓
+    "\u203b": ["\uff0a", "*"],                        # ※（この字も無い）
+    "\uff5e": ["\u301c", "-"],                        # ～ → 〜
+}
+_cmap_cache: dict[str, set[int]] = {}
+
+
+def _cmap(path: str) -> set[int]:
+    """フォントが持つコードポイントの集合.
+
+    PIL の getmask は .notdef（豆腐）にも bbox を返すので、有無の判定に使えない。
+    実際に cmap を読む。
+    """
+    if path not in _cmap_cache:
+        try:
+            from fontTools.ttLib import TTFont
+
+            _cmap_cache[path] = set(TTFont(path).getBestCmap().keys())
+        except Exception:
+            _cmap_cache[path] = set()      # 読めなければ置換しない
+    return _cmap_cache[path]
+
+
+def _safe_for_font(font: ImageFont.FreeTypeFont, text: str) -> str:
+    """フォントに無い字を、描ける近い字に置き換える（すべてのカードが通る）."""
+    have = _cmap(getattr(font, "path", "") or "")
+    if not have or not text:
+        return text
+    out = []
+    for ch in text:
+        if ch.isspace() or ord(ch) in have:
+            out.append(ch)
+            continue
+        repl = "-"
+        for cand in _GLYPH_FALLBACKS.get(ch, []):
+            if ord(cand) in have:
+                repl = cand
+                break
+        out.append(repl)
+    return "".join(out)
+
+
+def safe_text(cfg: Config, text: str, weight: str = "black") -> str:
+    return _safe_for_font(ImageFont.truetype(font_path(cfg, weight), 40), text)
+
+
 def load_font(cfg: Config, size: int, weight: str = "black") -> ImageFont.FreeTypeFont:
     key = (font_path(cfg, weight), size)
     if key not in _font_cache:
@@ -118,6 +175,7 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
           max_width: int) -> list[str]:
     """日本語は単語境界がないので1文字ずつ詰めて折り返す."""
+    text = _safe_for_font(font, text)
     lines: list[str] = []
     current = ""
     for ch in text:
@@ -425,3 +483,223 @@ def build_all(cfg: Config, script: VideoScript, outdir: str | Path) -> dict[str,
     result["outro"] = build_outro_card(cfg, outdir / "scene_outro.jpg")
     log.info("画面素材 %d 枚を生成", len(result))
     return result
+
+
+# ======================================================================
+# 追加のカード類。1シーン8秒で画を切り替えるために、同じ内容を
+# いろいろな見せ方で出せるようにする。
+# ======================================================================
+def _card_base(cfg: Config) -> tuple[Image.Image, ImageDraw.ImageDraw, dict[str, str], int, int]:
+    pal = palette(cfg)
+    w, h = cfg.get("video.resolution", [1920, 1080])
+    img = gradient((w, h), pal["bg"], pal["surface"])
+    return img, ImageDraw.Draw(img), pal, w, h
+
+
+def _save(img: Image.Image, out: Path) -> Path:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out, quality=94)
+    return out
+
+
+def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
+                 y: int, w: int, fill: str, stroke: int = 0, stroke_fill: str = "#000") -> int:
+    text = _safe_for_font(font, text)
+    tw = d.textlength(text, font=font)
+    d.text(((w - tw) / 2, y), text, font=font, fill=fill,
+           stroke_width=stroke, stroke_fill=stroke_fill)
+    return y + font.size + 18
+
+
+def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
+    """キーワード1語をドンと置くカード。話題の切り替わりに使う."""
+    img, d, pal, w, h = _card_base(cfg)
+    f = load_font(cfg, 150)
+    lines = _wrap(d, keyword, f, w - 300)[:2]
+    if len(lines) > 1:
+        f = load_font(cfg, 120)
+        lines = _wrap(d, keyword, f, w - 300)[:2]
+    total = len(lines) * (f.size + 18)
+    y = (h - total) // 2 - (50 if sub else 0)
+    # 左右のアクセント線
+    d.rectangle([w // 2 - 260, y - 40, w // 2 + 260, y - 30], fill=pal["accent"])
+    for line in lines:
+        y = _center_text(d, line, f, y, w, pal["text"])
+    if sub:
+        f2 = load_font(cfg, 52)
+        _center_text(d, sub[:30], f2, y + 30, w, pal["accent2"])
+    return _save(img, out)
+
+
+def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path) -> Path:
+    """数字を主役にするカード。DATA テロップの内容を大きく見せる."""
+    img, d, pal, w, h = _card_base(cfg)
+    f_val = load_font(cfg, 210)
+    if d.textlength(value, font=f_val) > w - 240:
+        f_val = load_font(cfg, 150)
+    f_lab = load_font(cfg, 60)
+    f_note = load_font(cfg, 36, "bold")
+    y = h // 2 - 200
+    y = _center_text(d, label[:22], f_lab, y, w, pal["accent"])
+    y = _center_text(d, value, f_val, y + 10, w, pal["positive"])
+    if note:
+        _center_text(d, note[:40], f_note, y + 20, w, "#9AA7BE")
+    return _save(img, out)
+
+
+def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
+    """いま読み上げている一文をそのまま大きく出す。「文字で分かりやすく」の主力."""
+    img, d, pal, w, h = _card_base(cfg)
+    f = load_font(cfg, 84)
+    lines = _wrap(d, sentence, f, w - 360)[:3]
+    if len(lines) == 3:
+        f = load_font(cfg, 70)
+        lines = _wrap(d, sentence, f, w - 360)[:3]
+    total = len(lines) * (f.size + 24)
+    y = (h - total) // 2
+    # 引用符
+    fq = load_font(cfg, 160)
+    d.text((120, y - 120), "“", font=fq, fill=pal["accent"])
+    for line in lines:
+        d.text((200, y), line, font=f, fill=pal["text"])
+        y += f.size + 24
+    return _save(img, out)
+
+
+def render_term_card(cfg: Config, term: str, meaning: str, example: str, out: Path) -> Path:
+    """ビジネス用語カード。用語 → 一文の意味 → 数字つきの例."""
+    img, d, pal, w, h = _card_base(cfg)
+    # 見出しタグ
+    f_tag = load_font(cfg, 40)
+    d.rectangle([150, 150, 150 + 330, 150 + 64], fill=pal["accent2"])
+    d.text((174, 158), "ビジネス用語", font=f_tag, fill="#101010")
+
+    f_term = load_font(cfg, 118)
+    lines = _wrap(d, term, f_term, w - 300)[:1]
+    d.text((150, 240), lines[0] if lines else _safe_for_font(f_term, term), font=f_term, fill=pal["text"])
+
+    f_mean = load_font(cfg, 56)
+    y = 420
+    for line in _wrap(d, meaning, f_mean, w - 340)[:2]:
+        d.text((170, y), line, font=f_mean, fill=pal["text"])
+        y += 76
+
+    if example:
+        y += 30
+        d.rectangle([170, y, 182, y + 150], fill=pal["positive"])
+        f_ex = load_font(cfg, 48, "bold")
+        for line in _wrap(d, example, f_ex, w - 420)[:3]:
+            d.text((214, y), line, font=f_ex, fill="#CFE3D8")
+            y += 64
+    return _save(img, out)
+
+
+def render_reference_card(cfg: Config, name: str, url: str, note: str, out: Path) -> Path:
+    """出典・参考カード。記事のスクリーンショットの代わりに、こちらの様式で出す.
+
+    他社サイトの画面をそのまま貼ると著作権の問題が出るので、
+    見出し・媒体名・URL を自分の様式で組む。
+    """
+    img, d, pal, w, h = _card_base(cfg)
+    # 疑似ウィンドウ
+    x0, y0, x1, y1 = 200, 200, w - 200, h - 220
+    d.rounded_rectangle([x0, y0, x1, y1], radius=28, fill="#1F2A44", outline="#33405C", width=3)
+    d.rounded_rectangle([x0, y0, x1, y0 + 64], radius=28, fill="#2A3655")
+    for i, c in enumerate(("#FF6B6B", "#FFC857", "#5BD99A")):
+        d.ellipse([x0 + 28 + i * 34, y0 + 20, x0 + 52 + i * 34, y0 + 44], fill=c)
+    f_url = load_font(cfg, 30, "bold")
+    domain = re.sub(r"^https?://", "", url or "").split("/")[0]
+    d.text((x0 + 150, y0 + 16), domain[:60], font=f_url, fill="#9AA7BE")
+
+    f_tag = load_font(cfg, 36)
+    d.text((x0 + 60, y0 + 110), "参考・出典", font=f_tag, fill=pal["accent"])
+    f_name = load_font(cfg, 92)
+    y = y0 + 170
+    for line in _wrap(d, name, f_name, x1 - x0 - 120)[:2]:
+        d.text((x0 + 60, y), line, font=f_name, fill=pal["text"])
+        y += 112
+    if note:
+        f_note = load_font(cfg, 50, "bold")
+        y += 20
+        for line in _wrap(d, note, f_note, x1 - x0 - 120)[:3]:
+            d.text((x0 + 60, y), line, font=f_note, fill="#CBD5E1")
+            y += 66
+    return _save(img, out)
+
+
+def render_pattern_background(cfg: Config, seed: int, heading: str,
+                              bullets: list[str], out: Path) -> Path:
+    """写真が取れなかったときの幾何パターン背景。無地より画に変化が出る."""
+    import random
+
+    img, d, pal, w, h = _card_base(cfg)
+    rnd = random.Random(seed)
+    accent = _rgb(pal["accent"])
+    # 薄い斜めライン or ドット
+    if rnd.random() < 0.5:
+        for x in range(-h, w, 90):
+            d.line([(x, h), (x + h, 0)], fill=tuple(list(accent) + [0]) if False else
+                   (accent[0] // 5 + 10, accent[1] // 5 + 18, accent[2] // 5 + 30), width=2)
+    else:
+        for x in range(60, w, 70):
+            for y in range(60, h, 70):
+                d.ellipse([x, y, x + 4, y + 4],
+                          fill=(accent[0] // 4 + 12, accent[1] // 4 + 20, accent[2] // 4 + 34))
+    # 大きな円を1つ置いて重心を作る
+    cx, cy, r = rnd.randint(w // 2, w - 200), rnd.randint(150, h - 300), rnd.randint(220, 380)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=pal["accent"], width=6)
+    _save(img, out)
+    if heading:
+        _overlay_heading(cfg, out, heading, bullets)
+    return out
+
+
+def fetch_ai_image(cfg: Config, prompt: str, out: Path, seed: int = 0) -> Path | None:
+    """鍵不要の無料生成（pollinations.ai）。使えない環境では None を返す.
+
+    ※ このプロジェクトの検証環境からは外部に出られないため、この経路は
+      実機で未検証。失敗しても必ず None で返し、後段が別の絵に落とす。
+    """
+    provider = str(cfg.get("visuals.ai_image_provider", "") or "").lower()
+    if provider != "pollinations" or not prompt:
+        return None
+    style = ("minimal isometric editorial illustration, dark navy background, "
+             "cyan and amber accents, flat vector, no text, no letters, no human faces")
+    from urllib.parse import quote
+
+    url = (f"https://image.pollinations.ai/prompt/{quote(prompt + ', ' + style)}"
+           f"?width=1920&height=1080&nologo=true&seed={seed}")
+    try:
+        r = requests.get(url, timeout=90)
+        r.raise_for_status()
+        if not r.headers.get("content-type", "").startswith("image/"):
+            return None
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(r.content)
+        Image.open(out).verify()
+        return out
+    except Exception as exc:
+        log.warning("AI画像の生成に失敗（別の絵で続けます）: %s", str(exc)[:120])
+        return None
+
+
+def build_photo_scene(cfg: Config, query: str, ai_prompt: str, heading: str,
+                      bullets: list[str], seed: int, out: Path) -> tuple[Path, str]:
+    """写真系の1シーンを作る。取れた手段を kind として返す（still 判定に使う）.
+
+    順に試す: Pexels の写真 → AI 生成画像 → 幾何パターン背景
+    """
+    raw = fetch_stock(cfg, query, out.parent / f"_raw_{out.stem}.jpg")
+    if raw:
+        _prepare_photo(cfg, raw, out)
+        _overlay_heading(cfg, out, heading, bullets)
+        raw.unlink(missing_ok=True)
+        return out, "photo"
+    ai = fetch_ai_image(cfg, ai_prompt or query, out.parent / f"_ai_{out.stem}.png", seed)
+    if ai:
+        _prepare_photo(cfg, ai, out)
+        _overlay_heading(cfg, out, heading, bullets)
+        ai.unlink(missing_ok=True)
+        return out, "photo"
+    render_pattern_background(cfg, seed, heading, bullets, out)
+    return out, "pattern"

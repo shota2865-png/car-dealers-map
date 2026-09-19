@@ -126,9 +126,9 @@ else:
 
 # ------------------------------------------------------------
 print("④ 動画を作ります")
-from ytecon.config import load_config          # noqa: E402
-from ytecon.script import VideoScript          # noqa: E402
-from ytecon import assets, render, subtitles, thumbnail, tts   # noqa: E402
+from ytecon.config import load_config                    # noqa: E402
+from ytecon.script import VideoScript                    # noqa: E402
+from ytecon import character, render, scenes, subtitles, thumbnail, tts   # noqa: E402
 
 cfg = load_config()
 # VOICEVOX が立っていればそれを、駄目なら自動で代替音声に落ちる
@@ -136,7 +136,7 @@ cfg.raw.setdefault("tts", {})["provider"] = "auto"
 
 script_path = next(Path(".").glob("**/script.json"))
 script = VideoScript.load(script_path)
-print(f"   台本: {script.topic_title}（{script.total_chars}字）")
+print(f"   台本: {script.topic_title}（{script.total_chars}字 / 用語{len(script.terms)}個）")
 
 out = WORK / "out"
 out.mkdir(exist_ok=True)
@@ -145,13 +145,15 @@ print("   声を作っています…")
 track = tts.synthesize(cfg, script, out)
 print(f"   {track.duration/60:.1f}分になりました")
 
-print("   画面を作っています…")
-images = assets.build_all(cfg, script, out / "images")
-subs = subtitles.build(cfg, track, out, script=script)
+print("   画面を作っています（8秒ごとに切り替え）…")
+sc = scenes.plan_and_render(cfg, script, track, out / "images")
+print(f"   {len(sc)}シーン / 平均 {track.duration/len(sc):.1f}秒")
+reserve = character.reserved_width(cfg)         # 右下のキャラのぶん字幕を左に寄せる
+subs = subtitles.build(cfg, track, out, script=script, reserve_right=reserve)
 thumbnail.build(cfg, script, out / "thumbnail.jpg")
 
-print("   映像にしています…（数分）")
-video = render.render(cfg, script, track, images, subs["ass"], out)
+print("   映像にしています…（数分。キャラクターの口パクと BGM も合成）")
+video = render.render(cfg, script, track, sc, subs["ass"], out)
 
 print(f"\n完成しました: {video.name}"
       f"  {video.stat().st_size // 1024 // 1024}MB"

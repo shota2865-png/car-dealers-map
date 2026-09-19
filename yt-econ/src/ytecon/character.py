@@ -1,0 +1,213 @@
+"""画面右下の解説キャラクター（口パク・瞬き）.
+
+音声の音量の山に合わせて口の開き具合を切り替え、数秒おきに瞬きする。
+画像は4枚あれば足りる:
+
+    assets/character/base.png        口を閉じている・目を開けている
+    assets/character/mouth_half.png  口を半分開けている
+    assets/character/mouth_open.png  口を開けている
+    assets/character/blink.png       目を閉じている
+
+すべて同じサイズ・透過PNGであること。ずんだもんの公式立ち絵を使う場合は
+配布元のガイドライン（クレジット表記など）に従ってください。
+画像が無いときは、汎用の仮キャラを自動生成する（本番前に差し替える前提）。
+
+仕組み:
+    音声 → 20fps の音量包絡 → 口の状態列 → 状態が変わる区間ごとに PNG を
+    並べた concat リスト → アルファ付き動画（ProRes 4444）→ 本編に overlay
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import subprocess
+import wave
+from pathlib import Path
+
+from .config import Config
+
+log = logging.getLogger(__name__)
+
+STATES = ("base", "mouth_half", "mouth_open", "blink")
+FPS = 20
+
+
+# ----------------------------------------------------------------------
+# 画像の用意
+# ----------------------------------------------------------------------
+def character_dir(cfg: Config) -> Path:
+    return cfg.root / "assets" / "character"
+
+
+def find_assets(cfg: Config) -> dict[str, Path] | None:
+    d = character_dir(cfg)
+    found = {s: d / f"{s}.png" for s in STATES}
+    if all(p.exists() for p in found.values()):
+        return found
+    if (d / "base.png").exists():
+        # 足りない表情は base で代用する
+        base = d / "base.png"
+        return {s: (p if p.exists() else base) for s, p in found.items()}
+    return None
+
+
+def make_placeholder(cfg: Config, size: int = 640) -> dict[str, Path]:
+    """汎用の仮キャラ（丸い顔）を4状態ぶん描く。本物に差し替えるまでのつなぎ."""
+    from PIL import Image, ImageDraw
+
+    d = character_dir(cfg)
+    d.mkdir(parents=True, exist_ok=True)
+    out: dict[str, Path] = {}
+    for state in STATES:
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        dr = ImageDraw.Draw(img)
+        # 体
+        dr.ellipse([size * 0.18, size * 0.55, size * 0.82, size * 1.15], fill=(76, 194, 255, 255))
+        # 顔
+        dr.ellipse([size * 0.15, size * 0.08, size * 0.85, size * 0.78], fill=(255, 224, 189, 255))
+        # 目
+        ey = size * 0.40
+        for ex in (size * 0.37, size * 0.63):
+            if state == "blink":
+                dr.line([(ex - size * 0.05, ey), (ex + size * 0.05, ey)], fill=(40, 40, 60, 255),
+                        width=int(size * 0.02))
+            else:
+                dr.ellipse([ex - size * 0.045, ey - size * 0.06, ex + size * 0.045, ey + size * 0.06],
+                           fill=(40, 40, 60, 255))
+        # 口
+        mx, my = size * 0.5, size * 0.60
+        if state == "mouth_open":
+            dr.ellipse([mx - size * 0.09, my - size * 0.06, mx + size * 0.09, my + size * 0.08],
+                       fill=(160, 60, 70, 255))
+        elif state == "mouth_half":
+            dr.ellipse([mx - size * 0.07, my - size * 0.02, mx + size * 0.07, my + size * 0.04],
+                       fill=(160, 60, 70, 255))
+        else:
+            dr.arc([mx - size * 0.08, my - size * 0.06, mx + size * 0.08, my + size * 0.04],
+                   start=10, end=170, fill=(120, 60, 70, 255), width=int(size * 0.015))
+        p = d / f"{state}.png"
+        img.save(p)
+        out[state] = p
+    log.warning("キャラクター画像が無いので仮キャラを生成しました: %s（本番前に差し替えてください）", d)
+    return out
+
+
+def reserved_width(cfg: Config) -> int:
+    """キャラクターが占める横幅（px）。字幕をその左に収めるために使う."""
+    if not cfg.get("character.enabled", False):
+        return 0
+    from PIL import Image
+
+    assets = find_assets(cfg) or make_placeholder(cfg)
+    w, h = Image.open(assets["base"]).size
+    _rw, rh = cfg.get("video.resolution", [1920, 1080])
+    ch_h = rh * float(cfg.get("character.height_ratio", 0.42))
+    return int(w * ch_h / h) + int(cfg.get("character.margin_right", 24)) + 30
+
+
+# ----------------------------------------------------------------------
+# 音量包絡 → 口の状態
+# ----------------------------------------------------------------------
+def envelope(wav_path: Path, fps: int = FPS) -> list[float]:
+    """フレームごとの音量（0〜1）。"""
+    import array
+    import math
+
+    with wave.open(str(wav_path), "rb") as w:
+        rate, ch, width, n = w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getnframes()
+        raw = w.readframes(n)
+    if width != 2:
+        raise ValueError("16bit PCM の WAV を想定しています")
+    samples = array.array("h", raw)
+    if ch > 1:
+        samples = samples[::ch]
+    hop = max(1, rate // fps)
+    out: list[float] = []
+    for i in range(0, len(samples), hop):
+        chunk = samples[i:i + hop]
+        if not chunk:
+            break
+        rms = math.sqrt(sum(s * s for s in chunk) / len(chunk)) / 32768.0
+        out.append(rms)
+    peak = max(out) if out else 1.0
+    if peak > 0:
+        out = [min(1.0, v / peak * 1.4) for v in out]   # ピークが 0.7 くらいに来るよう正規化
+    # 少しなめらかにする（口がバタつかないように）
+    smooth = []
+    for i, v in enumerate(out):
+        prev = out[i - 1] if i > 0 else v
+        smooth.append(max(v, prev * 0.6))
+    return smooth
+
+
+def mouth_states(cfg: Config, env: list[float]) -> list[str]:
+    half = float(cfg.get("character.mouth_half_threshold", 0.08))
+    opn = float(cfg.get("character.mouth_open_threshold", 0.22))
+    return ["mouth_open" if v >= opn else "mouth_half" if v >= half else "base" for v in env]
+
+
+def apply_blinks(cfg: Config, states: list[str], fps: int = FPS, seed: int = 7) -> list[str]:
+    """数秒おきに 3 フレーム（150ms）だけ目を閉じる。話していても瞬きはする."""
+    rnd = random.Random(seed)
+    lo = float(cfg.get("character.blink_every_min", 2.5))
+    hi = float(cfg.get("character.blink_every_max", 5.5))
+    out = list(states)
+    t = rnd.uniform(lo, hi)
+    while int(t * fps) < len(out):
+        i = int(t * fps)
+        for k in range(i, min(i + 3, len(out))):
+            out[k] = "blink"
+        t += rnd.uniform(lo, hi)
+    return out
+
+
+# ----------------------------------------------------------------------
+# アルファ付きの動画にする
+# ----------------------------------------------------------------------
+def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path) -> Path | None:
+    """キャラクターのレイヤー（透過動画）を作って返す。無効なら None."""
+    if not cfg.get("character.enabled", False):
+        return None
+    from .render import ensure_ffmpeg
+
+    assets = find_assets(cfg) or make_placeholder(cfg)
+    env = envelope(wav_path)
+    states = apply_blinks(cfg, mouth_states(cfg, env))
+
+    # 音声が終わったあとの余韻ぶんは口を閉じて待つ
+    need = int(total_seconds * FPS) + 1
+    if len(states) < need:
+        states += ["base"] * (need - len(states))
+
+    # 同じ状態が続く区間をまとめて concat リストにする
+    outdir.mkdir(parents=True, exist_ok=True)
+    listing = outdir / "character_frames.txt"
+    lines: list[str] = []
+    run_state, run_len = states[0], 0
+    for s in states:
+        if s == run_state:
+            run_len += 1
+            continue
+        lines += [f"file '{assets[run_state].as_posix()}'", f"duration {run_len / FPS:.4f}"]
+        run_state, run_len = s, 1
+    lines += [f"file '{assets[run_state].as_posix()}'", f"duration {run_len / FPS:.4f}",
+              f"file '{assets[run_state].as_posix()}'"]     # concat の仕様で最後をもう一度
+    listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    out = outdir / "character.mov"
+    proc = subprocess.run(
+        [ensure_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+         "-f", "concat", "-safe", "0", "-i", str(listing),
+         "-vf", f"fps={FPS},format=rgba",
+         # qtrle: 透過を保ったまま、平坦な絵なら ProRes 4444 の 1/60 の容量で済む
+         # （実測 106秒: ProRes 243MB / qtrle 4MB）。復号に特別な指定も要らない
+         "-c:v", "qtrle", "-pix_fmt", "argb",
+         str(out)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        log.warning("キャラクターレイヤーの生成に失敗（無しで続けます）: %s", proc.stderr[-300:])
+        return None
+    log.info("キャラクターレイヤー: %d 状態区間 / %.1f秒", len(lines) // 2, total_seconds)
+    return out

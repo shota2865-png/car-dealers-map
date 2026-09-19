@@ -1,0 +1,287 @@
+"""シーン計画 —「8秒ごとに画を変える」の実装.
+
+これまでは1セクション＝1枚の絵（90秒近く同じ画面）だった。
+ここでは音声の実測タイムコードを使い、各ブロックを約8秒ずつの
+シーンに割って、シーンごとに違う見せ方を割り当てる:
+
+    セクションの本体（図表 / カード）
+    → キーワードカード（KEYWORD テロップから）
+    → 数字カード（DATA テロップから）
+    → 写真 or AI画像 or 幾何パターン
+    → 用語カード（ビジネス用語）
+    → 出典カード（参考記事の様式）
+    → いま読んでいる一文のカード
+    → 本体をもう一度 …
+
+still（静止させる）は**実際に描けた種類**で決める。写真が取れずカードに
+落ちたのにズームがかかる、という前回の不具合はここで潰す。
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import assets
+from .config import Config
+from .script import Section, VideoScript, split_sentences
+from .tts import Line, VoiceTrack
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class Scene:
+    image: Path
+    start: float
+    end: float
+    still: bool = True          # True なら動かさない（カード・図表）
+    kind: str = "card"          # 実際に描けた種類
+    label: str = ""             # ログ用
+
+    @property
+    def duration(self) -> float:
+        return max(self.end - self.start, 0.5)
+
+
+# ----------------------------------------------------------------------
+# 音声の行を「約8秒のかたまり」に割る
+# ----------------------------------------------------------------------
+def chunk_lines(lines: list[Line], target: float, lo: float, hi: float) -> list[list[Line]]:
+    chunks: list[list[Line]] = []
+    cur: list[Line] = []
+    for ln in lines:
+        if cur:
+            span = ln.end - cur[0].start
+            cur_span = cur[-1].end - cur[0].start
+            # 目標を超えたら切る。ただし上限を超えそうなときも切る
+            if cur_span >= target or span > hi:
+                chunks.append(cur)
+                cur = []
+        cur.append(ln)
+    if cur:
+        chunks.append(cur)
+    # 最後が短すぎたら前に吸収する
+    if len(chunks) >= 2 and (chunks[-1][-1].end - chunks[-1][0].start) < lo:
+        chunks[-2].extend(chunks.pop())
+    return chunks
+
+
+def _span(chunk: list[Line]) -> tuple[float, float]:
+    return chunk[0].start, chunk[-1].end
+
+
+def _key_sentence(chunk: list[Line]) -> str:
+    """そのかたまりで一番情報量のありそうな文（長めの文）を返す."""
+    return max((ln.text for ln in chunk), key=len, default="")
+
+
+_NUM = re.compile(r"(\d[\d,\.]*\s*(?:兆|億|万)?\s*(?:円|ドル|%|パーセント|倍|人|年|ポイント|割))")
+
+
+def _numbers(text: str) -> list[str]:
+    return [m.replace("パーセント", "%") for m in _NUM.findall(text)]
+
+
+# ----------------------------------------------------------------------
+# 見せ方の候補（セクションごと）
+# ----------------------------------------------------------------------
+class _Painter:
+    """カードを描いて Scene を返す小道具。ファイル名の連番を管理する."""
+
+    def __init__(self, cfg: Config, outdir: Path):
+        self.cfg = cfg
+        self.outdir = outdir
+        self.n = 0
+        self.seed = 0
+
+    def _next(self, stem: str) -> Path:
+        self.n += 1
+        return self.outdir / f"scene_{self.n:03d}_{stem}.jpg"
+
+    def title(self, text: str, start: float, end: float) -> Scene:
+        p = assets.build_title_card(self.cfg, text, self._next("title"))
+        return Scene(p, start, end, True, "title", "タイトル")
+
+    def outro(self, start: float, end: float) -> Scene:
+        p = assets.build_outro_card(self.cfg, self._next("outro"))
+        return Scene(p, start, end, True, "outro", "アウトロ")
+
+    def bullets(self, heading: str, items: list[str], start: float, end: float) -> Scene:
+        p = assets.render_textcard(self.cfg, heading, items, self._next("bullets"))
+        return Scene(p, start, end, True, "card", f"箇条書き: {heading[:12]}")
+
+    def chart(self, sec: Section, start: float, end: float) -> Scene:
+        p = self._next("chart")
+        try:
+            assets.render_chart(self.cfg, sec.visual.chart or {}, p)
+            return Scene(p, start, end, True, "chart", f"図表: {sec.heading[:12]}")
+        except Exception as exc:
+            log.warning("図表を描けなかったのでカードにします: %s", exc)
+            return self.bullets(sec.heading, sec.on_screen, start, end)
+
+    def keyword(self, word: str, sub: str, start: float, end: float) -> Scene:
+        p = assets.render_keyword_card(self.cfg, word, sub, self._next("kw"))
+        return Scene(p, start, end, True, "card", f"キーワード: {word[:10]}")
+
+    def number(self, value: str, label: str, note: str, start: float, end: float) -> Scene:
+        p = assets.render_number_card(self.cfg, value, label, note, self._next("num"))
+        return Scene(p, start, end, True, "card", f"数字: {value}")
+
+    def quote(self, sentence: str, start: float, end: float) -> Scene:
+        p = assets.render_quote_card(self.cfg, sentence, self._next("quote"))
+        return Scene(p, start, end, True, "card", f"一文: {sentence[:10]}")
+
+    def term(self, t, start: float, end: float) -> Scene:
+        p = assets.render_term_card(self.cfg, t.term, t.meaning, t.example, self._next("term"))
+        return Scene(p, start, end, True, "card", f"用語: {t.term}")
+
+    def reference(self, name: str, url: str, note: str, start: float, end: float) -> Scene:
+        p = assets.render_reference_card(self.cfg, name, url, note, self._next("ref"))
+        return Scene(p, start, end, True, "card", f"出典: {name[:10]}")
+
+    def photo(self, query: str, prompt: str, heading: str, bullets: list[str],
+              start: float, end: float) -> Scene:
+        self.seed += 1
+        p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
+                                           self.seed, self._next("photo"))
+        # 写真は Ken Burns で動かす。パターン背景は文字が乗るので静止
+        return Scene(p, start, end, kind != "photo", kind, f"写真: {query[:14]}")
+
+
+def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
+                  chunks: list[list[Line]], painter: _Painter):
+    """セクション内の各かたまりに割り当てる『描き方』の列を作る（遅延実行）."""
+    pool = []
+    kind = sec.visual.kind
+
+    # 1. 本体
+    if kind == "chart" and sec.visual.chart:
+        pool.append(lambda s, e: painter.chart(sec, s, e))
+    elif kind == "stock":
+        pool.append(lambda s, e: painter.photo(sec.visual.query or sec.heading,
+                                               sec.visual.query, sec.heading, sec.on_screen, s, e))
+    else:
+        pool.append(lambda s, e: painter.bullets(sec.heading, sec.on_screen, s, e))
+
+    # 2. テロップ由来
+    for cap in sec.captions:
+        if cap.type == "KEYWORD":
+            pool.append(lambda s, e, c=cap: painter.keyword(c.text, sec.heading, s, e))
+        elif cap.type == "DATA":
+            pool.append(lambda s, e, c=cap: painter.number(c.text, sec.heading, "", s, e))
+        elif cap.type in ("EMPHASIS", "PUNCHLINE"):
+            pool.append(lambda s, e, c=cap: painter.quote(c.text, s, e))
+
+    # 3. 写真を1枚は挟む（本体が写真でなければ）
+    if kind != "stock":
+        query = sec.visual.query or sec.heading
+        pool.insert(min(2, len(pool)),
+                    lambda s, e: painter.photo(query, query, sec.heading, sec.on_screen[:2], s, e))
+
+    # 4. 用語カード（このセクションが初出のもの。範囲外は順繰りに）
+    terms = [t for t in script.terms if t.section in (index, index + 1)]
+    if not terms and script.terms:
+        terms = [script.terms[index % len(script.terms)]]
+    for t in terms[:1]:
+        pool.append(lambda s, e, t=t: painter.term(t, s, e))
+
+    # 5. 出典カード
+    if script.sources:
+        src = script.sources[index % len(script.sources)]
+        pool.append(lambda s, e, src=src: painter.reference(
+            src.get("name", "出典"), src.get("url", ""), sec.heading, s, e))
+
+    # 6. 足りないぶんは「いま読んでいる一文」と本体の再掲を交互に
+    return pool
+
+
+# ----------------------------------------------------------------------
+def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
+                    outdir: str | Path) -> list[Scene]:
+    """全ブロックをシーンに割り、画像を描いて、時間順の Scene 列を返す."""
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    painter = _Painter(cfg, outdir)
+
+    target = float(cfg.get("visuals.scene_seconds", 8.0))
+    lo = float(cfg.get("visuals.scene_seconds_min", 4.0))
+    hi = float(cfg.get("visuals.scene_seconds_max", 14.0))
+
+    scenes: list[Scene] = []
+
+    def lines_of(block: str) -> list[Line]:
+        return [ln for ln in track.lines if ln.block_id == block]
+
+    # --- hook: タイトル → キーワード ---
+    hook = chunk_lines(lines_of("hook"), target, lo, hi)
+    for j, ch in enumerate(hook):
+        s, e = _span(ch)
+        if j == 0:
+            scenes.append(painter.title(script.topic_title, s, e))
+        else:
+            main = (script.thumbnail_copy or {}).get("main") or script.topic_title
+            scenes.append(painter.keyword(main, "", s, e) if j == 1
+                          else painter.quote(_key_sentence(ch), s, e))
+
+    # --- proof: 数字があれば数字カード ---
+    for j, ch in enumerate(chunk_lines(lines_of("proof"), target, lo, hi)):
+        s, e = _span(ch)
+        nums = _numbers(script.proof)
+        if j == 0 and nums:
+            value = " → ".join(nums[:2]) if len(nums) >= 2 else nums[0]
+            scenes.append(painter.number(value, "数字で見る", "", s, e))
+        else:
+            scenes.append(painter.quote(_key_sentence(ch), s, e))
+
+    # --- promise: この動画で分かること ---
+    for j, ch in enumerate(chunk_lines(lines_of("promise"), target, lo, hi)):
+        s, e = _span(ch)
+        if j == 0:
+            items = [x.rstrip("。") for x in split_sentences(script.promise)][1:4] or \
+                    [x.rstrip("。") for x in split_sentences(script.promise)][:3]
+            scenes.append(painter.bullets("この動画で分かること", items, s, e))
+        else:
+            scenes.append(painter.quote(_key_sentence(ch), s, e))
+
+    # --- 本編 ---
+    for i, sec in enumerate(script.sections):
+        chunks = chunk_lines(lines_of(f"s{i}"), target, lo, hi)
+        if not chunks:
+            continue
+        pool = _section_pool(cfg, script, sec, i, chunks, painter)
+        main_again = pool[0]
+        for j, ch in enumerate(chunks):
+            s, e = _span(ch)
+            if j < len(pool):
+                scenes.append(pool[j](s, e))
+            elif (j - len(pool)) % 2 == 0:
+                scenes.append(painter.quote(_key_sentence(ch), s, e))
+            else:
+                scenes.append(main_again(s, e))
+
+    # --- closing: 3行まとめ → アウトロ ---
+    closing = chunk_lines(lines_of("closing"), target, lo, hi)
+    for j, ch in enumerate(closing):
+        s, e = _span(ch)
+        if j == 0:
+            items = [x.rstrip("。") for x in split_sentences(script.closing)][1:4]
+            scenes.append(painter.bullets("今日のまとめ", items, s, e))
+        elif j == len(closing) - 1:
+            scenes.append(painter.outro(s, e))
+        else:
+            scenes.append(painter.quote(_key_sentence(ch), s, e))
+
+    scenes.sort(key=lambda x: x.start)
+    # 隣接シーンの隙間を埋める（無音区間で画が消えないように）
+    for a, b in zip(scenes, scenes[1:]):
+        a.end = b.start
+    if scenes:
+        scenes[-1].end = track.duration + 0.8
+
+    stills = sum(1 for x in scenes if x.still)
+    log.info("シーン %d 枚（平均 %.1f秒 / 動く写真 %d 枚）",
+             len(scenes), (track.duration / max(len(scenes), 1)), len(scenes) - stills)
+    return scenes

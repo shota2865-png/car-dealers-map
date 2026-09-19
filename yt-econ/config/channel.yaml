@@ -131,10 +131,11 @@ tts:
     #   3 = ずんだもん ノーマル   1 = ずんだもん あまあま
     #   7 = ずんだもん ツンツン   5 = ずんだもん セクシー
     speaker: 3
-    # ずんだもんは少し速めのほうが聞きやすい
-    speed: 1.15
+    # ずんだもんは少し速めのほうが聞きやすい（実測で尺を見て調整する）
+    speed: 1.2
     pitch: 0.0
-    intonation: 1.2
+    # 抑揚。1.0 が素。上げるほど感情が乗るが、1.5 を超えると芝居がかる
+    intonation: 1.35
     # 文末の無音（秒）
     pause_sentence: 0.28
     pause_section: 0.65
@@ -156,10 +157,37 @@ visuals:
     negative: "#FF6B6B"
   # Ken Burns（ゆっくりズーム）を効かせる
   ken_burns: true
+  # 1シーン（画が変わらない単位）の目標秒数。参考チャンネルは顔で持たせているが
+  # こちらは顔が無いので短めに切る。8秒を超えると「動かない動画」に見える
+  scene_seconds: 7.0
+  scene_seconds_min: 4.0
+  scene_seconds_max: 14.0
+  # 各シーンの頭に短いフェードを入れて「切り替わった感」を出す（フレーム数）
+  fade_in_frames: 6
+  # AI 画像生成。空なら使わない。"pollinations" は鍵不要・無料（品質はそこそこ）
+  ai_image_provider: "pollinations"
   subtitle:
     font_size: 58
     max_chars_per_line: 20
     outline: 5
+
+# 画面右下の解説キャラクター（ずんだもんなど）。
+# assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を
+# 置くと、音声に合わせて口が動き、数秒おきに瞬きする。
+# 無い場合は自動で汎用の仮キャラを生成する（本番前に差し替えること）。
+character:
+  enabled: true
+  # 画面の高さに対する大きさ（0.42 = 画面の42%の高さ）
+  height_ratio: 0.42
+  # 右端・下端からの余白（px）
+  margin_right: 24
+  margin_bottom: 0
+  # 口を開ける音量の閾値（0〜1。小さいほどよく動く）
+  mouth_half_threshold: 0.08
+  mouth_open_threshold: 0.22
+  # 瞬きの間隔（秒）
+  blink_every_min: 2.5
+  blink_every_max: 5.5
 
 render:
   # ffmpeg | capcut
@@ -168,9 +196,14 @@ render:
   backend: "ffmpeg"
   bgm:
     enabled: true
-    # assets/bgm/ に置いた著作権クリアな音源ファイル名（空なら BGM なし）
+    # assets/bgm/ に置いた著作権クリアな音源ファイル名。
+    # 空なら、リラックス系のパッド音を自動生成して使う（仮の音。本番は差し替え推奨）
+    # フリー音源の入手先は docs/BGMの用意.md を参照
     file: ""
-    volume_db: -26
+    # 声に対する BGM の大きさ。-10dB ≒ 体感で3割ほど
+    volume_db: -10
+    # 声が乗っている間は BGM をさらに下げる（ダッキング）
+    ducking: true
   capcut:
     # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
     draft_dir: ""

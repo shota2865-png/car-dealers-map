@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import ImageFont
 
-from .assets import font_path
+from .assets import font_path, safe_text
 from .config import Config
 from .script import VideoScript
 from .tts import VoiceTrack
@@ -139,16 +139,16 @@ def font_family(cfg: Config) -> str:
 
 def _style_line(name: str, family: str, size: int, primary: str,
                 outline_color: str, outline: int, alignment: int,
-                margin_v: int, bold: int = -1) -> str:
+                margin_v: int, bold: int = -1, margin_r: int = 120) -> str:
     return (
         f"Style: {name},{family},{size},{_ass_color(primary)},&H000000FF,"
         f"{_ass_color(outline_color)},&H64000000,{bold},0,0,0,100,100,1,0,1,"
-        f"{outline},2,{alignment},120,120,{margin_v},1"
+        f"{outline},2,{alignment},120,{margin_r},{margin_v},1"
     )
 
 
 def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
-              telops: list[TelopCue] | None = None) -> Path:
+              telops: list[TelopCue] | None = None, reserve_right: int = 0) -> Path:
     """字幕とテロップを1つの ASS にまとめる.
 
     字幕は画面下に出しっぱなし、テロップは意味ごとに色と大きさを変えて
@@ -167,10 +167,12 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
     family = font_family(cfg)
     stroke = "#0B1120"
 
+    # 右下にキャラクターがいるぶん、文字は左寄りの領域に収める
+    margin_r = max(120, int(reserve_right))
     styles = [
         # 字幕。画面下（alignment 2 = 下中央）
         _style_line("Default", family, base_size, colors["text"], stroke,
-                    outline, 2, 72),
+                    outline, 2, 72, margin_r=margin_r),
     ]
     # テロップは字幕のすぐ上（下三分の一）に置く。
     # 画面上部は背景側の見出しが使うので、そこへ出すと必ずぶつかる。
@@ -185,7 +187,7 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
         else:
             alignment, margin = 2, telop_margin
         styles.append(_style_line(f"T_{name}", family, size, color, stroke,
-                                  outline + 1, alignment, margin))
+                                  outline + 1, alignment, margin, margin_r=margin_r))
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -204,7 +206,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     events = [
         "Dialogue: 0,{},{},{},,0,0,0,,{}".format(
-            _ass_time(c.start), _ass_time(c.end), c.style, r"\N".join(c.lines)
+            _ass_time(c.start), _ass_time(c.end), c.style,
+            r"\N".join(safe_text(cfg, ln) for ln in c.lines)
         )
         for c in cues
     ]
@@ -213,7 +216,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             else "T_NORMAL"
         events.append(
             "Dialogue: 1,{},{},{},,0,0,0,,{}".format(
-                _ass_time(t.start), _ass_time(t.end), style, t.text
+                _ass_time(t.start), _ass_time(t.end), style, safe_text(cfg, t.text)
             )
         )
 
@@ -236,12 +239,13 @@ def write_srt(cues: list[Cue], out: str | Path) -> Path:
 
 
 def build(cfg: Config, track: VoiceTrack, outdir: str | Path,
-          script: VideoScript | None = None) -> dict[str, Path]:
+          script: VideoScript | None = None, reserve_right: int = 0) -> dict[str, Path]:
     outdir = Path(outdir)
     cues = build_cues(cfg, track)
     telops = build_telops(cfg, script, track) if script else []
     return {
-        "ass": write_ass(cfg, cues, outdir / "subtitles.ass", telops=telops),
+        "ass": write_ass(cfg, cues, outdir / "subtitles.ass", telops=telops,
+                         reserve_right=reserve_right),
         # SRT は YouTube に渡す字幕なので、テロップは入れない
         "srt": write_srt(cues, outdir / "subtitles.srt"),
     }

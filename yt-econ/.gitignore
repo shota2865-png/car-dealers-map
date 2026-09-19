@@ -1,7 +1,7 @@
 # 生成物（動画・音声・画像は重いので絶対にコミットしない）
-output/
+output/*
 !output/demo/
-!output/demo/script.json
+!output/demo2/
 capcut_drafts/
 logs/
 *.mp4
