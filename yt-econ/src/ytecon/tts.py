@@ -198,12 +198,64 @@ class GoogleTTS(Provider):
         return resp.audio_content
 
 
+class GoogleTranslateTTS(Provider):
+    """gTTS（無料・インストールが軽い）を使う予備の経路.
+
+    VOICEVOX が用意できない環境（Colab など）でも、とりあえず動画が
+    完成するようにするためのもの。声はずんだもんではなく機械的な読み上げ
+    になるので、**本番用ではありません。** 絵と流れを確認する用途。
+    """
+
+    def __init__(self, cfg: Config):
+        try:
+            from gtts import gTTS  # noqa: F401
+        except ImportError as exc:
+            raise TTSError("gTTS が要ります: pip install gtts") from exc
+        self.speed_up = float(cfg.get("tts.gtts.speed", 1.15))
+
+    def synth(self, text: str) -> bytes:
+        import io
+        import subprocess
+
+        from gtts import gTTS
+
+        from .render import ensure_ffmpeg
+
+        buf = io.BytesIO()
+        gTTS(text=text, lang="ja").write_to_fp(buf)
+        buf.seek(0)
+
+        # mp3 で返ってくるので、WAV（16bit モノラル）に揃える。
+        # あわせて再生速度を上げる（gTTS は既定が遅い）
+        proc = subprocess.run(
+            [ensure_ffmpeg(), "-hide_banner", "-loglevel", "error",
+             "-f", "mp3", "-i", "pipe:0",
+             "-filter:a", f"atempo={self.speed_up:.2f}",
+             "-ac", "1", "-ar", str(self.sample_rate),
+             "-f", "wav", "pipe:1"],
+            input=buf.read(), capture_output=True,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            raise TTSError(f"gTTS の変換に失敗しました: {proc.stderr[-300:]!r}")
+        return proc.stdout
+
+
 def make_provider(cfg: Config) -> Provider:
     name = str(cfg.get("tts.provider", "voicevox")).lower()
     if name == "voicevox":
         return VoiceVox(cfg)
     if name == "google":
         return GoogleTTS(cfg)
+    if name in ("gtts", "fallback"):
+        return GoogleTranslateTTS(cfg)
+    if name == "auto":
+        # VOICEVOX が立っていればそれを使い、駄目なら gTTS に落ちる
+        try:
+            return VoiceVox(cfg)
+        except TTSError as exc:
+            log.warning("VOICEVOX が使えないので gTTS に切り替えます: %s",
+                        str(exc).splitlines()[0])
+            return GoogleTranslateTTS(cfg)
     raise TTSError(f"未対応の TTS プロバイダです: {name}")
 
 
