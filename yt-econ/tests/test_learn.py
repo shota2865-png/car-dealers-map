@@ -130,8 +130,10 @@ def test_aggregate_uses_median_not_mean():
 def test_measured_speed_overrides_the_guessed_config(tmp_path, monkeypatch):
     """learn 後は、当て推量の chars_per_minute ではなく実測値で尺を決める."""
     cfg = load_config()
-    assert cfg.get("video.chars_per_minute") == 340
-    assert target_chars(cfg) == (int(340 * 8), int(340 * 10))
+    cpm = cfg.get("video.chars_per_minute")
+    lo_min = cfg.get("video.target_minutes_min")
+    hi_min = cfg.get("video.target_minutes_max")
+    assert target_chars(cfg) == (int(cpm * lo_min), int(cpm * hi_min))
 
     style_path = cfg.root / "config" / "style.yaml"
     assert not style_path.exists(), "テストが既存の style.yaml を壊さないこと"
@@ -140,7 +142,8 @@ def test_measured_speed_overrides_the_guessed_config(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     try:
-        assert target_chars(cfg) == (int(420 * 8), int(420 * 10))
+        # style.yaml の実測値が config の推定値より優先される
+        assert target_chars(cfg) == (int(420 * lo_min), int(420 * hi_min))
     finally:
         style_path.unlink()
 

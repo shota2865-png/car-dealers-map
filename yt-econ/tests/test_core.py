@@ -23,10 +23,12 @@ def cfg() -> Config:
 
 # ----------------------------------------------------------------------
 def test_config_target_chars(cfg: Config):
+    """目標文字数 = 話速 × 尺。値そのものは設定なのでハードコードしない."""
     lo, hi = cfg.target_chars
+    cpm = cfg.get("video.chars_per_minute")
+    assert lo == int(cpm * cfg.get("video.target_minutes_min"))
+    assert hi == int(cpm * cfg.get("video.target_minutes_max"))
     assert lo < hi
-    # 8分 * 340文字/分
-    assert lo == int(340 * 8.0)
 
 
 def test_config_dotted_lookup(cfg: Config):
