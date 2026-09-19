@@ -20,5 +20,9 @@ google-auth>=2.29
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
 
+# --- 参照動画の分析（ytecon learn）---
+# 参考にしたい動画の字幕とメタデータだけ取得する。動画本体は落とさない
+yt-dlp>=2024.4.9
+
 # --- 開発用 ---
 pytest>=8.0

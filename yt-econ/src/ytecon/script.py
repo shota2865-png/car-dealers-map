@@ -184,6 +184,8 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 # 語り口の決まり
 {tone}
 
+{style_block}
+
 # この回の型
 {horizon_guide}
 
@@ -278,10 +280,35 @@ def _fmt_sources(sources: list[dict[str, str]]) -> str:
     return "\n".join(f"- {s.get('name','')} {s.get('url','')}" for s in sources)
 
 
+def target_chars(cfg: Config) -> tuple[int, int]:
+    """目標文字数。参照動画から実測した話速があればそちらを使う.
+
+    config の chars_per_minute は当て推量の初期値。learn を走らせたあとは
+    実測値のほうが当たるので、そちらを優先する。
+    """
+    from .learn import load_style
+
+    style = load_style(cfg)
+    measured = ((style or {}).get("measured") or {}).get("chars_per_minute")
+    if not measured:
+        return cfg.target_chars
+    lo_min = float(cfg.get("video.target_minutes_min", 8.0))
+    hi_min = float(cfg.get("video.target_minutes_max", 10.0))
+    return int(measured * lo_min), int(measured * hi_min)
+
+
+def _style_block(cfg: Config) -> str:
+    from .learn import load_style, render_for_prompt
+
+    style = load_style(cfg)
+    return render_for_prompt(style) if style else ""
+
+
 def generate(cfg: Config, topic: Topic) -> VideoScript:
     """台本を生成し、尺と事実の観点で補正して返す."""
-    lo, hi = cfg.target_chars
+    lo, hi = target_chars(cfg)
     system = _SYSTEM.format(
+        style_block=_style_block(cfg),
         horizon_guide=_HORIZON_GUIDE.get(topic.horizon, _HORIZON_GUIDE["flow"]),
         audience=cfg.get("channel.audience", ""),
         tone=cfg.get("channel.tone", ""),
@@ -337,7 +364,7 @@ _REPAIR_SYSTEM = """あなたは日本語動画台本の編集者です。
 
 def fit_length(cfg: Config, script: VideoScript) -> VideoScript:
     """目標文字数レンジに収まるまで伸縮リライトする."""
-    lo, hi = cfg.target_chars
+    lo, hi = target_chars(cfg)
     tries = int(cfg.get("script.max_length_repairs", 2))
     for attempt in range(tries):
         n = script.total_chars

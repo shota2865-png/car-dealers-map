@@ -75,6 +75,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         else:
             print(f"[--] {'ffmpeg':16s} (CapCut バックエンドなので任意)")
 
+    if shutil.which("yt-dlp"):
+        print(f"[ok] {'yt-dlp':16s} {shutil.which('yt-dlp')} (ytecon learn 用)")
+    else:
+        print(f"[--] {'yt-dlp':16s} 参照動画から語り口を学ぶなら pip install yt-dlp")
+
     if shutil.which("ffprobe"):
         print(f"[ok] {'ffprobe':16s} {shutil.which('ffprobe')}")
     else:
@@ -191,6 +196,37 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learn(args: argparse.Namespace) -> int:
+    """参照動画の字幕を実測して、語り口のプロファイルを作る."""
+    from .config import load_config
+    from .learn import learn, load_style
+
+    cfg = load_config(args.config)
+    out = learn(cfg, args.urls, out=Path(args.out) if args.out else None,
+                lang=args.lang)
+
+    style = load_style(cfg) or {}
+    measured = style.get("measured", {})
+    voice = style.get("voice", {})
+    print(f"\n== 参照動画から抽出しました ==\n")
+    print(f"  話速       : {measured.get('chars_per_minute')}文字/分"
+          f"  (config の {cfg.get('video.chars_per_minute')} を上書きします)")
+    print(f"  1文の長さ  : 平均 {measured.get('avg_sentence_chars')}字")
+    print(f"  尺         : {measured.get('duration_minutes')}分")
+    print(f"  導入       : {measured.get('hook_seconds')}秒")
+    print(f"  チャプター : {measured.get('chapters')}個"
+          f" / 1章 {measured.get('median_chapter_seconds')}秒")
+    if voice.get("summary"):
+        print(f"\n  語り口: {voice['summary']}")
+    if voice.get("opening_pattern"):
+        print(f"  導入の型: {voice['opening_pattern']}")
+    if voice.get("what_not_to_copy"):
+        print(f"\n  真似しないほうがいい点: {voice['what_not_to_copy']}")
+    print(f"\n  → {out}")
+    print("  以降 `ytecon run` はこの語り口に寄せて台本を書きます。")
+    return 0
+
+
 def cmd_revive(args: argparse.Namespace) -> int:
     """寝かせた動画のテーマが日本で話題化していないか照合する."""
     from .config import load_config
@@ -289,6 +325,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-a", "--angle", help="切り口")
     p.add_argument("-o", "--out")
     p.set_defaults(func=cmd_script)
+
+    p = sub.add_parser("learn", help="参照動画の語り口を実測して取り込む")
+    p.add_argument("urls", nargs="+", help="参考にしたい動画のURL（複数可）")
+    p.add_argument("-o", "--out", help="出力先（既定 config/style.yaml）")
+    p.add_argument("--lang", default="ja", help="字幕の言語（既定 ja）")
+    p.set_defaults(func=cmd_learn)
 
     p = sub.add_parser("run", help="当日分を作って投稿する")
     p.add_argument("-n", "--number", type=int, default=None)

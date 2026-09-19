@@ -6,6 +6,9 @@ logs/
 *.wav
 *.mp3
 
+# config/style.yaml は ytecon learn の成果物だが、
+# チャンネルの文体そのものなのでコミットして構わない（鍵を含まない）
+
 # 鍵
 .env
 token.json
