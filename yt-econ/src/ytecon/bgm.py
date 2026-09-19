@@ -116,7 +116,7 @@ def resolve(cfg: Config) -> Path | None:
         found = sorted(bgm_dir.glob(ext))
         if found:
             return found[0]
-    generated = cfg.workdir / "bgm_pad.wav"
+    generated = cfg.workdir / "bgm_pad_v2.wav"   # 生成ロジックを変えたら版を上げる
     if not generated.exists():
         log.info("BGM が無いので、リラックス系のパッド音を合成します（仮）")
         generate_pad(generated)

@@ -323,7 +323,7 @@ YTECON_LLM_PROVIDER=api           # ANTHROPIC_API_KEY を使う（従量課金�
 | 先行テーマの種を入れ替える | `topics.frontier_seeds`（半年に一度は見直す） |
 | 掘り起こしの再通知間隔 | `revive.cooldown_days`（既定45日） |
 | BGMを入れる | `assets/bgm/` に置く（入手先は `docs/BGMの用意.md`） |
-| BGMの大きさ | `render.bgm.volume_db`（既定 -10 ≒ 体感3割） |
+| BGMの大きさ | `render.bgm.volume_db`（既定 -6 ≒ 体感3割。声は自動で -16 LUFS に揃えてから混ぜる） |
 | 画の切り替え頻度 | `visuals.scene_seconds`（既定 7秒） |
 | キャラの大きさ・位置 | `character.height_ratio` / `margin_right` |
 | 口の動きの感度 | `character.mouth_half_threshold` / `mouth_open_threshold` |

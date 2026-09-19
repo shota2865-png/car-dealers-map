@@ -209,3 +209,19 @@ def test_voice_stays_dominant_over_bgm(tmp_path):
     voice_only = _mix(tmp_path / "b", "sine=frequency=220:sample_rate=24000", False, cfg)
     # BGM を足しても全体の音量はほぼ変わらない（＝声が主役のまま）
     assert abs(_rms_db(with_voice) - _rms_db(voice_only)) < 3.0
+
+
+def test_voice_gain_normalizes_before_mix(tmp_path):
+    """声の大きさが違っても、ミックス前に -16 LUFS 付近へ揃うこと."""
+    from ytecon.render import VOICE_LUFS, audio_chain, measure_loudness
+    from ytecon.config import load_config
+
+    exe = ensure_ffmpeg()
+    quiet = tmp_path / "quiet.wav"
+    subprocess.run([exe, "-y", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=24000",
+                    "-t", "4", "-af", "volume=-6dB", str(quiet)], capture_output=True, check=True)
+    lufs = measure_loudness(quiet)
+    assert -32 < lufs < -20, lufs   # sine は既定 -18dBFS。-6dB で -27 LUFS 前後
+    gain = VOICE_LUFS - lufs
+    chain = audio_chain(load_config(), None, 4.0, gain)
+    assert f"volume={gain:.2f}dB" in chain[0]

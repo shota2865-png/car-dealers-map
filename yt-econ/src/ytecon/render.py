@@ -131,31 +131,56 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     return out
 
 
-def audio_chain(cfg: Config, bgm_idx: int | None, total: float) -> list[str]:
+def measure_loudness(wav: Path) -> float:
+    """声ファイルの統合ラウドネス(LUFS)を1回だけ測る。失敗時は -18 とみなす."""
+    exe = ensure_ffmpeg()
+    r = subprocess.run(
+        [exe, "-nostats", "-i", str(wav), "-af", "ebur128=peak=none", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    m = re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
+    if not m:
+        return -18.0
+    val = float(m[-1])
+    return val if val > -60 else -18.0
+
+
+VOICE_LUFS = -16.0   # ミックス前に声を揃える基準
+BGM_LUFS = -20.0     # BGM を揃える基準（ここから volume_db ぶん下げる）
+
+
+def audio_chain(
+    cfg: Config, bgm_idx: int | None, total: float, voice_gain_db: float = 0.0
+) -> list[str]:
     """音声の filter_complex を組む（BGM の混ぜ方はここだけで決まる）.
 
     考え方:
-      1. BGM をまず一定のラウドネス(-20 LUFS)に揃える。素材ごとの音量差を消す
-      2. そこから声に対する相対量(volume_db。既定 -8dB)を引く
-      3. 声が乗っている間だけ軽く下げる（ratio 2）。強く掛けると BGM が
-         「ある気配」すら消えて、無い動画と区別がつかなくなる
+      1. 声を先に一定のラウドネス(-16 LUFS)へ。voice_gain_db は
+         measure_loudness() で測った値から出す固定ゲイン（動的処理はしない）
+      2. BGM も一定のラウドネス(-20 LUFS)に揃え、そこから volume_db だけ下げる。
+         既定 -6dB → 声の間(無音区間)で声より 10dB ほど小さい＝「3割」の体感
+      3. 声が乗っている間だけ軽く下げる(ratio 2)。強く掛けると BGM が
+         「ある気配」すら消えて、無い動画と区別がつかなくなる。
+         release を短めにして、文と文の 0.3〜0.6 秒の間でも BGM が戻るようにする
       4. 最後に全体を YouTube 基準(-14 LUFS)へ
 
     入力: [1:a] が声、[{bgm_idx}:a] が BGM。出力ラベルは [a]。
     """
+    vg = f"volume={voice_gain_db:.2f}dB," if abs(voice_gain_db) > 0.05 else ""
     if bgm_idx is None:
-        return ["[1:a]apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]"]
+        return [f"[1:a]{vg}apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]"]
 
-    vol = float(cfg.get("render.bgm.volume_db", -8))
+    vol = float(cfg.get("render.bgm.volume_db", -6))
     fade_out_at = max(total - 3, 0)
     chain = [
-        "[1:a]apad=pad_dur=0.8,asplit=2[voice][sc]",
-        f"[{bgm_idx}:a]aresample=48000,loudnorm=I=-20:TP=-2:LRA=7,volume={vol}dB,"
+        f"[1:a]{vg}apad=pad_dur=0.8,asplit=2[voice][sc]",
+        f"[{bgm_idx}:a]aresample=48000,loudnorm=I={BGM_LUFS:.0f}:TP=-2:LRA=7,volume={vol}dB,"
         f"afade=t=in:st=0:d=2,afade=t=out:st={fade_out_at:.2f}:d=3[bgm0]",
     ]
     if cfg.get("render.bgm.ducking", True):
-        chain.append("[bgm0][sc]sidechaincompress=threshold=0.05:ratio=2:"
-                     "attack=20:release=500:makeup=1[bgm]")
+        # threshold 0.1 ≒ -20dBFS。声のピークがこれを超えた分の半分だけ BGM を下げる
+        chain.append("[bgm0][sc]sidechaincompress=threshold=0.1:ratio=2:"
+                     "attack=30:release=250:makeup=1[bgm]")
     else:
         chain.append("[sc]anullsink;[bgm0]acopy[bgm]")
     chain.append("[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0:"
@@ -229,7 +254,10 @@ def render(
         chain.append(f"{vout}[ch]overlay=W-w-{mr}:H-h-{mb}:format=auto:eof_action=repeat[v]")
         vout = "[v]"
 
-    chain += audio_chain(cfg, bgm_idx, total)
+    voice_gain = VOICE_LUFS - measure_loudness(track.wav_path)
+    voice_gain = max(-20.0, min(20.0, voice_gain))
+    log.info("声のゲイン補正 %+.1f dB（-16 LUFS に揃える）", voice_gain)
+    chain += audio_chain(cfg, bgm_idx, total, voice_gain)
 
     final = outdir / "video.mp4"
     args += [

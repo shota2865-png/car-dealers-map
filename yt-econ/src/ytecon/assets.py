@@ -296,7 +296,7 @@ def render_chart(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
         ax.set_xticklabels(labels)
 
     ax.set_title(spec.get("title", ""), fontproperties=fp, fontsize=44,
-                 color=pal["text"], pad=30)
+                 color=pal["text"], pad=46)
 
     if kind != "pie":
         ax.set_xlabel(spec.get("x_label", ""), fontproperties=fp, fontsize=26,
@@ -308,7 +308,7 @@ def render_chart(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
             ax.set_ylabel("")
             ax.annotate(
                 f"（{y_label}）", xy=(0, 1), xycoords="axes fraction",
-                xytext=(0, 14), textcoords="offset points",
+                xytext=(0, 6), textcoords="offset points",
                 fontproperties=fp, fontsize=24, color="#9AA7BE",
                 ha="left", va="bottom",
             )
@@ -335,9 +335,15 @@ def render_chart(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
 
     note = spec.get("note") or ""
     if note:
-        # 下に置くと字幕と重なるので、タイトルの下・右寄せに小さく置く
-        fig.text(right, 0.845, note, fontproperties=fp, fontsize=20, color="#9AA7BE",
-                 ha="right", va="bottom")
+        # 図の外に置くとタイトルか字幕のどちらかと必ずぶつかる。
+        # 図の中・右上に置く。データと重ならないよう、縦軸の上に 28% の余白を足す
+        if kind != "pie":
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(lo, hi + (hi - lo) * 0.28)
+        ax.text(0.985, 0.965, note, transform=ax.transAxes, fontproperties=fp,
+                fontsize=19, color="#C7D0DE", ha="right", va="top",
+                bbox={"boxstyle": "round,pad=0.35", "facecolor": pal["surface"],
+                      "edgecolor": "#33405C", "alpha": 0.88})
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, facecolor=pal["bg"])
     plt.close(fig)
