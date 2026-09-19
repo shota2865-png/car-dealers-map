@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -77,8 +78,10 @@ def expand_channels(urls: list[str], per_channel: int = 5) -> list[str]:
 
     @handle / /channel/ / /c/ / /videos を渡せる。個別動画URLはそのまま通す。
     """
-    exe = ensure_ytdlp()
     out: list[str] = []
+    channels = [u for u in urls if _is_channel(u)]
+    # ローカルファイルや個別動画だけなら yt-dlp は要らない
+    exe = ensure_ytdlp() if channels else ""
     for url in urls:
         if not _is_channel(url):
             out.append(url)
@@ -102,17 +105,58 @@ def expand_channels(urls: list[str], per_channel: int = 5) -> list[str]:
 
 
 def _is_channel(url: str) -> bool:
+    if Path(url).exists():
+        return False
     return any(token in url for token in ("/@", "/channel/", "/c/", "/user/"))
 
 
+def _stable_id(url: str) -> str:
+    """再実行しても同じ名前になるID。hash() はプロセスごとに変わるので使えない."""
+    return hashlib.md5(url.encode("utf-8")).hexdigest()[:10]
+
+
+def fetch_local(path: Path, workdir: Path | None = None) -> Reference:
+    """ローカルの動画ファイルを解析する（ネットワーク不要）.
+
+    本番の前に、手元の動画1本で配管が通っているか確かめるために使う。
+    同じ場所に .vtt / .srt があれば文字起こしとしても読む。
+    """
+    from . import analyze
+    from .render import probe_duration
+
+    ref = Reference(url=str(path), title=path.stem, channel="(local)")
+    ref.duration = probe_duration(path)
+
+    for suffix in (".vtt", ".srt"):
+        sidecar = path.with_suffix(suffix)
+        if sidecar.exists():
+            ref.cues = parse_vtt(sidecar.read_text(encoding="utf-8"))
+            ref.transcript = "".join(t for _s, _e, t in ref.cues)
+            break
+
+    if workdir:
+        ref.visual = analyze.analyze_video(
+            path, ref.duration, workdir / f"work_{_stable_id(str(path))}")
+    return ref
+
+
 def fetch(url: str, lang: str = "ja", deep: bool = False,
-          workdir: Path | None = None) -> Reference:
-    """字幕とメタデータだけ取得する（動画本体は落とさない）."""
+          workdir: Path | None = None, timeout: int | None = None) -> Reference:
+    """字幕・メタデータ（deep なら映像も）を取得する."""
+    local = Path(url)
+    if local.exists() and local.is_file():
+        return fetch_local(local, workdir)
+
     exe = ensure_ytdlp()
+    # 映像まで落とすときは時間がかかる。5分だと途中で切れる
+    timeout = timeout if timeout is not None else (1800 if deep else 300)
+
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp)
         cmd = [
             exe,
+            "--no-playlist",          # 再生リスト付きURLでも1本だけにする
+            "--retries", "3",
             "--write-info-json",
             "--write-subs", "--write-auto-subs",
             "--sub-langs", f"{lang},{lang}-orig,{lang}.*",
@@ -123,14 +167,22 @@ def fetch(url: str, lang: str = "ja", deep: bool = False,
         ]
         if deep:
             # 解析にしか使わないので最低画質で十分。帯域と時間を節約する
-            cmd += ["-f", "worstvideo[height>=360]+worstaudio/worst"]
+            cmd += ["-f", "worst[height>=360]/worstvideo[height>=360]+worstaudio/worst"]
         else:
             cmd += ["--skip-download"]
         cmd.append(url)
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise LearnError(
+                f"取得が {timeout} 秒で打ち切られました: {url}\n"
+                "回線が遅い場合は --deep を外すか、本数を減らしてください。"
+            ) from None
         if proc.returncode != 0:
             tail = "\n".join(proc.stderr.strip().splitlines()[-6:])
-            raise LearnError(f"字幕の取得に失敗しました ({url})\n{tail}")
+            raise LearnError(f"取得に失敗しました ({url})\n{tail}")
 
         info_files = list(out.glob("*.info.json"))
         if not info_files:
@@ -148,38 +200,39 @@ def fetch(url: str, lang: str = "ja", deep: bool = False,
         )
 
         vtts = sorted(out.glob("*.vtt"))
-        if not vtts:
-            raise LearnError(
-                f"字幕が見つかりませんでした: {url}\n"
-                "自動生成字幕もオフの動画は分析できません。別の動画を指定してください。"
-            )
-        ref.cues = parse_vtt(vtts[0].read_text(encoding="utf-8"))
-        ref.transcript = "".join(text for _s, _e, text in ref.cues)
+        if vtts:
+            ref.cues = parse_vtt(vtts[0].read_text(encoding="utf-8"))
+            ref.transcript = "".join(text for _s, _e, text in ref.cues)
+        else:
+            # 字幕が無くても、映像の実測だけは価値がある。捨てない
+            log.warning("字幕が見つかりませんでした（映像の解析だけ行います）: %s",
+                        ref.title or url)
 
         thumbs = sorted(out.glob("*.jpg"))
         if thumbs and workdir:
             workdir.mkdir(parents=True, exist_ok=True)
-            dest = workdir / f"thumb_{abs(hash(url)) % 100000}.jpg"
+            dest = workdir / f"thumb_{_stable_id(url)}.jpg"
             shutil.copy2(thumbs[0], dest)
             ref.thumbnail_path = dest
 
-        if deep and workdir:
-            from . import analyze
+        from . import analyze
 
+        if deep and workdir:
             videos = [f for f in out.iterdir()
                       if f.suffix in (".mp4", ".webm", ".mkv")]
             if videos:
                 ref.visual = analyze.analyze_video(
-                    videos[0], ref.duration, workdir / "work",
+                    videos[0], ref.duration, workdir / f"work_{_stable_id(url)}",
                     thumbnail=ref.thumbnail_path,
                 )
             else:
                 log.warning("映像を取得できなかったので見た目の解析をスキップ: %s", url)
         elif ref.thumbnail_path:
-            from . import analyze
-
             ref.visual = analyze.VisualProfile(
                 thumbnail=analyze.analyze_thumbnail(ref.thumbnail_path))
+
+        if not ref.cues and not (ref.visual and ref.visual.cuts):
+            raise LearnError(f"字幕も映像も取得できませんでした: {url}")
         return ref
 
 
@@ -267,6 +320,8 @@ def measure(ref: Reference) -> dict[str, Any]:
     body = re.sub(r"\s", "", ref.transcript)
     chars = len(body)
     minutes = (ref.duration or (ref.cues[-1][1] if ref.cues else 0)) / 60
+    if minutes <= 0:
+        minutes = 0.0
 
     sentences = [s for s in _SENT_END.split(ref.transcript) if s.strip()]
     sent_lengths = [len(re.sub(r"\s", "", s)) for s in sentences if s.strip()]
@@ -365,7 +420,8 @@ _STYLE_SYSTEM = """あなたは動画台本の文体分析者です。
 def profile(cfg: Config, refs: list[Reference],
             measurements: list[dict[str, Any]]) -> dict[str, Any]:
     blocks = []
-    for ref, m in zip(refs, measurements):
+    pairs = [(r, m) for r, m in zip(refs, measurements) if r.transcript.strip()]
+    for ref, m in pairs:
         # 文字起こしは長いので冒頭と中盤を抜く（全部入れても型は変わらない）
         head = ref.transcript[:2500]
         mid = ref.transcript[len(ref.transcript) // 2:][:1500]
@@ -388,7 +444,7 @@ def profile(cfg: Config, refs: list[Reference],
         )
 
     visual_note = ""
-    withvis = [r for r in refs if r.visual and r.visual.cuts]
+    withvis = [r for r, _m in pairs if r.visual and r.visual.cuts]
     if withvis:
         lines = ["", "## 映像の実測値（参考）"]
         for r in withvis:
@@ -413,7 +469,8 @@ def profile(cfg: Config, refs: list[Reference],
 
 # ----------------------------------------------------------------------
 def learn(cfg: Config, urls: list[str], out: Path | None = None,
-          lang: str = "ja", deep: bool = False, per_channel: int = 5) -> Path:
+          lang: str = "ja", deep: bool = False, per_channel: int = 5,
+          measure_only: bool = False) -> Path:
     """参照動画（またはチャンネル）を分析して config/style.yaml を書き出す."""
     from . import analyze
 
@@ -451,8 +508,17 @@ def learn(cfg: Config, urls: list[str], out: Path | None = None,
     stats = aggregate(measurements)
     visual_stats = analyze.aggregate_visual(visuals) if visuals else {}
 
-    log.info("文体を言語化しています…")
-    style = profile(cfg, refs, measurements)
+    # 文字起こしが1本も取れていなければ、文体の言語化はできない
+    has_text = any(r.transcript.strip() for r in refs)
+    if measure_only:
+        log.info("計測のみ（--measure-only）なので文体の言語化は行いません")
+        style = {}
+    elif not has_text:
+        log.warning("字幕が1本も取れなかったので、文体の言語化を飛ばします")
+        style = {}
+    else:
+        log.info("文体を言語化しています…")
+        style = profile(cfg, refs, measurements)
 
     doc = {
         "_note": (

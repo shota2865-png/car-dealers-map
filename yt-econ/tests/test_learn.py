@@ -235,3 +235,55 @@ def test_overlap_spanning_two_cues_back_is_caught():
 円安とは円の価値が下がることです
 """
     assert "".join(c[2] for c in parse_vtt(vtt)) == "円安とは円の価値が下がることです"
+
+
+# ----------------------------------------------------------------------
+def test_local_files_do_not_require_ytdlp(monkeypatch, tmp_path):
+    """ローカル動画だけを渡したとき、yt-dlp が無くても動くこと.
+
+    本番前に手元の1本で配管を確かめられるようにするための経路。
+    """
+    from ytecon import learn as learn_mod
+
+    def boom():
+        raise learn_mod.LearnError("yt-dlp が必要です")
+
+    monkeypatch.setattr(learn_mod, "ensure_ytdlp", boom)
+    assert learn_mod.expand_channels(["/tmp/a.mp4", "https://youtu.be/x"]) == \
+        ["/tmp/a.mp4", "https://youtu.be/x"]
+
+
+def test_channel_urls_are_recognised(tmp_path):
+    from ytecon.learn import _is_channel
+
+    assert _is_channel("https://www.youtube.com/@kangaesugiruashi")
+    assert _is_channel("https://www.youtube.com/channel/UCxxxx")
+    assert not _is_channel("https://youtu.be/XeTAlZiIWHE")
+    # 実在するローカルパスはチャンネル扱いしない
+    f = tmp_path / "@weird.mp4"
+    f.write_bytes(b"")
+    assert not _is_channel(str(f))
+
+
+def test_stable_id_is_stable():
+    """再実行で同じ名前になること（hash() はプロセスごとに変わる）."""
+    from ytecon.learn import _stable_id
+
+    assert _stable_id("https://youtu.be/abc") == _stable_id("https://youtu.be/abc")
+    assert _stable_id("https://youtu.be/abc") != _stable_id("https://youtu.be/xyz")
+
+
+def test_measure_survives_a_video_without_subtitles():
+    """字幕が取れなくても落ちないこと（映像の実測だけでも価値がある）."""
+    from ytecon.learn import Reference, measure
+
+    ref = Reference(url="u", title="t", duration=600.0)
+    m = measure(ref)
+    assert m["chars_per_minute"] == 0
+    assert m["duration_minutes"] == 10.0
+
+
+def test_measure_with_zero_duration():
+    from ytecon.learn import Reference, measure
+
+    assert measure(Reference(url="u", title="t"))["chars_per_minute"] == 0

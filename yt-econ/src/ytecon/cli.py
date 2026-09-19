@@ -221,27 +221,36 @@ def cmd_learn(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config)
     out = learn(cfg, args.urls, out=Path(args.out) if args.out else None,
-                lang=args.lang, deep=args.deep, per_channel=args.per_channel)
+                lang=args.lang, deep=args.deep, per_channel=args.per_channel,
+                measure_only=args.measure_only)
 
-    style = load_style(cfg) or {}
-    measured = style.get("measured", {})
-    voice = style.get("voice", {})
-    print(f"\n== 参照動画から抽出しました ==\n")
-    print(f"  話速       : {measured.get('chars_per_minute')}文字/分"
-          f"  (config の {cfg.get('video.chars_per_minute')} を上書きします)")
-    print(f"  1文の長さ  : 平均 {measured.get('avg_sentence_chars')}字")
-    print(f"  尺         : {measured.get('duration_minutes')}分")
-    print(f"  導入       : {measured.get('hook_seconds')}秒")
-    print(f"  チャプター : {measured.get('chapters')}個"
-          f" / 1章 {measured.get('median_chapter_seconds')}秒")
-    if voice.get("summary"):
-        print(f"\n  語り口: {voice['summary']}")
-    if voice.get("opening_pattern"):
-        print(f"  導入の型: {voice['opening_pattern']}")
-    visual = style.get("visual", {})
+    # 書き出した先をそのまま読み直す（-o で既定以外に出した場合に備える）
+    import yaml
+
+    style = yaml.safe_load(out.read_text(encoding="utf-8")) or {}
+    measured = style.get("measured", {}) or {}
+    visual = style.get("visual", {}) or {}
+    voice = style.get("voice", {}) or {}
+
+    print(f"\n== 参照動画 {measured.get('videos', 0)} 本から実測しました ==\n")
+    if measured.get("chars_per_minute"):
+        print(f"  話速       : {measured['chars_per_minute']}文字/分"
+              f"  (config の {cfg.get('video.chars_per_minute')} を上書きします)")
+        print(f"  1文の長さ  : 平均 {measured.get('avg_sentence_chars')}字")
+        print(f"  尺         : {measured.get('duration_minutes')}分")
+        print(f"  導入       : {measured.get('hook_seconds')}秒")
+        print(f"  チャプター : {measured.get('chapters')}個"
+              f" / 1章 {measured.get('median_chapter_seconds')}秒")
+    else:
+        print("  （字幕が取れなかったので話速は測れていません）")
+
     if visual:
         print(f"\n  カット     : {visual.get('cuts_per_minute')}回/分"
               f"  1ショット {visual.get('median_shot_seconds')}秒")
+        over = visual.get("shots_over_6s_ratio")
+        if over is not None:
+            print(f"  6秒超の割合: {over}"
+                  + ("   ← 高いほど画が持っていない" if over and over > 0.5 else ""))
         colors = visual.get("dominant_colors") or []
         if colors:
             print("  支配色     : " + "  ".join(
@@ -249,10 +258,22 @@ def cmd_learn(args: argparse.Namespace) -> int:
         if visual.get("thumbnail_text_area_ratio") is not None:
             print(f"  サムネ文字量: {visual['thumbnail_text_area_ratio']}"
                   f"  鮮やかさ {visual.get('thumbnail_vivid_ratio')}")
+
+    if voice.get("summary"):
+        print(f"\n  語り口     : {voice['summary']}")
+    if voice.get("opening_pattern"):
+        print(f"  導入の型   : {voice['opening_pattern']}")
     if voice.get("what_not_to_copy"):
         print(f"\n  真似しないほうがいい点: {voice['what_not_to_copy']}")
+    if not voice:
+        print("\n  （文体の言語化は行っていません。--measure-only を外すと出ます）")
+
     print(f"\n  → {out}")
-    print("  以降 `ytecon run` はこの語り口に寄せて台本を書きます。")
+    if out.resolve() == (cfg.root / "config" / "style.yaml").resolve():
+        print("  以降 `ytecon run` はこのプロファイルに寄せて台本を書きます。")
+    else:
+        print("  ※ 既定の場所ではないので、台本生成には反映されません。")
+        print(f"     反映するには config/style.yaml に置いてください。")
     return 0
 
 
@@ -363,6 +384,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="映像も落としてカット頻度・配色まで測る（低画質・時間がかかる）")
     p.add_argument("--per-channel", type=int, default=5,
                    help="チャンネルURLを渡したとき、何本さかのぼるか（既定5）")
+    p.add_argument("--measure-only", action="store_true",
+                   help="実測だけ行い、文体の言語化（LLM）は行わない。まず数字を見たいとき")
     p.set_defaults(func=cmd_learn)
 
     p = sub.add_parser("run", help="当日分を作って投稿する")
