@@ -84,6 +84,21 @@ abstract/blue_particles_loop.mp4:
 **合成の電子音は使いません。** 曲が 1 曲も無いときは BGM なしで作り、ログに警告が出ます。
 気分名のファイルが無くても、置いてある曲を気分の順に割り当てて使います（1 曲だけなら全編それ）。
 
+## 効果音（Artlist SFX）
+
+8 種類を 1 つずつ。ファイル名を種類名にして `assets/sfx/` に置きます（`素材をそろえる.command` は自動でそうします）。
+
+| 種類 | 使う場面 | 探し方の目安 |
+|---|---|---|
+| `POP` | テロップの出現 | soft pop ui |
+| `CLICK` | 数値・箇条書きの提示 | click subtle |
+| `WHOOSH` | 場面転換 | whoosh transition short |
+| `IMPACT` | 重大な発言 | cinematic impact hit soft |
+| `COMEDY` | オチ | comedy boing light |
+| `ERROR` | 失敗・矛盾の指摘 | error buzzer short |
+| `RISER` | 次の展開への引き | riser short cinematic |
+| `TRANSITION` | 章の切り替え | swoosh transition |
+
 ## ライセンスの注意
 
 - Artlist のライセンスは**契約中に落とした素材を、契約後も使い続けられる**形です。

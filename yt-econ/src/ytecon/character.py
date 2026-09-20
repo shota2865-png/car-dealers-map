@@ -55,8 +55,11 @@ def character_dir(cfg: Config) -> Path:
     return cfg.root / "assets" / "character"
 
 
-def find_assets(cfg: Config) -> dict[str, Path] | None:
-    """使う画像を決める。本物の立ち絵（フォルダ形式 / PSD）→ 4 枚の PNG → 無し."""
+def find_assets(cfg: Config, expression: str = "通常") -> dict[str, Path] | None:
+    """使う画像を決める。本物の立ち絵（フォルダ形式 / PSD）→ 4 枚の PNG → 無し.
+
+    expression は PSD のときだけ効く（フォルダ形式・PNG は通常のみ）。
+    """
     d = character_dir(cfg)
     ymm = find_ymm_dir(cfg)
     if ymm is not None:
@@ -67,7 +70,7 @@ def find_assets(cfg: Config) -> dict[str, Path] | None:
     psd = find_psd(cfg)
     if psd is not None:
         try:
-            return compose_psd(cfg, psd, cfg.workdir / "character_composed")
+            return compose_psd(cfg, psd, cfg.workdir / "character_composed", expression)
         except Exception as exc:
             log.warning("立ち絵 PSD %s を合成できませんでした（仮キャラにします）: %s", psd, exc)
     found = {s: d / f"{s}.png" for s in STATES}
@@ -308,34 +311,75 @@ def apply_blinks(cfg: Config, states: list[str], fps: int = FPS, seed: int = 7) 
 # ----------------------------------------------------------------------
 # アルファ付きの動画にする
 # ----------------------------------------------------------------------
-def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path) -> Path | None:
-    """キャラクターのレイヤー（透過動画）を作って返す。無効なら None."""
+def _padded(src: Path, out: Path, pad: int, up: bool) -> Path:
+    """全コマを同じ大きさにするため、下に pad px の透明を足す。up=True は絵を上に寄せる."""
+    from PIL import Image
+
+    if out.exists() and out.stat().st_mtime >= src.stat().st_mtime:
+        return out
+    im = Image.open(src).convert("RGBA")
+    canvas = Image.new("RGBA", (im.width, im.height + pad), (0, 0, 0, 0))
+    canvas.alpha_composite(im, (0, 0 if up else pad))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out)
+    return out
+
+
+def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
+                track=None) -> Path | None:
+    """キャラクターのレイヤー（透過動画）を作って返す。無効なら None.
+
+    track（VoiceTrack）があれば、文ごとの表情タグ（[驚] など）で差分を切り替え、
+    話しているコマは bob_px だけ上に動かす（ゆっくり動画でよくある「喋ると揺れる」）。
+    """
     if not cfg.get("character.enabled", False):
         return None
     from .render import ensure_ffmpeg
 
-    assets = find_assets(cfg) or make_placeholder(cfg)
+    base_assets = find_assets(cfg) or make_placeholder(cfg)
     env = envelope(wav_path)
     states = apply_blinks(cfg, mouth_states(cfg, env))
-
-    # 音声が終わったあとの余韻ぶんは口を閉じて待つ
     need = int(total_seconds * FPS) + 1
     if len(states) < need:
-        states += ["base"] * (need - len(states))
+        states += ["base"] * (need - len(states))     # 音声が終わったあとは口を閉じて待つ
 
-    # 同じ状態が続く区間をまとめて concat リストにする
+    # 文ごとの表情
+    exprs = ["通常"] * len(states)
+    if track is not None:
+        for ln in track.lines:
+            if ln.expression and ln.expression != "通常":
+                a, b = int(ln.start * FPS), min(int(ln.end * FPS) + 1, len(states))
+                for i in range(a, b):
+                    exprs[i] = ln.expression
+    sets: dict[str, dict[str, Path]] = {"通常": base_assets}
+    for e in sorted(set(exprs) - {"通常"}):
+        got = find_assets(cfg, e)
+        sets[e] = got if got and got is not base_assets and got.get("base") != base_assets.get("base") else base_assets
+
+    bob = int(cfg.get("character.bob_px", 8))
+    pad_dir = outdir / "character_frames"
+
+    def frame_file(e: str, st: str) -> Path:
+        src = sets[e][st]
+        if bob <= 0:
+            return src
+        up = st in ("mouth_half", "mouth_open")
+        return _padded(src, pad_dir / f"{e}_{st}_{'up' if up else 'dn'}.png", bob, up)
+
+    # 同じコマが続く区間をまとめて concat リストにする
     outdir.mkdir(parents=True, exist_ok=True)
     listing = outdir / "character_frames.txt"
     lines: list[str] = []
-    run_state, run_len = states[0], 0
-    for s in states:
-        if s == run_state:
+    keys = list(zip(exprs, states))
+    run_key, run_len = keys[0], 0
+    for k in keys:
+        if k == run_key:
             run_len += 1
             continue
-        lines += [f"file '{assets[run_state].as_posix()}'", f"duration {run_len / FPS:.4f}"]
-        run_state, run_len = s, 1
-    lines += [f"file '{assets[run_state].as_posix()}'", f"duration {run_len / FPS:.4f}",
-              f"file '{assets[run_state].as_posix()}'"]     # concat の仕様で最後をもう一度
+        lines += [f"file '{frame_file(*run_key).as_posix()}'", f"duration {run_len / FPS:.4f}"]
+        run_key, run_len = k, 1
+    lines += [f"file '{frame_file(*run_key).as_posix()}'", f"duration {run_len / FPS:.4f}",
+              f"file '{frame_file(*run_key).as_posix()}'"]     # concat の仕様で最後をもう一度
     listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     out = outdir / "character.mov"
@@ -344,7 +388,6 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path)
          "-f", "concat", "-safe", "0", "-i", str(listing),
          "-vf", f"fps={FPS},format=rgba",
          # qtrle: 透過を保ったまま、平坦な絵なら ProRes 4444 の 1/60 の容量で済む
-         # （実測 106秒: ProRes 243MB / qtrle 4MB）。復号に特別な指定も要らない
          "-c:v", "qtrle", "-pix_fmt", "argb",
          str(out)],
         capture_output=True, text=True,
@@ -352,7 +395,8 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path)
     if proc.returncode != 0:
         log.warning("キャラクターレイヤーの生成に失敗（無しで続けます）: %s", proc.stderr[-300:])
         return None
-    log.info("キャラクターレイヤー: %d 状態区間 / %.1f秒", len(lines) // 2, total_seconds)
+    used = sorted(set(exprs))
+    log.info("キャラクターレイヤー: %d 状態区間 / %.1f秒 / 表情 %s", len(lines) // 2, total_seconds, "・".join(used))
     return out
 
 
@@ -418,6 +462,17 @@ _PSD_DEFAULTS = {
     "服装1": "いつもの服", "右腕": "基本", "左腕": "基本", "枝豆": "枝豆通常",
 }
 _PSD_MOUTH = {"base": "むふ", "mouth_half": "ほあ", "mouth_open": "ほあー"}
+# 表情タグ → 差分の組み合わせ（ゆっくりMovieMaker の表情切り替えに相当）。config の
+# character.expressions で上書きできる。ここに無い表情は「通常」
+_PSD_EXPRESSIONS = {
+    "通常": {},
+    "笑": {"目": "にっこり", "眉": "普通眉"},
+    "驚": {"目セット": "見開き白目", "黒目": "カメラ目線", "眉": "上がり眉", "顔色": "ほっぺ赤め"},
+    "困": {"眉": "困り眉1", "黒目": "目逸らし", "顔色": "ほっぺ2"},
+    "考": {"左腕": "考える", "黒目": "目逸らし2", "眉": "普通眉"},
+    "指": {"右腕": "指差し", "眉": "上がり眉", "黒目": "カメラ目線"},
+    "怒": {"眉": "怒り眉", "目": "ジト目"},
+}
 _PSD_BLINK = "UU"
 # これらのグループは既定で丸ごと使わない（服装の別バージョン・記号類）
 _PSD_SKIP_GROUPS = ("服装2", "記号など")
@@ -440,8 +495,18 @@ def _clean(name: str) -> str:
     return name.lstrip("*!").strip()
 
 
-def compose_psd(cfg: Config, psd_path: Path, out_dir: Path) -> dict[str, Path]:
-    """PSD のレイヤーを選んで重ね、base / mouth_half / mouth_open / blink の 4 枚を作る."""
+def expressions(cfg: Config) -> dict[str, dict[str, str]]:
+    table = {k: dict(v) for k, v in _PSD_EXPRESSIONS.items()}
+    for k, v in (cfg.get("character.expressions", {}) or {}).items():
+        table[str(k)] = {str(a): str(b) for a, b in (v or {}).items()}
+    return table
+
+
+def compose_psd(cfg: Config, psd_path: Path, out_dir: Path, expression: str = "通常") -> dict[str, Path]:
+    """PSD のレイヤーを選んで重ね、base / mouth_half / mouth_open / blink の 4 枚を作る.
+
+    expression（通常 / 笑 / 驚 …）ごとに差分の組み合わせを変える。
+    """
     from PIL import Image
 
     try:
@@ -450,6 +515,7 @@ def compose_psd(cfg: Config, psd_path: Path, out_dir: Path) -> dict[str, Path]:
         raise RuntimeError("psd-tools が要ります: pip install psd-tools") from exc
 
     parts_cfg = {str(k): str(v) for k, v in (cfg.get("character.parts", {}) or {}).items()}
+    parts_cfg.update(expressions(cfg).get(expression) or {})
     mouth_cfg = {**_PSD_MOUTH, **{str(k): str(v) for k, v in (cfg.get("character.mouth", {}) or {}).items()}}
     blink_name = str(cfg.get("character.blink", "") or _PSD_BLINK)
     skip = tuple(cfg.get("character.skip_groups", []) or _PSD_SKIP_GROUPS)
@@ -457,9 +523,9 @@ def compose_psd(cfg: Config, psd_path: Path, out_dir: Path) -> dict[str, Path]:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = (f"{psd_path}:{psd_path.stat().st_mtime_ns}|{parts_cfg}|{mouth_cfg}|{blink_name}|{skip}|{flip}"
-             f"|{cfg.get('character.crop_bottom', 0)}")
-    stamp_file = out_dir / "stamp.txt"
-    result = {s: out_dir / f"{s}.png" for s in STATES}
+             f"|{cfg.get('character.crop_bottom', 0)}|{expression}")
+    stamp_file = out_dir / f"stamp_{expression}.txt"
+    result = {s: out_dir / (f"{s}.png" if expression == "通常" else f"{expression}_{s}.png") for s in STATES}
     if stamp_file.exists() and stamp_file.read_text() == stamp and all(p.exists() for p in result.values()):
         return result
 
@@ -481,9 +547,6 @@ def compose_psd(cfg: Config, psd_path: Path, out_dir: Path) -> dict[str, Path]:
 
     def choices_for(state: str) -> dict[str, str]:
         ch = {**_PSD_DEFAULTS, **parts_cfg}
-        if "目" in ch:                       # 「目: 普通目2」のように書かれたら黒目の選択とみなす
-            ch.setdefault("黒目", ch["目"])
-            ch["黒目"] = ch["目"]
         ch["口"] = mouth_cfg.get(state, mouth_cfg["base"])
         if state == "blink":
             ch["目"] = blink_name
@@ -498,9 +561,10 @@ def compose_psd(cfg: Config, psd_path: Path, out_dir: Path) -> dict[str, Path]:
                 name = _clean(layer.name)
                 if name in skip:
                     return
-                if name == "目" and state == "blink":
-                    # まばたきは「目」グループ直下の閉じ目レイヤー1枚に差し替える
-                    k = pick_child(layer, ch["目"])
+                if name == "目" and (state == "blink" or "目" in parts_cfg):
+                    # まばたき、または表情で「目: にっこり」のように直下の1枚が指定されたとき
+                    want = ch["目"] if state == "blink" else parts_cfg["目"]
+                    k = pick_child(layer, want)
                     if k is not None and not k.is_group():
                         paint(k)
                         return

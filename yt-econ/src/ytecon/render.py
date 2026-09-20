@@ -184,7 +184,8 @@ BGM_LUFS = -20.0     # BGM を揃える基準（ここから volume_db ぶん下
 
 
 def audio_chain(
-    cfg: Config, bgm_idx: int | None, total: float, voice_gain_db: float = 0.0
+    cfg: Config, bgm_idx: int | None, total: float, voice_gain_db: float = 0.0,
+    sfx: list[tuple[int, float]] | None = None,
 ) -> list[str]:
     """音声の filter_complex を組む（BGM の混ぜ方はここだけで決まる）.
 
@@ -201,8 +202,35 @@ def audio_chain(
     入力: [1:a] が声、[{bgm_idx}:a] が BGM。出力ラベルは [a]。
     """
     vg = f"volume={voice_gain_db:.2f}dB," if abs(voice_gain_db) > 0.05 else ""
+    sfx = list(sfx or [])
+    sfx_vol = float(cfg.get("render.sfx.volume_db", -10))
+
+    def sfx_bus(chain: list[str]) -> str:
+        """効果音を1本のバス [sfx] にまとめて、そのラベルを返す（無ければ空文字）."""
+        if not sfx:
+            return ""
+        labels = []
+        for k, (idx, at) in enumerate(sfx):
+            ms = int(max(at, 0) * 1000)
+            chain.append(f"[{idx}:a]aresample=48000,aformat=channel_layouts=mono,atrim=0:4,"
+                         f"adelay={ms}|{ms},volume={sfx_vol}dB[sx{k}]")
+            labels.append(f"[sx{k}]")
+        if len(labels) == 1:
+            chain.append(f"{labels[0]}acopy[sfx]")
+        else:
+            chain.append("".join(labels) + f"amix=inputs={len(labels)}:duration=longest:"
+                         "dropout_transition=0:normalize=0[sfx]")
+        return "[sfx]"
+
     if bgm_idx is None:
-        return [f"[1:a]{vg}apad=pad_dur=0.8,loudnorm=I=-14:TP=-1.5:LRA=11[a]"]
+        chain = [f"[1:a]{vg}apad=pad_dur=0.8[voice]"]
+        bus = sfx_bus(chain)
+        if bus:
+            chain.append(f"[voice]{bus}amix=inputs=2:duration=first:dropout_transition=0:"
+                         "normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+        else:
+            chain.append("[voice]loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+        return chain
 
     vol = float(cfg.get("render.bgm.volume_db", -6))
     fade_out_at = max(total - 3, 0)
@@ -217,7 +245,8 @@ def audio_chain(
                      "attack=30:release=250:makeup=1[bgm]")
     else:
         chain.append("[sc]anullsink;[bgm0]acopy[bgm]")
-    chain.append("[voice][bgm]amix=inputs=2:duration=first:dropout_transition=0:"
+    bus = sfx_bus(chain)
+    chain.append(f"[voice][bgm]{bus}amix=inputs={3 if bus else 2}:duration=first:dropout_transition=0:"
                  "normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
     return chain
 
@@ -266,7 +295,14 @@ def render(
         inputs.append(bgm_path)
         args += ["-stream_loop", "-1", "-i", str(bgm_path)]
 
-    char_path = character.build_track(cfg, track.wav_path, total, outdir)
+    from . import sfx as sfx_mod
+    sfx_inputs: list[tuple[int, float]] = []
+    for kind, at, path in sfx_mod.plan(cfg, script, track):
+        sfx_inputs.append((len(inputs), at))
+        inputs.append(path)
+        args += ["-i", str(path)]
+
+    char_path = character.build_track(cfg, track.wav_path, total, outdir, track=track)
     char_idx = None
     if char_path:
         char_idx = len(inputs)
@@ -291,7 +327,7 @@ def render(
     voice_gain = VOICE_LUFS - measure_loudness(track.wav_path)
     voice_gain = max(-20.0, min(20.0, voice_gain))
     log.info("声のゲイン補正 %+.1f dB（-16 LUFS に揃える）", voice_gain)
-    chain += audio_chain(cfg, bgm_idx, total, voice_gain)
+    chain += audio_chain(cfg, bgm_idx, total, voice_gain, sfx=sfx_inputs)
 
     final = outdir / "video.mp4"
     args += [

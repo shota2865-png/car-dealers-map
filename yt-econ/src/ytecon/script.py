@@ -421,6 +421,22 @@ open_loops には「question」と「payoff_section（何番目のセクショ�
    という余韻 → 視聴者への問いを1つ → チャンネル登録の一言。
    「だから〜しましょう」で閉じない。押し付けがましくしない。
 
+# 表情タグ（立ち絵の表情を変える）
+
+読み上げ本文の**文頭**に、次のタグを置くと、その一文のあいだ右下のキャラの表情が変わります。
+音声には読まれず、字幕にも出ません。**1 セクションに 1〜2 回**。付けすぎると安っぽくなります。
+
+| タグ | 使う場面 |
+|---|---|
+| [驚] | 「でも実際は逆」の瞬間、意外な数字を出す文 |
+| [考] | 視聴者に問いを投げる文（「ここで一度考えてみてほしいのだ」） |
+| [指] | その回の主張、いちばん覚えて帰ってほしい一文 |
+| [困] | 困りごと・不安・うまくいかない話 |
+| [笑] | 締めくくり、ほっとする話、余韻 |
+| [怒] | 理不尽・怒りを代弁する文（まれに） |
+
+例) 「[驚]ところが、数字は逆を向いているのだ。」
+
 # テロップ（captions）の決め方
 
 字幕とは別物です。字幕は全部の発言を出しますが、テロップは
@@ -827,6 +843,24 @@ def fact_check(cfg: Config, script: VideoScript) -> VideoScript:
 # ----------------------------------------------------------------------
 # 読み上げ用の整形
 # ----------------------------------------------------------------------
+# 表情タグ（ゆっくりMovieMaker の「表情切り替え」に相当）。文頭に [驚] のように書く。
+# 音声には読まれず、字幕にも出ず、その一文のあいだだけ立ち絵の表情が変わる
+EXPRESSIONS = ("通常", "笑", "驚", "困", "考", "指", "怒")
+_TAG_RE = re.compile(r"[\[【（(]\s*(" + "|".join(EXPRESSIONS) + r")\s*[\]】）)]")
+
+
+def parse_expression(sentence: str) -> tuple[str, str]:
+    """文頭（または文中）の表情タグを取り出し、(表情, タグを除いた文) を返す."""
+    m = _TAG_RE.search(sentence)
+    if not m:
+        return "", sentence
+    return m.group(1), _TAG_RE.sub("", sentence).strip()
+
+
+def strip_tags(text: str) -> str:
+    return _TAG_RE.sub("", text)
+
+
 _TTS_REPLACEMENTS = [
     (r"https?://\S+", ""),
     (r"[【】\[\]（）\(\)]", " "),
@@ -841,10 +875,12 @@ _TTS_REPLACEMENTS = [
 
 
 def tts_text(text: str) -> str:
-    """音声合成がつまずく記号を落とす."""
-    out = text
+    """音声合成がつまずく記号を落とす（表情タグ [驚] などは残す）."""
+    # 表情タグは括弧を落とす処理から守る
+    out = _TAG_RE.sub(lambda m: f"\ue000{m.group(1)}\ue001", text)
     for pattern, repl in _TTS_REPLACEMENTS:
         out = re.sub(pattern, repl, out)
+    out = re.sub("\ue000(" + "|".join(EXPRESSIONS) + ")\ue001", r"[\1]", out)
     return out.strip()
 
 

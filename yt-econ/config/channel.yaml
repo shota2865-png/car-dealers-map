@@ -205,6 +205,12 @@ character:
   # PSD のとき、口パクに使う口レイヤーと、まばたきに使う目レイヤー
   mouth: {base: "むふ", mouth_half: "ほあ", mouth_open: "ほあー"}
   blink: "UU"
+  # 表情タグ（台本の文頭の [驚] [笑] [困] [考] [指] [怒]）→ 差分の組み合わせ。
+  # 既定は character.py の _PSD_EXPRESSIONS。変えたいものだけ書く
+  #   例) expressions: {驚: {目セット: "見開き白目", 眉: "上がり眉"}}
+  expressions: {}
+  # 話しているコマを何 px 上に動かすか（0 で止める）。ゆっくり動画の「喋ると揺れる」
+  bob_px: 8
   # 左右反転（画面右下に置くので、左を向いている絵は反転して中央を向かせる）
   flip: false
   # 概要欄に自動で入れるクレジット。配布元の規約に従って書く
@@ -246,6 +252,11 @@ render:
     mood_timeline: true
     # フリー BGM を使う場合のクレジット（概要欄に自動で入る）
     credit: ""
+  # 効果音。assets/sfx/POP.mp3 のように種類名のファイルを置くと、台本の sounds の位置で鳴る
+  sfx:
+    enabled: true
+    volume_db: -10
+    max_total: 80
   capcut:
     # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
     draft_dir: ""

@@ -20,7 +20,11 @@ SRC = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else Path.home() / "Do
 CHAR = HERE / "assets" / "character"
 FOOT = HERE / "assets" / "footage"
 BGM = HERE / "assets" / "bgm"
-for d in (CHAR, FOOT / "abstract", FOOT / "broll", FOOT / "texture", BGM):
+SFX = HERE / "assets" / "sfx"
+SFX_WORDS = {"pop": "POP", "click": "CLICK", "whoosh": "WHOOSH", "swoosh": "TRANSITION", "impact": "IMPACT",
+             "hit": "IMPACT", "boing": "COMEDY", "comedy": "COMEDY", "buzzer": "ERROR", "error": "ERROR",
+             "riser": "RISER", "transition": "TRANSITION"}
+for d in (CHAR, FOOT / "abstract", FOOT / "broll", FOOT / "texture", BGM, SFX):
     d.mkdir(parents=True, exist_ok=True)
 
 MOODS = ("ambient", "curiosity", "tension", "reflective")
@@ -38,7 +42,7 @@ def newest(path: Path) -> bool:
     return path.is_file() and not path.name.startswith(".")
 
 
-moved: dict[str, list[str]] = {"立ち絵": [], "動画": [], "音楽": []}
+moved: dict[str, list[str]] = {"立ち絵": [], "動画": [], "音楽": [], "効果音": []}
 
 # 1) 立ち絵 zip
 for z in SRC.glob("*.zip"):
@@ -74,7 +78,20 @@ for v in sorted(SRC.iterdir()):
     shutil.move(str(v), dest)
     moved["動画"].append(f"{kind}/{dest.name}")
 
-# 3) 音楽（Artlist）: 名前に気分が入っていればその名前に、無ければ順に空いている気分へ
+# 3) 効果音（Artlist SFX）: 名前に pop / whoosh / click … が入っていれば assets/sfx へ
+for a in sorted(SRC.iterdir()):
+    if not newest(a) or a.suffix.lower() not in (".mp3", ".wav", ".aac", ".m4a", ".flac"):
+        continue
+    kind = next((k for w, k in SFX_WORDS.items() if w in a.name.lower()), None)
+    if kind is None:
+        continue
+    dest = SFX / f"{kind}{a.suffix.lower()}"
+    if dest.exists():
+        dest = SFX / f"{kind}_{slug(a.name)}{a.suffix.lower()}"
+    shutil.move(str(a), dest)
+    moved["効果音"].append(dest.name)
+
+# 4) 音楽（Artlist）: 名前に気分が入っていればその名前に、無ければ順に空いている気分へ
 for a in sorted(SRC.iterdir()):
     if not newest(a) or a.suffix.lower() not in (".mp3", ".wav", ".aac", ".m4a", ".flac"):
         continue

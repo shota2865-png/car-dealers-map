@@ -15,7 +15,7 @@
 #    2. 実行すると Artlist のログイン画面が開くので、ログインする（次回から不要）
 #
 #  使い方:
-#    python3 artlist_fetch.py                 # 既定の一覧（動画 40 本 + 曲 4 曲）
+#    python3 artlist_fetch.py                 # 既定の一覧（動画 40 本 + 曲 4 曲 + 効果音 8 個）
 #    python3 artlist_fetch.py --music-only    # 曲だけ
 #    python3 artlist_fetch.py --per 1 --limit 5   # 検索語ごと 1 本、最初の 5 語だけ（お試し）
 #    python3 artlist_fetch.py --manual        # 最初から手伝いモード（自動で押さない）
@@ -101,8 +101,22 @@ MUSIC_QUERIES: list[tuple[str, str]] = [
     ("reflective hopeful piano", "reflective"),
 ]
 
+# 効果音: 種類名がファイル名になる（assets/sfx/POP.mp3 など）
+SFX_QUERIES: list[tuple[str, str]] = [
+    ("soft pop ui", "POP"),
+    ("click subtle", "CLICK"),
+    ("whoosh transition short", "WHOOSH"),
+    ("cinematic impact hit soft", "IMPACT"),
+    ("comedy boing light", "COMEDY"),
+    ("error buzzer short", "ERROR"),
+    ("riser short cinematic", "RISER"),
+    ("swoosh transition", "TRANSITION"),
+]
+
 FOOTAGE_URL = "https://artlist.io/stock-footage/search?terms={q}"
 MUSIC_URL = "https://artlist.io/royalty-free-music/search?terms={q}"
+SFX_URL = "https://artlist.io/sfx/search?terms={q}"
+SFX = HERE / "assets" / "sfx"
 
 
 def log(msg: str) -> None:
@@ -272,16 +286,17 @@ def run(args) -> None:
             jobs += [("footage", q, kind, tags) for q, kind, tags in FOOTAGE_QUERIES]
         if not args.footage_only:
             jobs += [("music", q, mood, [mood]) for q, mood in MUSIC_QUERIES]
+            jobs += [("sfx", q, kind, [kind]) for q, kind in SFX_QUERIES]
         if args.limit:
             jobs = jobs[:args.limit]
 
         total = 0
         for n, (what, query, kind, tags) in enumerate(jobs, 1):
-            url = (MUSIC_URL if what == "music" else FOOTAGE_URL).format(q=query.replace(" ", "%20"))
+            url = {"music": MUSIC_URL, "sfx": SFX_URL}.get(what, FOOTAGE_URL).format(q=query.replace(" ", "%20"))
             log(f"[{n}/{len(jobs)}] {query}")
             page.goto(url, wait_until="domcontentloaded")
             human_pause(3, 5)
-            per = 1 if what == "music" else args.per
+            per = 1 if what in ("music", "sfx") else args.per
             downloads = [] if args.manual else try_auto_download(page, context, per)
             if len(downloads) < per:
                 if not args.manual:
@@ -290,6 +305,8 @@ def run(args) -> None:
             for i, dl in enumerate(downloads):
                 if what == "music":
                     dest = save_download(dl, BGM, kind)            # ambient.mp3 など
+                elif what == "sfx":
+                    dest = save_download(dl, SFX, kind)            # POP.mp3 など
                 else:
                     dest = save_download(dl, FOOT / kind, f"{slug(query)}_{i + 1}")
                     if dest:
@@ -299,7 +316,7 @@ def run(args) -> None:
                     log(f"   保存: {dest.relative_to(HERE)}")
             human_pause(4, 10)
         context.close()
-    log(f"完了: {total} 件を保存しました → {FOOT} / {BGM}")
+    log(f"完了: {total} 件を保存しました → {FOOT} / {BGM} / {SFX}")
 
 
 if __name__ == "__main__":

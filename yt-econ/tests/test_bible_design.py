@@ -217,3 +217,89 @@ def test_render_segment_composites_card_over_background(tmp_path, cfg):
     scene = Scene(card, 0.0, 2.5, True, "card", "t", background=loop, bg_offset=0.3)
     out = render_segment(cfg, scene, tmp_path / "seg.mp4", 0)
     assert abs(probe_duration(out) - 2.5) < 0.3
+
+
+# --- 表情タグ・効果音 ---------------------------------------------------
+def test_expression_tags_parse_and_survive_sanitize():
+    from ytecon.script import parse_expression, tts_text, strip_tags
+    assert parse_expression("[驚]ところが、数字は逆なのだ。") == ("驚", "ところが、数字は逆なのだ。")
+    assert parse_expression("【考】ここで考えてみてほしいのだ") == ("考", "ここで考えてみてほしいのだ")
+    assert parse_expression("普通の文なのだ。") == ("", "普通の文なのだ。")
+    # tts_text は括弧を落とすが、表情タグは残す
+    assert tts_text("[驚]ところが（本当に）逆なのだ。").startswith("[驚]ところが")
+    assert strip_tags("[指]ここが大事なのだ") == "ここが大事なのだ"
+
+
+def test_track_lines_carry_expressions(tmp_path):
+    from ytecon.tts import Line, VoiceTrack
+    t = VoiceTrack(wav_path=tmp_path / "x.wav",
+                   lines=[Line("s0", 0, "a", 0, 1, expression="驚"), Line("s0", 1, "b", 1, 2)])
+    p = t.save_manifest(tmp_path / "m.json")
+    back = VoiceTrack.load_manifest(p)
+    assert [ln.expression for ln in back.lines] == ["驚", ""]
+
+
+def test_sfx_plan_respects_gaps_and_missing_files(tmp_path, cfg):
+    from ytecon import sfx
+    from ytecon.script import VideoScript, Section, SoundCue
+    from ytecon.tts import Line, VoiceTrack
+    d = tmp_path / "sfx"
+    d.mkdir()
+    (d / "POP.mp3").write_bytes(b"x")
+    (d / "impact_soft.wav").write_bytes(b"x")
+    cfg.root = tmp_path                                  # assets/sfx をここに向ける
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "sfx").symlink_to(d)
+    (tmp_path / "config").mkdir()
+    import shutil
+    shutil.copy(Path(__file__).resolve().parents[1] / "config" / "style_semantics.json",
+                tmp_path / "config" / "style_semantics.json")
+    files = sfx.available(cfg)
+    assert set(files) == {"POP", "IMPACT"}
+    script = VideoScript(topic_title="t", hook="h", closing="c", title_candidates=[], description="",
+                         tags=[], thumbnail_copy={}, sources=[], sections=[
+                             Section(heading="a", narration="x。y。z。",
+                                     sounds=[SoundCue("POP", 0), SoundCue("IMPACT", 0),
+                                             SoundCue("WHOOSH", 1), SoundCue("POP", 2)])])
+    lines = [Line("s0", i, "x", i * 3.0, i * 3.0 + 2.5) for i in range(3)]
+    track = VoiceTrack(wav_path=tmp_path / "n.wav", lines=lines)
+    got = sfx.plan(cfg, script, track)
+    kinds = [k for k, _, _ in got]
+    assert "WHOOSH" not in kinds                         # 音源が無い種類は鳴らさない
+    assert kinds[0] == "POP" and got[0][1] == 2.5
+    # 同じ時刻の IMPACT は最小間隔（5秒）で落ち、2文目後の POP（8.5s）は残る
+    assert all(b - a >= 5.0 for (_, a, _), (_, b, _) in zip(got, got[1:]))
+
+
+def test_audio_chain_mixes_sfx_bus(cfg):
+    from ytecon.render import audio_chain
+    chain = audio_chain(cfg, None, 10.0, 0.0, sfx=[(2, 1.5), (3, 4.0)])
+    joined = ";".join(chain)
+    assert "adelay=1500|1500" in joined and "adelay=4000|4000" in joined
+    assert "[sfx]" in joined and "amix=inputs=2" in joined
+    chain = audio_chain(cfg, 2, 10.0, 0.0, sfx=[(3, 1.0)])
+    assert "amix=inputs=3" in ";".join(chain)
+
+
+def test_build_track_switches_expressions_and_bobs(tmp_path, cfg, monkeypatch):
+    """表情つきの文があると、そのコマだけ別の画像が使われ、話すコマは上に寄せた画像になる."""
+    import wave, struct, math
+    from ytecon import character
+    from ytecon.tts import Line, VoiceTrack
+    wav = tmp_path / "v.wav"
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+        w.writeframes(b"".join(struct.pack("<h", int(12000 * math.sin(i / 3))) for i in range(8000 * 2)))
+    cfg.raw.setdefault("character", {})["enabled"] = True
+    base = character.make_placeholder(cfg)
+    other = {k: tmp_path / f"o_{k}.png" for k in character.STATES}
+    for k, p in other.items():
+        import shutil; shutil.copy(base[k], p)
+    monkeypatch.setattr(character, "find_assets",
+                        lambda c, expression="通常": base if expression == "通常" else other)
+    track = VoiceTrack(wav_path=wav, lines=[Line("s0", 0, "a", 0.0, 1.0, expression="驚"),
+                                            Line("s0", 1, "b", 1.0, 2.0)])
+    out = character.build_track(cfg, wav, 2.0, tmp_path / "out", track=track)
+    assert out is not None and out.exists()
+    listing = (tmp_path / "out" / "character_frames.txt").read_text()
+    assert "驚_" in listing and "_up.png" in listing and "_dn.png" in listing
