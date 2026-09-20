@@ -161,6 +161,17 @@ visuals:
   palette: {}
   #  palette:
   #    accent: "#4CC2FF"
+  # --- 動く背景 -------------------------------------------------------
+  # カードの後ろに常に動画を流す（「背景がずっと同じ」をなくす）。
+  # assets/footage/ に素材（Artlist などから落とした mp4/mov）を置けばそれを使い、
+  # 無ければ 6 種類の抽象ループ（ぼけ・粒子・格子・波・光線・揺らぎ）を合成して使う。
+  # 置き方・探し方は docs/Artlistの使い方.md
+  motion_backgrounds: true
+  footage_dir: "assets/footage"
+  # カードの描き方: mixed（短い文字は背景に直接、文字が多いものはすりガラス）/ glass / clear / solid
+  card_style: "mixed"
+  # 透過カードの下で背景をどれだけ暗くするか（0〜1）。文字が読みにくければ上げる
+  backdrop_dim: 0.18
   # Ken Burns（ゆっくりズーム）を効かせる
   ken_burns: true
   # 1シーン（画が変わらない単位）の目標秒数。参考チャンネルは顔で持たせているが

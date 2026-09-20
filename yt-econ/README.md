@@ -56,6 +56,14 @@ YouTube の「再利用されたコンテンツ」ポリシーは、
 
 ---
 
+## 画面づくりの決まり（3つの設計ファイル）
+
+| ファイル | 何を決めるか | 解説 |
+|---|---|---|
+| `config/style_bible.yaml` | 台本の 9 ブロック構成・接続詞でのカット・BGM の気分・タイトル型 | [`docs/スタイルバイブル.md`](docs/スタイルバイブル.md) |
+| `config/design_tokens.yaml` | 文字の大きさ・色・角丸・余白（デジタル庁 / Apple HIG / Material 3） | [`docs/デザインシステム.md`](docs/デザインシステム.md) |
+| `assets/footage/` | カードの後ろで常に動く背景・実写 B-roll（Artlist など） | [`docs/Artlistの使い方.md`](docs/Artlistの使い方.md) |
+
 ## 参考にしたい動画に寄せる
 
 「こういう感じにして」を言葉で伝えるのは難しいので、**参照動画を実測して

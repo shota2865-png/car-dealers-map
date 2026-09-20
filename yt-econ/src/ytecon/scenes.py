@@ -24,9 +24,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import assets
+from . import assets, footage
 from .config import Config
-from .script import Section, VideoScript, split_sentences
+from .script import Section, VideoScript, plain_heading, split_sentences
 from .tts import Line, VoiceTrack
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ class Scene:
     still: bool = True          # True なら動かさない（カード・図表）
     kind: str = "card"          # 実際に描けた種類
     label: str = ""             # ログ用
+    background: Path | None = None   # 後ろで流す動画（透過カードはこの上に重なる）
+    bg_offset: float = 0.0           # 背景動画の再生開始位置（同じ素材でも違う所から）
 
     @property
     def duration(self) -> float:
@@ -100,60 +102,89 @@ class _Painter:
         self.outdir = outdir
         self.n = 0
         self.seed = 0
+        self.picker = footage.Picker(cfg)
+        self.words = ""             # いまのセクションの英語キーワード（背景選びに使う）
 
     def _next(self, stem: str) -> Path:
         self.n += 1
         return self.outdir / f"scene_{self.n:03d}_{stem}.jpg"
 
+    def _bg(self, scene: Scene) -> Scene:
+        """透過カード（PNG）なら動く背景を敷く。不透明カードならそのまま."""
+        if scene.image.suffix.lower() == ".png":
+            bg = self.picker.abstract(self.words, seed=self.n)
+            if bg is not None:
+                scene.background = bg
+                scene.bg_offset = (self.n * 2.7) % max(footage.LOOP_SECONDS - 1.0, 1.0)
+        return scene
+
     def title(self, text: str, start: float, end: float) -> Scene:
         p = assets.build_title_card(self.cfg, text, self._next("title"))
-        return Scene(p, start, end, True, "title", "タイトル")
+        return self._bg(Scene(p, start, end, True, "title", "タイトル"))
 
     def outro(self, start: float, end: float) -> Scene:
         p = assets.build_outro_card(self.cfg, self._next("outro"))
-        return Scene(p, start, end, True, "outro", "アウトロ")
+        return self._bg(Scene(p, start, end, True, "outro", "アウトロ"))
 
     def bullets(self, heading: str, items: list[str], start: float, end: float) -> Scene:
         p = assets.render_textcard(self.cfg, heading, items, self._next("bullets"))
-        return Scene(p, start, end, True, "card", f"箇条書き: {heading[:12]}")
+        return self._bg(Scene(p, start, end, True, "card", f"箇条書き: {heading[:12]}"))
 
     def chart(self, sec: Section, start: float, end: float) -> Scene:
         p = self._next("chart")
         try:
-            assets.render_chart(self.cfg, sec.visual.chart or {}, p)
-            return Scene(p, start, end, True, "chart", f"図表: {sec.heading[:12]}")
+            p = assets.render_chart(self.cfg, sec.visual.chart or {}, p)
+            return self._bg(Scene(p, start, end, True, "chart", f"図表: {sec.heading[:12]}"))
         except Exception as exc:
             log.warning("図表を描けなかったのでカードにします: %s", exc)
             return self.bullets(sec.heading, sec.on_screen, start, end)
 
     def keyword(self, word: str, sub: str, start: float, end: float) -> Scene:
         p = assets.render_keyword_card(self.cfg, word, sub, self._next("kw"))
-        return Scene(p, start, end, True, "card", f"キーワード: {word[:10]}")
+        return self._bg(Scene(p, start, end, True, "card", f"キーワード: {word[:10]}"))
 
     def number(self, value: str, label: str, note: str, start: float, end: float) -> Scene:
         p = assets.render_number_card(self.cfg, value, label, note, self._next("num"))
-        return Scene(p, start, end, True, "card", f"数字: {value}")
+        return self._bg(Scene(p, start, end, True, "card", f"数字: {value}"))
 
     def quote(self, sentence: str, start: float, end: float) -> Scene:
         p = assets.render_quote_card(self.cfg, sentence, self._next("quote"))
-        return Scene(p, start, end, True, "card", f"一文: {sentence[:10]}")
+        return self._bg(Scene(p, start, end, True, "card", f"一文: {sentence[:10]}"))
 
     def term(self, t, start: float, end: float) -> Scene:
         p = assets.render_term_card(self.cfg, t.term, t.meaning, t.example, self._next("term"))
-        return Scene(p, start, end, True, "card", f"用語: {t.term}")
+        return self._bg(Scene(p, start, end, True, "card", f"用語: {t.term}"))
 
     def reference(self, name: str, url: str, note: str, start: float, end: float) -> Scene:
         p = assets.render_reference_card(self.cfg, name, url, note, self._next("ref"))
-        return Scene(p, start, end, True, "card", f"出典: {name[:10]}")
+        return self._bg(Scene(p, start, end, True, "card", f"出典: {name[:10]}"))
 
     def photo(self, query: str, prompt: str, heading: str, bullets: list[str],
               start: float, end: float) -> Scene:
-        # prompt は台本の image_prompt（概念の視覚化）。無ければ検索語で代用
+        """写真系。順に: 実写フッテージ（Artlist など）→ 写真 → AI 画像 → 動く抽象背景.
+
+        prompt は台本の image_prompt（概念の視覚化）。無ければ検索語で代用。
+        """
         self.seed += 1
+        clip = self.picker.broll(f"{query} {prompt}", seed=self.seed)
+        if clip is not None:
+            p = assets.render_heading_overlay(self.cfg, heading, bullets, self._next("broll"))
+            return Scene(p, start, end, True, "broll", f"実写: {clip.name[:18]}",
+                         background=clip, bg_offset=(self.seed * 3.1) % 6.0)
         p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
-                                           self.seed, self._next("photo"))
-        # 写真は Ken Burns で動かす。パターン背景は文字が乗るので静止
-        return Scene(p, start, end, kind != "photo", kind, f"写真: {query[:14]}")
+                                           self.seed, self._next("photo"), allow_pattern=False)
+        if p is not None:
+            # 写真は Ken Burns で動かす
+            return Scene(p, start, end, False, kind, f"写真: {query[:14]}")
+        # 何も取れない → 動く抽象背景の上に見出しだけ
+        p = assets.render_heading_overlay(self.cfg, heading, bullets, self._next("motion"))
+        scene = Scene(p, start, end, True, "motion", f"動く背景: {heading[:12]}")
+        scene = self._bg(scene)
+        if scene.background is None:      # 動く背景も無効なら従来のパターン画
+            p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
+                                               self.seed, self._next("photo"))
+            return Scene(p, start, end, kind != "photo", kind, f"写真: {query[:14]}")
+        return scene
 
 
 def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
@@ -249,8 +280,8 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     for j, ch in enumerate(chunk_lines(lines_of("promise"), target, lo, hi, pivots)):
         s, e = _span(ch)
         if j == 0:
-            items = [x.rstrip("。") for x in split_sentences(script.promise)][1:4] or \
-                    [x.rstrip("。") for x in split_sentences(script.promise)][:3]
+            sents = [plain_heading(x.rstrip("。")) for x in split_sentences(script.promise)]
+            items = sents[1:4] or sents[:3]
             scenes.append(painter.bullets("この動画で分かること", items, s, e))
         else:
             scenes.append(painter.quote(_key_sentence(ch), s, e))
@@ -260,6 +291,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         chunks = chunk_lines(lines_of(f"s{i}"), target, lo, hi, pivots)
         if not chunks:
             continue
+        painter.words = f"{sec.visual.query} {sec.visual.image_prompt} {sec.beat}"
         pool = _section_pool(cfg, script, sec, i, chunks, painter)
         main_again = pool[0]
         for j, ch in enumerate(chunks):
@@ -276,7 +308,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     for j, ch in enumerate(closing):
         s, e = _span(ch)
         if j == 0:
-            items = [x.rstrip("。") for x in split_sentences(script.closing)][1:4]
+            items = [plain_heading(x.rstrip("。")) for x in split_sentences(script.closing)][1:4]
             scenes.append(painter.bullets("今日のまとめ", items, s, e))
         elif j == len(closing) - 1:
             scenes.append(painter.outro(s, e))
@@ -291,6 +323,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         scenes[-1].end = track.duration + 0.8
 
     stills = sum(1 for x in scenes if x.still)
-    log.info("シーン %d 枚（平均 %.1f秒 / 動く写真 %d 枚）",
-             len(scenes), (track.duration / max(len(scenes), 1)), len(scenes) - stills)
+    moving = sum(1 for x in scenes if x.background is not None or not x.still)
+    log.info("シーン %d 枚（平均 %.1f秒 / 動きのある画面 %d 枚 / 動く写真 %d 枚）",
+             len(scenes), (track.duration / max(len(scenes), 1)), moving, len(scenes) - stills)
     return scenes

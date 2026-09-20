@@ -211,14 +211,25 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
     current = ""
     for ch in text:
         trial = current + ch
-        if draw.textlength(trial, font=font) > max_width and current:
-            lines.append(current)
-            current = ch
+        # 禁則: 「？」「。」「、」などは行頭に来させない（幅を少し超えてもぶら下げる）
+        if draw.textlength(trial, font=font) > max_width and current and ch not in _NO_LINE_START:
+            # 行の後ろ 40% に空白・読点があれば、そこで折る（「スー/パー」のような割れを避ける）
+            cut = max(current.rfind(sep) for sep in _BREAK_AFTER)
+            if cut >= int(len(current) * 0.6):
+                lines.append(current[:cut + 1].rstrip())
+                current = current[cut + 1:] + ch
+            else:
+                lines.append(current)
+                current = ch
         else:
             current = trial
     if current:
         lines.append(current)
-    return lines
+    return [ln for ln in lines if ln]
+
+
+_NO_LINE_START = set("、。，．・：；？！?!」』）〕］｝〉》〟ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶー～")
+_BREAK_AFTER = (" ", "　", "、", "。", "，", "・", "／", "→")
 
 
 # ----------------------------------------------------------------------
@@ -226,10 +237,8 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
 # ----------------------------------------------------------------------
 def render_textcard(cfg: Config, heading: str, bullets: list[str],
                     out: Path) -> Path:
-    pal = palette(cfg)
-    w, h = cfg.get("video.resolution", [1920, 1080])
-    img = gradient((w, h), pal["bg"], pal["surface"])
-    d = ImageDraw.Draw(img)
+    img, d, pal, _cw, h = _card_base(cfg, card_style(cfg, "bullets"))
+    w = img.width
 
     # 見出し
     f_head = load_font(cfg, ts(cfg, "headline_l", 76), "black")
@@ -250,9 +259,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
             y += 68
         y += 26
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    img.save(out, quality=95)
-    return out
+    return _save(img, out)
 
 
 # ----------------------------------------------------------------------
@@ -363,9 +370,22 @@ def render_chart(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
                 bbox={"boxstyle": "round,pad=0.35", "facecolor": pal["surface"],
                       "edgecolor": "#33405C", "alpha": 0.88})
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, facecolor=pal["bg"])
+    style = card_style(cfg, "chart")
+    if style == "solid":
+        fig.savefig(out, facecolor=pal["bg"])
+        plt.close(fig)
+        return out
+    # 動く背景の上に置く: 図は透過で描き、すりガラスの面に載せる
+    tmp = out.with_suffix(".chart.png")
+    fig.savefig(tmp, transparent=True)
     plt.close(fig)
-    return out
+    base, _d, _pal, _cw, _h = _card_base(cfg, "glass")
+    chart_img = Image.open(tmp).convert("RGBA")
+    if chart_img.size != base.size:
+        chart_img = chart_img.resize(base.size, Image.LANCZOS)
+    base.alpha_composite(chart_img)
+    tmp.unlink(missing_ok=True)
+    return _save(base, out)
 
 
 # ----------------------------------------------------------------------
@@ -475,12 +495,7 @@ def build_section_image(cfg: Config, section: Section, index: int,
 
 def build_title_card(cfg: Config, title: str, out: Path) -> Path:
     """冒頭のタイトルカード."""
-    out.parent.mkdir(parents=True, exist_ok=True)
-    pal = palette(cfg)
-    w, h = cfg.get("video.resolution", [1920, 1080])
-    img = gradient((w, h), pal["surface"], pal["bg"])
-    d = ImageDraw.Draw(img)
-    cw = content_width(cfg)
+    img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "title"))
     f = load_font(cfg, ts(cfg, "display_m", 92), "black")
     lines = _wrap(d, title, f, cw - 240)[:3]
     total = len(lines) * 120
@@ -489,23 +504,16 @@ def build_title_card(cfg: Config, title: str, out: Path) -> Path:
         y = _center_text(d, line, f, y, cw, pal["text"]) + (120 - f.size - 18)
     f_small = load_font(cfg, ts(cfg, "label", 40))
     _center_text(d, cfg.get("channel.name", ""), f_small, y + 40, cw, pal["accent"])
-    img.save(out, quality=95)
-    return out
+    return _save(img, out)
 
 
 def build_outro_card(cfg: Config, out: Path) -> Path:
-    out.parent.mkdir(parents=True, exist_ok=True)
-    pal = palette(cfg)
-    w, h = cfg.get("video.resolution", [1920, 1080])
-    img = gradient((w, h), pal["bg"], pal["surface"])
-    d = ImageDraw.Draw(img)
-    cw = content_width(cfg)
+    img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "outro"))
     f = load_font(cfg, ts(cfg, "headline_l", 78), "black")
     for i, line in enumerate(["毎日 朝と夜に更新", "チャンネル登録で見逃しなく"]):
         _center_text(d, line, f, int(h / 2 - 110 + i * 120), cw,
                      pal["text"] if i == 0 else pal["accent"])
-    img.save(out, quality=95)
-    return out
+    return _save(img, out)
 
 
 def build_all(cfg: Config, script: VideoScript, outdir: str | Path) -> dict[str, Path]:
@@ -525,16 +533,67 @@ def build_all(cfg: Config, script: VideoScript, outdir: str | Path) -> dict[str,
 # 追加のカード類。1シーン8秒で画を切り替えるために、同じ内容を
 # いろいろな見せ方で出せるようにする。
 # ======================================================================
-def _card_base(cfg: Config) -> tuple[Image.Image, ImageDraw.ImageDraw, dict[str, str], int, int]:
+# カードの下地の描き方。動く背景の上に重ねる前提なので、透過で作る
+#   solid : 従来どおり不透明なグラデーション（動く背景を使わないとき）
+#   glass : 透過 + 半透明の面（すりガラス）。箇条書き・用語・出典・図表など文字が多いもの
+#   clear : 透過のみ。キーワード・数字・一文など短い文字を背景の上に直接置く（影で読ませる）
+GLASS_KINDS = ("bullets", "term", "reference", "chart", "outro")
+CLEAR_KINDS = ("keyword", "number", "quote", "title")
+
+
+def card_style(cfg: Config, kind: str) -> str:
+    mode = str(cfg.get("visuals.card_style", "mixed") or "mixed")
+    if not cfg.get("visuals.motion_backgrounds", True) or mode == "solid":
+        return "solid"
+    if mode in ("glass", "clear"):
+        return mode
+    return "clear" if kind in CLEAR_KINDS else "glass"
+
+
+def _card_base(cfg: Config, style: str = "solid"
+               ) -> tuple[Image.Image, ImageDraw.ImageDraw, dict[str, str], int, int]:
     """返す w は『使ってよい幅』（キャラがいればその手前まで）。画像自体は全幅."""
+    from . import design
+
     pal = palette(cfg)
     w, h = cfg.get("video.resolution", [1920, 1080])
-    img = gradient((w, h), pal["bg"], pal["surface"])
-    return img, ImageDraw.Draw(img), pal, content_width(cfg), h
+    if style == "solid":
+        img = gradient((w, h), pal["bg"], pal["surface"])
+        return img, ImageDraw.Draw(img), pal, content_width(cfg), h
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # 背景を少し落として文字を立たせる（動画側にフィルタを掛けずに済む）
+    d.rectangle([0, 0, w, h], fill=(0, 0, 0, int(255 * float(cfg.get("visuals.backdrop_dim", 0.30)))))
+    if style == "glass":
+        m = design.safe_margin(cfg) - 24
+        cw = content_width(cfg)
+        r, g, b = _rgb(pal["surface"])
+        orr, og, ob = _rgb(pal["outline"])
+        d.rounded_rectangle([m, 64, cw - 8, h - 64], radius=design.radius(cfg, "l"),
+                            fill=(r, g, b, int(255 * 0.80)), outline=(orr, og, ob, 160),
+                            width=max(design.stroke(cfg, "card"), 2))
+    return img, d, pal, content_width(cfg), h
+
+
+def _shadow(img: Image.Image) -> Image.Image:
+    """透過カードに柔らかい影を付ける（文字を背景から浮かせる）."""
+    from PIL import ImageFilter
+
+    alpha = img.getchannel("A")
+    shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    shadow.putalpha(alpha.filter(ImageFilter.GaussianBlur(10)).point(lambda a: int(a * 0.75)))
+    out = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    out.alpha_composite(shadow, (4, 6))
+    out.alpha_composite(img)
+    return out
 
 
 def _save(img: Image.Image, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
+    if img.mode == "RGBA":
+        out = out.with_suffix(".png")
+        _shadow(img).save(out)
+        return out
     img.save(out, quality=94)
     return out
 
@@ -551,7 +610,7 @@ def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont
 
 def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     """キーワード1語をドンと置くカード。話題の切り替わりに使う."""
-    img, d, pal, w, h = _card_base(cfg)
+    img, d, pal, w, h = _card_base(cfg, card_style(cfg, "keyword"))
     f = load_font(cfg, ts(cfg, "display_xl", 150))
     lines = _wrap(d, keyword, f, w - 300)[:2]
     if len(lines) > 1:
@@ -571,7 +630,7 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
 
 def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path) -> Path:
     """数字を主役にするカード。DATA テロップの内容を大きく見せる."""
-    img, d, pal, w, h = _card_base(cfg)
+    img, d, pal, w, h = _card_base(cfg, card_style(cfg, "number"))
     f_val = load_font(cfg, ts(cfg, "numeral_xl", 210))
     if d.textlength(value, font=f_val) > w - 240:
         f_val = load_font(cfg, ts(cfg, "display_xl", 150))
@@ -587,7 +646,7 @@ def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path
 
 def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
     """いま読み上げている一文をそのまま大きく出す。「文字で分かりやすく」の主力."""
-    img, d, pal, w, h = _card_base(cfg)
+    img, d, pal, w, h = _card_base(cfg, card_style(cfg, "quote"))
     f = load_font(cfg, ts(cfg, "headline_l", 84))
     lines = _wrap(d, sentence, f, w - 360)[:3]
     if len(lines) == 3:
@@ -606,7 +665,7 @@ def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
 
 def render_term_card(cfg: Config, term: str, meaning: str, example: str, out: Path) -> Path:
     """ビジネス用語カード。用語 → 一文の意味 → 数字つきの例."""
-    img, d, pal, w, h = _card_base(cfg)
+    img, d, pal, w, h = _card_base(cfg, card_style(cfg, "term"))
     # 見出しタグ
     f_tag = load_font(cfg, ts(cfg, "label", 40))
     d.rectangle([150, 150, 150 + 330, 150 + 64], fill=pal["accent2"])
@@ -638,7 +697,7 @@ def render_reference_card(cfg: Config, name: str, url: str, note: str, out: Path
     他社サイトの画面をそのまま貼ると著作権の問題が出るので、
     見出し・媒体名・URL を自分の様式で組む。
     """
-    img, d, pal, w, h = _card_base(cfg)
+    img, d, pal, w, h = _card_base(cfg, card_style(cfg, "reference"))
     # 疑似ウィンドウ
     x0, y0, x1, y1 = 200, 200, w - 200, h - 220
     d.rounded_rectangle([x0, y0, x1, y1], radius=rad(cfg, "l"), fill=pal["surface_high"], outline=pal["outline"], width=3)
@@ -725,10 +784,12 @@ def fetch_ai_image(cfg: Config, prompt: str, out: Path, seed: int = 0) -> Path |
 
 
 def build_photo_scene(cfg: Config, query: str, ai_prompt: str, heading: str,
-                      bullets: list[str], seed: int, out: Path) -> tuple[Path, str]:
+                      bullets: list[str], seed: int, out: Path,
+                      allow_pattern: bool = True) -> tuple[Path | None, str]:
     """写真系の1シーンを作る。取れた手段を kind として返す（still 判定に使う）.
 
     順に試す: Pexels の写真 → AI 生成画像 → 幾何パターン背景
+    allow_pattern=False のときは、写真も AI も取れなければ (None, "") を返す
     """
     raw = fetch_stock(cfg, query, out.parent / f"_raw_{out.stem}.jpg")
     if raw:
@@ -742,5 +803,34 @@ def build_photo_scene(cfg: Config, query: str, ai_prompt: str, heading: str,
         _overlay_heading(cfg, out, heading, bullets)
         ai.unlink(missing_ok=True)
         return out, "photo"
+    if not allow_pattern:
+        return None, ""
     render_pattern_background(cfg, seed, heading, bullets, out)
     return out, "pattern"
+
+
+def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: Path) -> Path:
+    """動く背景の上に載せる、見出し＋短い箇条書きだけの透過レイヤー.
+
+    写真に焼き込む _overlay_heading の透過版。背景は動画側が担当する。
+    """
+    from . import design
+
+    img, d, pal, cw, h = _card_base(cfg, "clear")
+    m = design.safe_margin(cfg)
+    f_head = load_font(cfg, ts(cfg, "headline_m", 68), "black")
+    lines = _wrap(d, heading, f_head, cw - m * 2)[:2] if heading else []
+    y = h - 300 - 96 * len(lines) - (len(bullets[:2]) * 64 if bullets else 0)
+    y = max(y, 120)
+    if lines:
+        d.rectangle([m, y - 8, m + 10, y + 96 * len(lines) - 24], fill=pal["accent"])
+    for line in lines:
+        d.text((m + 36, y), line, font=f_head, fill=pal["text"],
+               stroke_width=design.stroke(cfg, "text_outline"), stroke_fill="#06090F")
+        y += 96
+    f_b = load_font(cfg, ts(cfg, "body_m", 44))
+    for b in (bullets or [])[:2]:
+        d.text((m + 36, y + 10), "・" + b, font=f_b, fill=pal["text_secondary"],
+               stroke_width=3, stroke_fill="#06090F")
+        y += 64
+    return _save(img, out)

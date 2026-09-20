@@ -221,6 +221,8 @@ def build_timeline(cfg: Config, script, track, outdir: Path) -> Path:
             s0, s1 = track.block_span(block_id)
         except Exception:
             continue
+        if s1 <= s0:                      # 音声の無いブロック（尺を切った検証など）は飛ばす
+            continue
         mood = bible.bgm_mood_for_beat(cfg, bible.beat_for_block(cfg, block_id, n_sections))
         if spans and spans[-1][0] == mood:
             spans[-1] = (mood, spans[-1][1], s1)

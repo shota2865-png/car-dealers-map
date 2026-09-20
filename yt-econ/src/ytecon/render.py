@@ -88,6 +88,9 @@ OVERSAMPLE = 1.25
 def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     """1シーン = 静止画にゆっくりズームをかけた無音の動画.
 
+    背景動画（scene.background）があるときは、それをループ再生した上に
+    透過カード（PNG）を重ねる。カードは動かさず、背景が動く。
+
     zoompan には**静止画を1フレームだけ**渡すこと。`-loop 1` で連番入力に
     すると、入力フレームごとに d フレームずつ吐いてしまい、尺もファイル
     サイズも爆発する（6秒の想定が数十MBになる）。
@@ -97,6 +100,30 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     w, h = cfg.get("video.resolution", [1920, 1080])
     fps = int(cfg.get("video.fps", 30))
     frames = max(int(round(scene.duration * fps)), 1)
+    from . import design
+    # 切り替えの長さはデザイントークン（motion.fade_ms）。config で明示したらそちら
+    fade_frames = int(cfg.get("visuals.fade_in_frames", 0) or design.fade_frames(cfg, fps))
+    fade = (f",fade=t=in:st=0:d={fade_frames / fps:.3f}"
+            if fade_frames > 0 and frames > fade_frames * 2 else "")
+
+    if scene.background is not None:
+        # 背景動画（ループ）＋ 透過カードの重ね合わせ
+        fc = (
+            f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+            f"fps={fps},format=rgba[bg];"
+            f"[1:v]format=rgba[fg];"
+            f"[bg][fg]overlay=0:0:format=auto,format=yuv420p{fade}[v]"
+        )
+        _run(
+            [ffmpeg, "-y",
+             "-stream_loop", "-1", "-ss", f"{scene.bg_offset:.2f}", "-i", str(scene.background),
+             "-i", str(scene.image),
+             "-filter_complex", fc, "-map", "[v]", "-frames:v", str(frames),
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+             "-pix_fmt", "yuv420p", "-r", str(fps), "-an", str(out)],
+            f"シーン{index}のレンダリング（動く背景）",
+        )
+        return out
 
     if cfg.get("visuals.ken_burns", True) and not scene.still:
         # 拡大時の粗さを防ぐぶんだけ上に取る。2倍まで上げても画質は変わらず遅くなるだけ
@@ -126,13 +153,7 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     else:
         vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
               f"loop=loop={frames}:size=1:start=0,fps={fps}")
-
-    # 切り替わった感を出す短いフェードイン（カットの手触りが硬すぎない程度）
-    from . import design
-    # 切り替えの長さはデザイントークン（motion.fade_ms）。config で明示したらそちら
-    fade_frames = int(cfg.get("visuals.fade_in_frames", 0) or design.fade_frames(cfg, fps))
-    if fade_frames > 0 and frames > fade_frames * 2:
-        vf += f",fade=t=in:st=0:d={fade_frames / fps:.3f}"
+    vf += ",format=yuv420p" + fade
 
     _run(
         [ffmpeg, "-y", "-i", str(scene.image),

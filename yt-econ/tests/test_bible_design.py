@@ -144,3 +144,74 @@ def test_variants_parse_ymm_names(tmp_path):
     v = _variants(tmp_path)
     assert set(v) == {"00", "01", "02"}
     assert [p.name for p in v["00"]["frames"]] == ["00.0.png", "00.1.png"]
+
+
+# --- フッテージ（動く背景） -----------------------------------------
+def _fake_clip(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00" * 16)
+
+
+def test_footage_library_tags_from_names_and_yaml(tmp_path, cfg, monkeypatch):
+    from ytecon import footage
+    root = tmp_path / "footage"
+    _fake_clip(root / "broll" / "tokyo_street_night_4k.mp4")
+    _fake_clip(root / "abstract" / "blue_particles_loop.mov")
+    (root / "tags.yaml").write_text(
+        "broll/tokyo_street_night_4k.mp4:\n  tags: [crowd, commuters]\n", encoding="utf-8")
+    cfg.raw.setdefault("visuals", {})["footage_dir"] = str(root)
+    monkeypatch.setattr(footage, "_probe_duration", lambda p: 15.0)
+    lib = footage.library(cfg)
+    by = {c.name: c for c in lib}
+    assert by["tokyo_street_night_4k.mp4"].kind == "broll"
+    assert {"tokyo", "street", "night", "crowd", "commuters"} <= by["tokyo_street_night_4k.mp4"].tags
+    assert "4k" not in by["tokyo_street_night_4k.mp4"].tags
+    assert by["blue_particles_loop.mov"].kind == "abstract"
+
+
+def test_footage_pick_prefers_matching_and_unused(tmp_path):
+    from collections import Counter
+    from ytecon.footage import Clip, pick
+    a = Clip(tmp_path / "a.mp4", "broll", {"tokyo", "street"}, 10)
+    b = Clip(tmp_path / "b.mp4", "broll", {"supermarket", "price"}, 10)
+    used = Counter()
+    assert pick([a, b], "supermarket shelves price tag", "broll", used).name == "b.mp4"
+    used["b.mp4"] = 3
+    # 使い過ぎたものより、語が合わなくても未使用を選ぶことがある → 語一致の重みの方が強いことを確認
+    assert pick([a, b], "supermarket price", "broll", used, seed=1).name == "b.mp4"
+    assert pick([a, b], "nothing matches", "abstract", used) is None
+
+
+def test_picker_disabled_returns_nothing(cfg):
+    from ytecon import footage
+    cfg.raw.setdefault("visuals", {})["motion_backgrounds"] = False
+    pk = footage.Picker(cfg)
+    assert pk.abstract("x") is None and pk.broll("tokyo") is None
+
+
+def test_wrap_does_not_start_a_line_with_punctuation(cfg):
+    from PIL import Image, ImageDraw
+    from ytecon.assets import _wrap, load_font
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    f = load_font(cfg, 92, "black")
+    lines = _wrap(d, "なぜ給料は上がらないのか？", f, 92 * 12 + 10)
+    assert all(not ln.startswith("？") for ln in lines)
+    assert "".join(lines) == "なぜ給料は上がらないのか？"
+
+
+def test_render_segment_composites_card_over_background(tmp_path, cfg):
+    """透過カード + 背景ループ → 指定尺の動画になる（動く背景の経路）."""
+    from ytecon import footage
+    from ytecon.render import probe_duration, render_segment
+    from ytecon.scenes import Scene
+    from ytecon.assets import render_keyword_card
+
+    cfg.raw.setdefault("video", {})["resolution"] = [320, 180]
+    cfg.raw["video"]["fps"] = 10
+    cfg.raw.setdefault("visuals", {})["motion_backgrounds"] = True
+    loop = footage.generate_loop(cfg, "grid", tmp_path / "loop.mp4", seconds=1.0, size=(320, 180), fps=10)
+    card = render_keyword_card(cfg, "実質賃金", "本当の給料", tmp_path / "kw.jpg")
+    assert card.suffix == ".png"                         # 透過で出ている
+    scene = Scene(card, 0.0, 2.5, True, "card", "t", background=loop, bg_offset=0.3)
+    out = render_segment(cfg, scene, tmp_path / "seg.mp4", 0)
+    assert abs(probe_duration(out) - 2.5) < 0.3

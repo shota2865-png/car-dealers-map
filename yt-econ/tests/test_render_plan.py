@@ -20,6 +20,7 @@ from ytecon.tts import Line, VoiceTrack
 def cfg():
     c = load_config()
     c.raw.setdefault("visuals", {})["ai_image_provider"] = ""   # ネットに出ない
+    c.raw["visuals"]["motion_backgrounds"] = False            # 背景ループの合成（数十秒）は別テストで
     return c
 
 
