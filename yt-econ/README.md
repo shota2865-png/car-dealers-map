@@ -109,7 +109,11 @@ python scripts/install_fonts.py                      # 日本語フォント
 
 日本語フォントは Noto Sans JP の **Bold(700) と Black(900)** を入れます。
 システムに入っている IPAGothic は線が細く、動画のテロップだと潰れて読めません。
-本文・字幕は Bold、サムネと見出しは Black を使います。
+本文は Bold、サムネと見出しは Black を使います。
+字幕だけは丸ゴシックの **M PLUS Rounded 1c Black**（`assets/fonts/MPLUSRounded1c-Black.ttf`、OFL、同梱）を使います。
+ずんだもんの柔らかい声に合わせたもので、`visuals.subtitle.font` を空にすると Noto Sans JP Black に戻ります。
+字幕の中では数字＝黄、減少・リスク・その回の主張＝赤、キーワード・用語＝青と黄緑を交互に色分けし、
+同じ語にはいつも同じ色が付きます（`visuals.subtitle.highlight`）。
 
 取得は npm の `@fontsource/noto-sans-jp` 経由で、woff2 を TTF に戻しています。
 Google Fonts に直接繋げない環境でも npm さえ通れば入ります。

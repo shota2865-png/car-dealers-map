@@ -10,6 +10,7 @@ TTS が返した文ごとのタイムコードをそのまま使うので、音�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -340,13 +341,121 @@ def _ass_color(hex_color: str) -> str:
     return f"&H00{s[4:6]}{s[2:4]}{s[0:2]}".upper()
 
 
+def subtitle_font_path(cfg: Config) -> str:
+    """字幕のフォントファイル。visuals.subtitle.font（丸ゴシックなど）があればそれ、無ければ本文と同じ Black."""
+    custom = str(cfg.get("visuals.subtitle.font", "") or "").strip()
+    if custom:
+        p = Path(custom)
+        p = p if p.is_absolute() else cfg.root / p
+        if p.exists():
+            return str(p)
+    return font_path(cfg, "black")
+
+
 def font_family(cfg: Config) -> str:
     """libass にフォントを名指しするためのファミリ名を実ファイルから取る.
 
-    字幕も本文と同じ Black を使う。細いと動画上で潰れて読めない。
+    字幕は丸ゴシック（柔らかい声に合う）。細いと動画上で潰れるので太いウェイトだけ使う。
     """
-    family, _style = ImageFont.truetype(font_path(cfg, "black"), 20).getname()
+    family, _style = ImageFont.truetype(subtitle_font_path(cfg), 20).getname()
     return family
+
+
+# ----------------------------------------------------------------------
+# 字幕の中の色分け（重要な語だけ色を付ける。同じ語はいつも同じ色）
+# ----------------------------------------------------------------------
+_DEFAULT_HIGHLIGHT_COLORS = {"red": "#FF6B6B", "blue": "#4CC2FF", "yellow": "#FFD93D", "green": "#B4E65A"}
+# 減少・リスク・否定は赤
+_NEGATIVE_WORDS = ("マイナス", "減っ", "減る", "減り", "減少", "損", "痛み", "危ない", "注意", "下が",
+                   "追いつかない", "追いつけない", "止まっ", "止まる", "削られ", "苦しい")
+_NUMBER_RE = re.compile(
+    r"[0-9０-９][0-9０-９.,．，]*\s*(?:パーセント|％|%|円|割|倍|か月|ヶ月|カ月|年代|年|月|日|人|万|億|兆|つ|回|個|台|強|弱)?"
+    r"(?:台|前後|ほど|以上|以下|近く|連続)?")
+
+
+def highlight_terms(cfg: Config, script: VideoScript | None, track: VoiceTrack | None) -> list[tuple[str, str]]:
+    """色を付ける語と色の対応（語が長い順）。
+
+    数字は黄、減少・リスクは赤、その回の主張（EMPHASIS/PUNCHLINE）は赤、
+    キーワード・用語は初出順に青と黄緑を交互に。同じ語には必ず同じ色。
+    """
+    hl = cfg.get("visuals.subtitle.highlight", {}) or {}
+    if isinstance(hl, dict) and not hl.get("enabled", True):
+        return []
+    colors = {**_DEFAULT_HIGHLIGHT_COLORS, **((hl.get("colors") if isinstance(hl, dict) else None) or {})}
+    table: dict[str, str] = {}
+    for w in _NEGATIVE_WORDS:
+        table[w] = colors["red"]
+    if script is not None:
+        keywords: list[str] = []
+        for sec in script.sections:
+            for cap in sec.captions:
+                t = cap.text.strip()
+                if not t or len(t) > 12 or _NUMBER_RE.fullmatch(t):
+                    continue
+                if cap.type in ("EMPHASIS", "PUNCHLINE"):
+                    table.setdefault(t, colors["red"])
+                elif cap.type == "KEYWORD":
+                    keywords.append(t)
+        for term in script.terms:
+            if term.term.strip():
+                keywords.append(term.term.strip())
+        # 初出順（音声の並び）で青・黄緑を交互に
+        corpus = "".join(ln.text for ln in track.lines) if track is not None else ""
+        seen: list[str] = []
+        for k in keywords:
+            if k not in seen:
+                seen.append(k)
+        seen.sort(key=lambda k: (corpus.find(k) if corpus.find(k) >= 0 else 10 ** 9))
+        for n, k in enumerate(seen):
+            table.setdefault(k, colors["blue"] if n % 2 == 0 else colors["green"])
+    return sorted(table.items(), key=lambda kv: -len(kv[0]))
+
+
+def _tag_color(hex_color: str) -> str:
+    """行内タグ用の色（&HBBGGRR&）."""
+    h = hex_color.lstrip("#")
+    r, g, b = h[0:2], h[2:4], h[4:6]
+    return f"&H{b}{g}{r}&".upper()
+
+
+def colorize(text: str, terms: list[tuple[str, str]], primary: str, max_spans: int = 2,
+             number_color: str | None = None) -> str:
+    """字幕 1 行に ASS の色タグを入れる。重なりは長い語を優先し、1 行あたり max_spans 個まで."""
+    spans: list[tuple[int, int, str]] = []
+
+    def free(a: int, b: int) -> bool:
+        return all(b <= s or a >= e for s, e, _ in spans)
+
+    for term, color in terms:
+        start = 0
+        while True:
+            i = text.find(term, start)
+            if i < 0:
+                break
+            j = i + len(term)
+            # 「減っ」「止まっ」のような語幹だけ色を変えると途中で切れて見えるので、活用語尾まで含める
+            if term in _NEGATIVE_WORDS:
+                while j < len(text) and j - (i + len(term)) < 4 and text[j] in "ていたるっく":
+                    j += 1
+            if free(i, j):
+                spans.append((i, j, color))
+            start = j
+    if number_color:
+        for m in _NUMBER_RE.finditer(text):
+            if m.end() - m.start() >= 1 and free(m.start(), m.end()):
+                spans.append((m.start(), m.end(), number_color))
+    spans.sort()
+    spans = spans[:max_spans]
+    if not spans:
+        return text
+    out, pos = [], 0
+    for a, b, color in spans:
+        out.append(text[pos:a])
+        out.append(f"{{\\1c{_tag_color(color)}}}{text[a:b]}{{\\1c{_tag_color(primary)}}}")
+        pos = b
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _style_line(name: str, family: str, size: int, primary: str,
@@ -364,7 +473,8 @@ def _style_line(name: str, family: str, size: int, primary: str,
 
 
 def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
-              telops: list[TelopCue] | None = None, reserve_right: int = 0) -> Path:
+              telops: list[TelopCue] | None = None, reserve_right: int = 0,
+              highlights: list[tuple[str, str]] | None = None) -> Path:
     """字幕とテロップを1つの ASS にまとめる.
 
     字幕は画面下に出しっぱなし、テロップは意味ごとに色と大きさを変えて
@@ -422,11 +532,23 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    # 字の大きさは全行おなじ（行ごとに縮めない）。長さは chars_per_line で先に区切ってある
+    # 字の大きさは全行おなじ（行ごとに縮めない）。長さは chars_per_line で先に区切ってある。
+    # 重要な語だけ色を付ける（数字は黄、減少は赤、キーワードは青/黄緑。同じ語は同じ色）
+    hl = cfg.get("visuals.subtitle.highlight", {}) or {}
+    hl_on = not isinstance(hl, dict) or hl.get("enabled", True)
+    terms = highlights if highlights is not None else (highlight_terms(cfg, None, None) if hl_on else [])
+    max_spans = int(hl.get("max_per_line", 2)) if isinstance(hl, dict) else 2
+    number_color = ({**_DEFAULT_HIGHLIGHT_COLORS, **((hl.get("colors") if isinstance(hl, dict) else None) or {})}["yellow"]
+                    if hl_on else None)
+
+    def line_text(ln: str) -> str:
+        txt = safe_text(cfg, ln)
+        return colorize(txt, terms, colors["text"], max_spans, number_color) if hl_on else txt
+
     events = [
         "Dialogue: 0,{},{},{},,0,0,0,,{}".format(
             _ass_time(c.start), _ass_time(c.end), c.style,
-            r"\N".join(safe_text(cfg, ln) for ln in c.lines)
+            r"\N".join(line_text(ln) for ln in c.lines)
         )
         for c in cues
     ]
@@ -461,10 +583,13 @@ def build(cfg: Config, track: VoiceTrack, outdir: str | Path,
           script: VideoScript | None = None, reserve_right: int = 0) -> dict[str, Path]:
     outdir = Path(outdir)
     cues = build_cues(cfg, track, reserve_right=reserve_right)
-    telops = build_telops(cfg, script, track) if script else []
+    # 大きなテロップ（EMPHASIS など）は既定で出さない。字幕と重なって読みにくく、
+    # 重要な語は字幕の色分けで示すため
+    telops = build_telops(cfg, script, track) if (script and cfg.get("visuals.subtitle.telops", False)) else []
+    highlights = highlight_terms(cfg, script, track)
     return {
         "ass": write_ass(cfg, cues, outdir / "subtitles.ass", telops=telops,
-                         reserve_right=reserve_right),
+                         reserve_right=reserve_right, highlights=highlights),
         # SRT は YouTube に渡す字幕なので、テロップは入れない
         "srt": write_srt(cues, outdir / "subtitles.srt"),
     }

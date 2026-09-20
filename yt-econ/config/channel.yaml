@@ -193,6 +193,16 @@ visuals:
     outline: 0
     # 字幕は画面中央。キャラの幅ぶん左右対称に空け、その幅に入る長さで文節ごとに区切る
     full_width: false
+    # 字幕のフォント。丸ゴシック（ずんだもんの柔らかい声に合う）。空なら本文と同じ Noto Sans JP Black
+    font: "assets/fonts/MPLUSRounded1c-Black.ttf"
+    # 大きなテロップ（EMPHASIS/KEYWORD などを別レイヤーで出す）。字幕と重なるので既定は出さない
+    telops: false
+    # 字幕の中の色分け。数字=黄、減少・リスク・その回の主張=赤、キーワード・用語=青と黄緑を交互。
+    # 同じ語にはいつも同じ色。1 行に付けるのは max_per_line 個まで
+    highlight:
+      enabled: true
+      max_per_line: 2
+      colors: {red: "#FF6B6B", blue: "#4CC2FF", yellow: "#FFD93D", green: "#B4E65A"}
 
 # 画面右下の解説キャラクター（ずんだもんなど）。
 # assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を

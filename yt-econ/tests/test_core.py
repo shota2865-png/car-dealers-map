@@ -284,11 +284,43 @@ def test_srt_has_no_telops(cfg: Config, tmp_path: Path):
     )
     track = VoiceTrack(wav_path=Path("x.wav"), lines=[
         Line("s0", 0, "喋った内容。", 0.0, 3.0)])
+    import copy
+    cfg = copy.deepcopy(cfg)
+    cfg.raw.setdefault("visuals", {}).setdefault("subtitle", {})["telops"] = True   # 既定はテロップなし
     out = build(cfg, track, tmp_path, script=script)
     srt = out["srt"].read_text(encoding="utf-8")
     ass = out["ass"].read_text(encoding="utf-8")
     assert "テロップだけの文言" not in srt
     assert "テロップだけの文言" in ass
+
+
+def test_telops_are_off_by_default_and_keywords_are_colored(cfg: Config, tmp_path: Path):
+    """大きなテロップは出さず、重要な語は字幕の中で色分けする（同じ語は同じ色）."""
+    from ytecon.script import Caption, Term
+    from ytecon.subtitles import build, colorize, highlight_terms
+
+    script = VideoScript(
+        topic_title="t", hook="h",
+        sections=[Section(heading="h", narration="n", visual=Visual(),
+                          captions=[Caption("損失回避", "KEYWORD", 0), Caption("見る回数が違う", "EMPHASIS", 0)])],
+        closing="c", title_candidates=[], description="", tags=[], thumbnail_copy={}, sources=[],
+        terms=[Term("貨幣錯覚", "額面に引っぱられること", "", 0)],
+    )
+    track = VoiceTrack(wav_path=Path("x.wav"), lines=[
+        Line("s0", 0, "損失回避と貨幣錯覚。", 0.0, 3.0), Line("s0", 1, "実質賃金がマイナスの月。", 3.0, 6.0)])
+    out = build(cfg, track, tmp_path, script=script)
+    ass = out["ass"].read_text(encoding="utf-8")
+    assert "Dialogue: 1," not in ass                      # テロップのレイヤーが無い
+    assert "見る回数が違う" not in ass
+    terms = dict(highlight_terms(cfg, script, track))
+    assert terms["損失回避"] != terms["貨幣錯覚"]         # 隣り合うキーワードは別の色
+    assert terms["マイナス"] == "#FF6B6B"                # 減少は赤
+    line = colorize("損失回避と貨幣錯覚", list(terms.items()), "#FFFFFF", 2)
+    assert line.count("\\1c&H") == 4                     # 2 語 × (色を付ける・戻す)
+    # 同じ語には同じ色
+    a = colorize("損失回避", list(terms.items()), "#FFFFFF", 2)
+    b = colorize("また損失回避", list(terms.items()), "#FFFFFF", 2)
+    assert a.split("}")[0].split("{")[1] == b.split("}")[0].split("{")[1]
 
 
 
