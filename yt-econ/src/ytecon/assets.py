@@ -272,6 +272,14 @@ def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_widt
     """
     size = ts(cfg, role)
     weight = weight or weight_for(role)
+    # 2 行にするより、2 割までなら縮めて 1 行に収めるほうが読みやすい（表のセルなど）
+    if max_lines >= 2:
+        s1 = size
+        while s1 >= max(min_size, int(size * 0.8)):
+            f1 = load_font(cfg, s1, weight)
+            if d.textlength(_safe_for_font(f1, text), font=f1) <= max_width:
+                return f1, [_safe_for_font(f1, text)]
+            s1 = int(s1 * 0.95)
     while True:
         font = load_font(cfg, size, weight)
         # 自然な位置で割れない（語の途中で切れる）ときも縮めて試す
@@ -316,6 +324,9 @@ def _cut_score(text: str, i: int) -> float | None:
         score -= 16                         # 「1000｜円札」「5.1｜%」のように数字と単位を割らない
     if kanji(prev) and kanji(nxt):
         score -= 5
+    # 漢字の直後のひらがなが助詞でない（「苦｜しい」「上｜がる」の送り仮名）ときは語の途中の可能性が高い
+    if kanji(prev) and ("ぁ" <= nxt <= "ん") and nxt not in _PARTICLE_CHARS:
+        score -= 4
     return score
 
 
