@@ -186,6 +186,9 @@ visuals:
   fade_in_frames: 0
   # AI 画像生成。空なら使わない。"pollinations" は鍵不要・無料（品質はそこそこ）
   ai_image_provider: "pollinations"
+  # 画面の文字（図解・表・カード・見出し）のフォント。字幕と同じ丸ゴシックで全部そろえる。
+  # 空にすると見出しは Noto Sans JP Black、本文は丸ゴシックになる
+  font: "assets/fonts/MPLUSRounded1c-Black.ttf"
   subtitle:
     # 0 ならデザイントークン（subtitle: 110px）。全行おなじ大きさで出す（行ごとに縮めない）
     font_size: 0

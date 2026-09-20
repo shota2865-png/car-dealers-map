@@ -326,12 +326,14 @@ def test_telops_are_off_by_default_and_keywords_are_colored(cfg: Config, tmp_pat
 
 def test_missing_glyphs_are_substituted(cfg: Config):
     """同梱フォントに無い記号（→ ※ など）が豆腐にならず、近い字に置き換わること."""
-    from ytecon.assets import safe_text
+    from ytecon.assets import _cmap, font_path, safe_text
 
     out = safe_text(cfg, "110円 → 151円 ※注 2021〜2024")
-    assert "→" not in out and "※" not in out
-    assert "〜" in out                    # ある字はそのまま
+    have = _cmap(font_path(cfg, "black"))
+    assert all(ord(ch) in have or ch.isspace() for ch in out)   # 出てくる字は全部その字体で描ける
     assert "110円" in out and "151円" in out
+    # 字体に無い字だけが置き換わる（丸ゴシックは → を持つ、Noto Black は持たない）
+    assert ("→" in out) == (ord("→") in have)
 
 
 def test_subtitle_lines_never_start_with_punctuation():

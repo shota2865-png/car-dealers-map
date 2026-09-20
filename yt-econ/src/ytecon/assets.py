@@ -51,8 +51,7 @@ _FONT_CANDIDATES = {
     ],
     # 図解・表・カードの本文。地上波のテロップに近い UD ゴシック（BIZ UDPGothic、OFL）。無ければ black
     "body": [
-        "assets/fonts/BIZUDPGothic-Bold.ttf",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
+        "assets/fonts/MPLUSRounded1c-Black.ttf",
         "assets/fonts/NotoSansJP-Black.ttf",
     ],
 }
@@ -76,6 +75,13 @@ def font_path(cfg: Config, weight: str = "black") -> str:
     既定は black（900）。動画のテロップは遠目でも読める太さが要る。
     無ければ bold に落ちる。
     """
+    # visuals.font が指定されていれば、画面の文字は全部それ（字幕と同じ丸ゴシックにそろえる、など）
+    one = str(cfg.get("visuals.font", "") or "").strip()
+    if one:
+        q = Path(one)
+        q = q if q.is_absolute() else cfg.root / q
+        if q.exists():
+            return str(q)
     for candidates in (_FONT_CANDIDATES.get(weight, []),
                        _FONT_CANDIDATES["bold"] if weight != "bold" else []):
         for cand in candidates:
