@@ -118,8 +118,16 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
         blur = float(cfg.get("visuals.background_blur", 8)) * (1.0 if strong else 0.35)
         sat = float(cfg.get("visuals.background_saturation", 0.6)) if strong else 0.85
         calm = (f"boxblur=lr={blur:.1f}:lp=2," if blur >= 0.5 else "") + f"eq=saturation={sat:.2f}:brightness=-0.03,"
+        # 素材が場面より短いときは、頭から繰り返す代わりにゆっくり再生して伸ばす（最大 2 倍）
+        slow = ""
+        bg_dur = float(getattr(scene, "bg_duration", 0.0) or 0.0)
+        if bg_dur > 0:
+            avail = bg_dur - scene.bg_offset
+            if 0 < avail < scene.duration:
+                factor = min(scene.duration / avail, 2.0)
+                slow = f"setpts={factor:.4f}*PTS,"
         fc = (
-            f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+            f"[0:v]{slow}scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
             f"{calm}fps={fps},format=rgba[bg];"
             f"[1:v]format=rgba[fg];"
             f"[bg][fg]overlay=0:0:format=auto,format=yuv420p{fade},{COLOR_PARAMS}[v]"
@@ -129,7 +137,7 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
              "-stream_loop", "-1", "-ss", f"{scene.bg_offset:.2f}", "-i", str(scene.background),
              "-i", str(scene.image),
              "-filter_complex", fc, "-map", "[v]", "-frames:v", str(frames),
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "17",
              "-pix_fmt", "yuv420p", "-r", str(fps), *COLOR_FLAGS, "-an", str(out)],
             f"シーン{index}のレンダリング（動く背景）",
         )
@@ -168,7 +176,7 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     _run(
         [ffmpeg, "-y", "-i", str(scene.image),
          "-vf", vf, "-frames:v", str(frames),
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "17",
          "-pix_fmt", "yuv420p", "-r", str(fps), *COLOR_FLAGS, "-an", str(out)],
         f"シーン{index}のレンダリング",
     )
@@ -355,7 +363,7 @@ def render(
     args += [
         "-filter_complex", ";".join(chain),
         "-map", vout, "-map", "[a]",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
         "-profile:v", "high", "-level", "4.1",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",

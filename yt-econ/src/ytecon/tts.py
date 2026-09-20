@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 import io
 import json
 import logging
@@ -274,6 +275,21 @@ def _silence(seconds: float, channels: int, width: int, rate: int) -> bytes:
     return b"\x00" * int(seconds * rate) * channels * width
 
 
+# 読み間違えやすい語の読み（音声にだけ効く。字幕の表記は変えない）
+_READINGS = [
+    (re.compile(r"(?<=[ただ])分(?=[、。，！？!?がはをにでもとの]|$)"), "ぶん"),   # 上がった分 → あがったぶん（「わけ」と読まれる）
+    (re.compile(r"(その|この|あの|どの|増えた|減った|余った|足りない|多い|少ない)分"), r"\1ぶん"),
+    (re.compile(r"分だけ"), "ぶんだけ"),
+]
+
+
+def reading(text: str) -> str:
+    """音声合成に渡す直前の読み補正."""
+    for pat, rep in _READINGS:
+        text = pat.sub(rep, text)
+    return text
+
+
 def synthesize(cfg: Config, script: VideoScript, outdir: str | Path) -> VoiceTrack:
     """台本を音声化し、全文のタイムコード付きトラックを返す."""
     outdir = Path(outdir)
@@ -295,7 +311,7 @@ def synthesize(cfg: Config, script: VideoScript, outdir: str | Path) -> VoiceTra
             expression, sentence = parse_expression(sentence)   # [驚] などは読まない
             if not sentence:
                 continue
-            audio = provider.synth(sentence)
+            audio = provider.synth(reading(sentence))
             pcm, ch, wd, rt = _read_wav(audio)
             if not channels:
                 channels, width, rate = ch, wd, rt

@@ -227,13 +227,21 @@ def test_phrase_split_keeps_words_whole(text, expected):
 
 
 def test_highlight_stages_follow_the_speech():
+    """話している文に行の言葉が出てきたときだけ、その行を光らせる（出てこない間は全体）."""
     from ytecon.scenes import _stages
-    lines = [Line("s0", i, f"文{i}", 10 + i * 2.5, 12 + i * 2.5) for i in range(4)]
-    st = _stages(10, 20, 3, lines)
-    assert [a for a, _, _ in st] == [None, 0, 1, 2]          # 全体 → 1 行ずつ
-    assert st[0][1] == 10 and st[-1][2] == 20                 # 隙間なく覆う
+    rows = [["価格は据え置き"], ["中身だけ1割減"], ["実質的な値上げ"]]
+    lines = [Line("s0", 0, "価格は据え置きで、", 10.0, 12.0),
+             Line("s0", 1, "中身だけを1割減らすやり方なのだ。", 12.0, 15.0),
+             Line("s0", 2, "ここで一度考えてみてほしいのだ。", 15.0, 18.0),
+             Line("s0", 3, "つまり実質的な値上げ。", 18.0, 20.0)]
+    st = _stages(10, 20, rows, lines)
+    assert [a for a, _, _ in st] == [0, None, 2]          # 「中身だけ1割減」は文に無い言い回し → 光らない
+    assert st[0][1] == 10 and st[-1][2] == 20
     assert all(b[1] == a[2] for a, b in zip(st, st[1:]))
-    assert _stages(10, 13, 3, lines) == [(None, 10, 13)]      # 短い場面は段階を作らない
+    assert _stages(10, 20, rows, None) == [(None, 10, 20)]     # 文が無ければ全体のまま
+    # 数字は表記ゆれ（％/パーセント、全角）をそろえて照合する
+    assert _stages(0, 10, [["給料", "+3%"], ["物価", "+3%"], ["実質", "±0"]],
+                   [Line("s0", 0, "たとえば給料が3パーセント増えたとする。", 0.0, 5.0)])[0][0] == 0
 
 
 def test_diagram_highlight_changes_only_the_active_row(cfg, tmp_path):
@@ -258,9 +266,9 @@ def test_diagram_scenes_share_background_and_skip_fade(cfg, tmp_path):
     cfg = copy.deepcopy(cfg)
     cfg.raw["visuals"]["motion_backgrounds"] = True
     painter = _Painter(cfg, tmp_path)
-    lines = [Line("s0", i, f"文{i}", 10 + i * 2.5, 12 + i * 2.5) for i in range(4)]
-    sc = painter.diagram(Diagram(type="steps", title="t", items=["a", "b", "c"]), 10, 20, lines=lines)
-    assert len(sc) == 4
+    lines = [Line("s0", i, f"まず{w}の話。", 10 + i * 2.5, 12 + i * 2.5) for i, w in enumerate(["ある", "いる", "うえ"])]
+    sc = painter.diagram(Diagram(type="steps", title="t", items=["ある", "いる", "うえ"]), 10, 20, lines=lines)
+    assert len(sc) == 3
     assert sc[0].fade_in and not any(s.fade_in for s in sc[1:])
     if sc[0].background is not None:
         assert all(s.background == sc[0].background for s in sc)

@@ -305,9 +305,16 @@ class Picker:
                      len(self.lib), *(sum(1 for c in self.lib if c.kind == k) for k in KINDS),
                      len(self.loops))
 
-    def abstract(self, words: str = "", seed: int = 0) -> Path | None:
+    def abstract(self, words: str = "", seed: int = 0, needed: float = 0.0) -> Path | None:
+        clip = self.abstract_clip(words, seed=seed, needed=needed)
+        return clip.path if clip is not None else None
+
+    def abstract_clip(self, words: str = "", seed: int = 0, needed: float = 0.0) -> Clip | None:
         """カードの後ろに敷く背景。実写も抽象も全部候補にし、場面の語に合うもの・まだ使っていない
-        ものを優先する（ぼかして敷くので実写でも文字の邪魔にならない）。合成ループは最後の手段."""
+        ものを優先する（ぼかして敷くので実写でも文字の邪魔にならない）。合成ループは最後の手段.
+
+        needed 秒以上の素材があればそちらから選ぶ（途中で頭から繰り返さないため）。
+        """
         if not self.enabled:
             return None
         self.n += 1
@@ -318,12 +325,17 @@ class Picker:
             pool = list(self.lib) or self.loops
         if not pool:
             return None
-        clip = pick(pool, words, None, self.used, seed=seed + self.n, reuse_penalty=4.0,
-                    exclude=set(self.recent[-3:]))
+        exclude = set(self.recent[-3:])
+        long_enough = [c for c in pool if c.duration >= needed and c.name not in exclude]
+        clip = None
+        if long_enough:
+            clip = pick(long_enough, words, None, self.used, seed=seed + self.n, reuse_penalty=4.0)
+        if clip is None:
+            clip = pick(pool, words, None, self.used, seed=seed + self.n, reuse_penalty=4.0, exclude=exclude)
         if clip is None:
             return None
         self._remember(clip)
-        return clip.path
+        return clip
 
     def _remember(self, clip: Clip) -> None:
         self.used[clip.name] += 1

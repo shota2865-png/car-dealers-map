@@ -43,6 +43,7 @@ class Scene:
     background: Path | None = None   # 後ろで流す動画（透過カードはこの上に重なる）
     bg_offset: float = 0.0           # 背景動画の再生開始位置（同じ素材でも違う所から）
     fade_in: bool = True             # False なら切り替えのフェードなし（同じ画面の続き = ハイライトの段階）
+    bg_duration: float = 0.0         # 背景素材の尺（足りなければゆっくり再生して繰り返しを避ける）
 
     @property
     def duration(self) -> float:
@@ -110,13 +111,20 @@ class _Painter:
         self.n += 1
         return self.outdir / f"scene_{self.n:03d}_{stem}.jpg"
 
-    def _bg(self, scene: Scene) -> Scene:
-        """透過カード（PNG）なら動く背景を敷く。不透明カードならそのまま."""
+    def _bg(self, scene: Scene, needed: float | None = None) -> Scene:
+        """透過カード（PNG）なら動く背景を敷く。不透明カードならそのまま.
+
+        needed 秒（その画面が続く長さ）以上の素材を優先し、同じ映像が途中で頭から
+        繰り返されるのを避ける。
+        """
         if scene.image.suffix.lower() == ".png":
-            bg = self.picker.abstract(self.words, seed=self.n)
-            if bg is not None:
-                scene.background = bg
-                scene.bg_offset = (self.n * 2.7) % max(footage.LOOP_SECONDS - 1.0, 1.0)
+            need = needed if needed is not None else scene.duration
+            clip = self.picker.abstract_clip(self.words, seed=self.n, needed=need)
+            if clip is not None:
+                scene.background = clip.path
+                scene.bg_duration = clip.duration
+                spare = max(clip.duration - need, 0.0)
+                scene.bg_offset = (self.n * 2.7) % spare if spare > 1.0 else 0.0
         return scene
 
     def title(self, text: str, start: float, end: float) -> Scene:
@@ -131,7 +139,8 @@ class _Painter:
                 lines: list[Line] | None = None) -> list[Scene]:
         """箇条書き。話が進むにつれて、いま話している項目を順にハイライトする（段階ごとに 1 枚）."""
         items = [x for x in items if x]
-        stages = _stages(start, end, len(items), lines, min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
+        stages = _stages(start, end, [[x] for x in items], lines,
+                         min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
         scenes: list[Scene] = []
         for k, (active, s, e) in enumerate(stages):
             p = assets.render_textcard(self.cfg, heading, items, self._next("bullets"), active=active)
@@ -142,9 +151,10 @@ class _Painter:
         """同じ画面の段階（ハイライトが進むだけ）には同じ背景を続きから敷き、フェードも入れない."""
         if not scenes:
             return scenes
-        first = self._bg(scenes[0])
+        first = self._bg(scenes[0], needed=scenes[-1].end - scenes[0].start)
         for sc in scenes[1:]:
             sc.background = first.background
+            sc.bg_duration = first.bg_duration
             sc.bg_offset = first.bg_offset + (sc.start - first.start)
             sc.fade_in = False
         return scenes
@@ -182,8 +192,8 @@ class _Painter:
 
     def diagram(self, g, start: float, end: float, lines: list[Line] | None = None) -> list[Scene]:
         """図解。行（箱）を話の進みに合わせて順にハイライトする（段階ごとに 1 枚、背景は続き）."""
-        n = assets.diagram_rows(g.type, g.items)
-        stages = _stages(start, end, n, lines, min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
+        stages = _stages(start, end, assets.diagram_row_texts(g.type, g.items), lines,
+                         min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
         scenes: list[Scene] = []
         for active, s, e in stages:
             p = assets.render_diagram(self.cfg, g.type, g.title, g.items, g.note,
@@ -219,39 +229,61 @@ class _Painter:
         return scene
 
 
-def _stages(start: float, end: float, n: int, lines: list[Line] | None,
+def _norm(text: str) -> str:
+    """照合用に表記をそろえる（全角数字→半角、パーセント→%、空白・記号を除く）."""
+    t = text.translate(str.maketrans("０１２３４５６７８９％＋－", "0123456789%+-"))
+    t = t.replace("パーセント", "%").replace("パ-セント", "%")
+    return re.sub(r"[\s、。，・「」『』（）()＝=→…]", "", t)
+
+
+def _mentioned_row(rows: list[list[str]], text: str) -> int | None:
+    """ナレーションの一文が、どの行の言葉を含んでいるか（一番長く一致した行）. 無ければ None."""
+    t = _norm(text)
+    best, best_len = None, 0
+    for i, cells in enumerate(rows):
+        for cell in cells:
+            c = _norm(cell)
+            if len(c) >= 2 and c in t and len(c) > best_len:
+                best, best_len = i, len(c)
+    return best
+
+
+def _stages(start: float, end: float, rows: list[list[str]], lines: list[Line] | None,
             min_seconds: float = 1.6) -> list[tuple[int | None, float, float]]:
     """ハイライトの段階 [(行番号 or None, 開始, 終了), ...] を決める.
 
-    最初は全体を見せ（None）、そのあと 1 行ずつ。話している文の切れ目に合わせて切り替え、
-    文が足りなければ等分する。段階が短くなりすぎる（min_seconds 未満）なら段階数を減らす。
+    ずんだもんが話している文に、図や表の行の言葉が出てきたときだけ、その行を光らせる。
+    出てこない間は全体を見せる（None）。短すぎる段階は前の段階に吸収する。
     """
-    dur = end - start
-    if n <= 1 or dur < min_seconds * 2:
+    n = len(rows)
+    if n == 0 or not lines or end - start < min_seconds:
         return [(None, start, end)]
-    k = min(n, int(dur // min_seconds) - 1)        # 全体表示のぶんを 1 段階として引く
-    if k <= 0:
-        return [(None, start, end)]
-    rows = list(range(n))[:k] if k < n else list(range(n))
-    # 切り替え時刻: 文の開始時刻を等間隔に採る。文が足りなければ等分
-    starts = sorted({ln.start for ln in (lines or []) if start < ln.start < end})
-    bounds: list[float]
-    if len(starts) >= len(rows):
-        idx = [round((i + 1) * len(starts) / (len(rows) + 1)) for i in range(len(rows))]
-        idx = [min(max(x, 0), len(starts) - 1) for x in idx]
-        bounds = [starts[i] for i in idx]
-        if any(b - a < min_seconds * 0.6 for a, b in zip([start] + bounds, bounds)):
-            bounds = []
-    else:
-        bounds = []
-    if not bounds:
-        step = dur / (len(rows) + 1)
-        bounds = [start + step * (i + 1) for i in range(len(rows))]
-    stages: list[tuple[int | None, float, float]] = [(None, start, bounds[0])]
-    for i, row in enumerate(rows):
-        s = bounds[i]
-        e = bounds[i + 1] if i + 1 < len(bounds) else end
+    raw: list[tuple[int | None, float]] = [(None, start)]
+    for ln in lines:
+        if ln.start < start or ln.start >= end:
+            continue
+        row = _mentioned_row(rows, ln.text)
+        if row != raw[-1][0]:
+            raw.append((row, max(ln.start, start)))
+    # 段階にする（短すぎるものは前に吸収）
+    stages: list[tuple[int | None, float, float]] = []
+    for k, (row, s) in enumerate(raw):
+        e = raw[k + 1][1] if k + 1 < len(raw) else end
+        if stages and (e - s) < min_seconds * 0.6:
+            prev = stages[-1]
+            stages[-1] = (prev[0], prev[1], e)
+            continue
+        if stages and stages[-1][0] == row:
+            stages[-1] = (row, stages[-1][1], e)
+            continue
+        if stages and (stages[-1][2] - stages[-1][1]) < min_seconds * 0.6:
+            stages[-1] = (row, stages[-1][1], e)       # 直前の段階が短すぎたら差し替える
+            continue
         stages.append((row, s, e))
+    if not stages:
+        return [(None, start, end)]
+    stages[0] = (stages[0][0], start, stages[0][2])
+    stages[-1] = (stages[-1][0], stages[-1][1], end)
     return stages
 
 

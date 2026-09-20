@@ -49,7 +49,19 @@ _FONT_CANDIDATES = {
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
         "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
     ],
+    # 図解・表・カードの本文。地上波のテロップに近い UD ゴシック（BIZ UDPGothic、OFL）。無ければ black
+    "body": [
+        "assets/fonts/BIZUDPGothic-Bold.ttf",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
+        "assets/fonts/NotoSansJP-Black.ttf",
+    ],
 }
+# 大きな見出し・キーワードは black（太くて遠目に効く）、それ以外は body
+_DISPLAY_ROLES = ("display_xl", "display_l", "display_s", "numeral_xl", "headline_l")
+
+
+def weight_for(role: str) -> str:
+    return "black" if role in _DISPLAY_ROLES else "body"
 
 _font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
@@ -243,7 +255,7 @@ _PARTICLE_CHARS = set("がをにはでともへやのか")
 
 
 def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_width: int,
-             max_lines: int, weight: str = "black", min_size: int = 28
+             max_lines: int, weight: str | None = None, min_size: int = 28
              ) -> tuple[ImageFont.FreeTypeFont, list[str]]:
     """文字が枠に収まるまでフォントを小さくして、(フォント, 行) を返す.
 
@@ -251,6 +263,7 @@ def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_widt
     それでも入らなければ最終行を「…」で切る（枠からはみ出させない）。
     """
     size = ts(cfg, role)
+    weight = weight or weight_for(role)
     while True:
         font = load_font(cfg, size, weight)
         # 自然な位置で割れない（語の途中で切れる）ときも縮めて試す
@@ -366,13 +379,12 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
         bh = int(f_body.size * 1.3)
         if y + bh * len(blines) > bottom:
             break
-        on = active is None or i == active
         if active is not None and i == active:
             _marker(d, 196, y + 31, pal["accent"])
         else:
-            d.ellipse([200, y + 20, 222, y + 42], fill=pal["accent2"] if on else pal["outline"])
+            d.ellipse([200, y + 20, 222, y + 42], fill=pal["accent2"])
         for line in blines:
-            d.text((256, y), line, font=f_body, fill=pal["text"] if on else pal["text_secondary"])
+            d.text((256, y), line, font=f_body, fill=pal["text"] if (active is None or i == active) else pal["text"])
             y += bh
         y += 26
 
@@ -1117,11 +1129,9 @@ def _row_style(pal: dict[str, str], i: int, active: int | None,
     """
     fill = fill or pal["surface_high"]
     text = text or pal["text"]
-    if active is None:
+    if active is None or i != active:
         return fill, pal["outline"], 3, text
-    if i == active:
-        return _mix(fill, pal["accent"], 0.22), pal["accent"], 6, text
-    return fill, pal["outline"], 3, (pal["text_secondary"] if text == pal["text"] else text)
+    return _mix(fill, pal["accent"], 0.22), pal["accent"], 6, text
 
 
 def _marker(d, x: int, cy: int, color: str) -> None:
@@ -1147,8 +1157,6 @@ def render_flow(cfg: Config, title: str, items: list[str], note: str, out: Path,
         base_fill = pal["accent"] if i == n - 1 else pal["surface_high"]
         base_color = "#0B1120" if i == n - 1 else pal["text"]
         fill, outline, width, color = _row_style(pal, i, active, base_fill, base_color)
-        if active is not None and i == n - 1 and i != active:
-            fill = _mix(pal["accent"], pal["surface"], 0.45)          # 結果の箱も沈める
         if i == active:
             outline = pal["accent2"] if i == n - 1 else pal["accent"]
         _rounded(d, [x, y, x + box_w, y + box_h], fill, outline, r, width)
@@ -1225,17 +1233,17 @@ def render_steps(cfg: Config, title: str, items: list[str], note: str, out: Path
     row_h = min(170, avail // len(items))
     y = y0 + 10
     r = design.radius(cfg, "m")
-    f_num = load_font(cfg, ts(cfg, "headline_m", 66), "black")
+    f_num = load_font(cfg, ts(cfg, "headline_m", 66), "body")
     for i, txt in enumerate(items):
         fill, outline, width, color = _row_style(pal, i, active)
         _rounded(d, [m, y, cw - m, y + row_h - 16], fill, outline, r, width)
         if i == active:
             _marker(d, m - 34, y + (row_h - 16) // 2, pal["accent"])
         cx = m + 70
-        dot = pal["accent"] if (active is None or i == active) else pal["outline"]
+        dot = pal["accent"]
         d.ellipse([cx - 44, y + (row_h - 16) // 2 - 44, cx + 44, y + (row_h - 16) // 2 + 44], fill=dot)
         _text_block(d, [str(i + 1)], f_num, (cx - 44, y + (row_h - 16) // 2 - 44, cx + 44, y + (row_h - 16) // 2 + 44),
-                    "#0B1120" if dot == pal["accent"] else pal["text_secondary"])
+                    "#0B1120")
         f, lines = fit_text(cfg, d, txt, "title", cw - m * 2 - 190, 2, min_size=34)
         _text_block(d, lines, f, (m + 150, y, cw - m - 30, y + row_h - 16), color, align="left")
         y += row_h
@@ -1256,14 +1264,12 @@ def render_balance(cfg: Config, title: str, items: list[str], note: str, out: Pa
     box_h = 230
     y = y0 + 30
     r = design.radius(cfg, "m")
-    f_op = load_font(cfg, ts(cfg, "display_s", 84), "black")
+    f_op = load_font(cfg, ts(cfg, "display_s", 84), "body")
     x = m
     for i, (txt, base_fill, base_color) in enumerate(((a, pal["surface_high"], pal["text"]),
                                                       (b, pal["surface_high"], pal["text"]),
                                                       (res, pal["accent"], "#0B1120"))):
         fill, outline, width, color = _row_style(pal, i, active, base_fill, base_color)
-        if active is not None and i == 2 and i != active:
-            fill = _mix(pal["accent"], pal["surface"], 0.45)
         if i == active:
             outline = pal["accent2"] if i == 2 else pal["accent"]
         _rounded(d, [x, y, x + box_w, y + box_h], fill, outline, r, width)
@@ -1309,8 +1315,7 @@ def render_table(cfg: Config, title: str, items: list[str], note: str, out: Path
         fk, kl = fit_text(cfg, d, k, "title", (cw - m * 2) * 0.55, 1, min_size=34)
         _text_block(d, kl[:1], fk, (m + 36, y, cw - m, y + row_h - 10), color, align="left")
         fv, vl = fit_text(cfg, d, v, "title", (cw - m * 2) * 0.35, 1, min_size=34)
-        _text_block(d, vl[:1], fv, (m, y, cw - m - 36, y + row_h - 10),
-                    pal["positive"] if (active is None or i == active) else pal["text_secondary"], align="right")
+        _text_block(d, vl[:1], fv, (m, y, cw - m - 36, y + row_h - 10), pal["positive"], align="right")
         y += row_h
     return _save(img, out)
 
@@ -1321,6 +1326,20 @@ def render_diagram(cfg: Config, kind: str, title: str, items: list[str], note: s
     fn = {"flow": render_flow, "compare": render_compare, "steps": render_steps,
           "balance": render_balance, "table": render_table}.get(kind, render_steps)
     return fn(cfg, title, items, note, out, active=active)
+
+
+def diagram_row_texts(kind: str, items: list[str]) -> list[list[str]]:
+    """行ごとの「言葉」（ナレーションと照合する語の候補）."""
+    items = [x for x in items if x]
+    if kind == "balance":
+        items = (items + ["…", "…", "…"])[:3]
+        return [[c for c in it.rsplit(" ", 1)] for it in items]
+    if kind == "compare":
+        rows = [[c.strip() for c in it.split("|")] for it in items[:4]]
+        return [r for r in rows if len(r) in (2, 3)] or [[items[0] if items else "…"]]
+    if kind == "table":
+        return [[c.strip() for c in it.split("|", 1)] for it in items[:5]] or [["…"]]
+    return [[it] for it in items[:4]] or [["…"]]
 
 
 def diagram_rows(kind: str, items: list[str]) -> int:
