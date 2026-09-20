@@ -943,3 +943,209 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
                stroke_width=3, stroke_fill="#06090F")
         y += 64
     return _save(img, out)
+
+
+# ----------------------------------------------------------------------
+# 図解（flow / compare / steps / balance / table）
+# 「タイトルだけ出て言葉で説明される」を無くすための絵。すりガラスの面に描く
+# ----------------------------------------------------------------------
+def _diagram_base(cfg: Config, title: str, note: str):
+    from . import design
+
+    img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "chart"))
+    m = design.safe_margin(cfg)
+    y = 120
+    if title:
+        f_t, tl = fit_text(cfg, d, title, "headline_m", cw - m * 2, 1, min_size=44)
+        d.rectangle([m, y + 6, m + 10, y + f_t.size - 2], fill=pal["accent"])
+        d.text((m + 30, y), tl[0], font=f_t, fill=pal["text"])
+        y += int(f_t.size * 1.6)
+    if note:
+        f_n = load_font(cfg, ts(cfg, "label_s", 30), "bold")
+        d.text((m + 30, h - 128), "— " + _safe_for_font(f_n, note), font=f_n, fill=pal["text_secondary"])
+    return img, d, pal, cw, h, m, y
+
+
+def _rounded(d, box, fill, outline=None, r=16, width=3):
+    d.rounded_rectangle(box, radius=r, fill=fill, outline=outline, width=width)
+
+
+def render_flow(cfg: Config, title: str, items: list[str], note: str, out: Path) -> Path:
+    """A → B → C。因果・順番を箱と矢印で."""
+    from . import design
+
+    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, title, note)
+    items = [x for x in items if x][:4] or ["…"]
+    n = len(items)
+    gap = 56
+    box_w = int((cw - m * 2 - gap * (n - 1)) / n)
+    box_h = 220
+    y = y0 + (h - 128 - y0 - box_h) // 2
+    x = m
+    r = design.radius(cfg, "m")
+    for i, txt in enumerate(items):
+        fill = pal["accent"] if i == n - 1 else pal["surface_high"]
+        color = "#0B1120" if i == n - 1 else pal["text"]
+        _rounded(d, [x, y, x + box_w, y + box_h], fill, pal["outline"], r)
+        f, lines = fit_text(cfg, d, txt, "title", box_w - 40, 2, min_size=34)
+        ty = y + (box_h - len(lines) * int(f.size * 1.25)) // 2
+        for ln in lines:
+            tw = d.textlength(ln, font=f)
+            d.text((x + (box_w - tw) / 2, ty), ln, font=f, fill=color)
+            ty += int(f.size * 1.25)
+        if i < n - 1:
+            ax = x + box_w + 8
+            cy = y + box_h // 2
+            d.line([(ax, cy), (ax + gap - 16, cy)], fill=pal["accent2"], width=8)
+            d.polygon([(ax + gap - 16, cy - 16), (ax + gap - 16, cy + 16), (ax + gap - 2, cy)], fill=pal["accent2"])
+        x += box_w + gap
+    return _save(img, out)
+
+
+def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Path) -> Path:
+    """A vs B。行ごとに 見出し | 左 | 右."""
+    from . import design
+
+    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, "", note)
+    left_name, right_name = "A", "B"
+    if title and ("vs" in title.lower() or "対" in title or "と" in title):
+        parts = re.split(r"\s*(?:vs\.?|VS|対|と)\s*", title, maxsplit=1)
+        if len(parts) == 2 and all(parts):
+            left_name, right_name = parts[0].strip(), parts[1].strip()
+    rows = []
+    for it in items[:4]:
+        cells = [c.strip() for c in it.split("|")]
+        if len(cells) == 3:
+            rows.append(cells)
+        elif len(cells) == 2:
+            rows.append(["", cells[0], cells[1]])
+    if not rows:
+        rows = [["", title, ""]]
+    label_w = 300
+    col_w = (cw - m * 2 - label_w - 40) // 2
+    y = y0 + 10
+    head_h = 96
+    r = design.radius(cfg, "m")
+    f_head = load_font(cfg, ts(cfg, "title", 56), "black")
+    for k, (name, fill) in enumerate(((left_name, pal["accent"]), (right_name, pal["accent2"]))):
+        x = m + label_w + 20 + k * (col_w + 20)
+        _rounded(d, [x, y, x + col_w, y + head_h], fill, None, r)
+        fh, hl = fit_text(cfg, d, name, "title", col_w - 30, 1, min_size=36)
+        tw = d.textlength(hl[0], font=fh)
+        d.text((x + (col_w - tw) / 2, y + (head_h - fh.size) // 2 - 4), hl[0], font=fh, fill="#0B1120")
+    y += head_h + 20
+    row_h = min(150, (h - 128 - y - 20) // max(len(rows), 1))
+    for label, lval, rval in rows:
+        _rounded(d, [m, y, cw - m, y + row_h - 14], pal["surface_high"], pal["outline"], r)
+        if label:
+            fl, ll = fit_text(cfg, d, label, "body_m", label_w - 30, 1, min_size=30, weight="bold")
+            d.text((m + 24, y + (row_h - 14 - fl.size) // 2), ll[0], font=fl, fill=pal["text_secondary"])
+        for k, val in enumerate((lval, rval)):
+            x = m + label_w + 20 + k * (col_w + 20)
+            fv, vl = fit_text(cfg, d, val, "title", col_w - 30, 2, min_size=32)
+            ty = y + (row_h - 14 - len(vl) * int(fv.size * 1.2)) // 2
+            for ln in vl:
+                tw = d.textlength(ln, font=fv)
+                d.text((x + (col_w - tw) / 2, ty), ln, font=fv, fill=pal["text"])
+                ty += int(fv.size * 1.2)
+        y += row_h
+    return _save(img, out)
+
+
+def render_steps(cfg: Config, title: str, items: list[str], note: str, out: Path) -> Path:
+    """番号つきの手順・条件."""
+    from . import design
+
+    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, title, note)
+    items = [x for x in items if x][:4] or ["…"]
+    avail = h - 128 - y0 - 20
+    row_h = min(170, avail // len(items))
+    y = y0 + (avail - row_h * len(items)) // 2
+    r = design.radius(cfg, "m")
+    f_num = load_font(cfg, ts(cfg, "headline_m", 66), "black")
+    for i, txt in enumerate(items, 1):
+        _rounded(d, [m, y, cw - m, y + row_h - 16], pal["surface_high"], pal["outline"], r)
+        cx = m + 70
+        d.ellipse([cx - 44, y + (row_h - 16) // 2 - 44, cx + 44, y + (row_h - 16) // 2 + 44], fill=pal["accent"])
+        num = str(i)
+        tw = d.textlength(num, font=f_num)
+        d.text((cx - tw / 2, y + (row_h - 16) // 2 - f_num.size // 2 - 6), num, font=f_num, fill="#0B1120")
+        f, lines = fit_text(cfg, d, txt, "title", cw - m * 2 - 190, 2, min_size=34)
+        ty = y + (row_h - 16 - len(lines) * int(f.size * 1.2)) // 2
+        for ln in lines:
+            d.text((m + 150, ty), ln, font=f, fill=pal["text"])
+            ty += int(f.size * 1.2)
+        y += row_h
+    return _save(img, out)
+
+
+def render_balance(cfg: Config, title: str, items: list[str], note: str, out: Path) -> Path:
+    """数字の差し引き: A − B = 結果（最後の要素が結果）."""
+    from . import design
+
+    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, title, note)
+    items = [x for x in items if x][:3]
+    while len(items) < 3:
+        items.append("…")
+    a, b, res = items
+    box_w = (cw - m * 2 - 200) // 3
+    box_h = 230
+    y = y0 + (h - 128 - y0 - box_h) // 2
+    r = design.radius(cfg, "m")
+    f_op = load_font(cfg, ts(cfg, "display_s", 84), "black")
+    x = m
+    for i, (txt, fill, color) in enumerate(((a, pal["surface_high"], pal["text"]),
+                                            (b, pal["surface_high"], pal["text"]),
+                                            (res, pal["accent"], "#0B1120"))):
+        _rounded(d, [x, y, x + box_w, y + box_h], fill, pal["outline"], r)
+        # 「名目賃金 +5.1%」→ 上に名前、下に数字
+        parts = txt.rsplit(" ", 1) if " " in txt else [txt]
+        if len(parts) == 2:
+            fl, ll = fit_text(cfg, d, parts[0], "body_m", box_w - 30, 1, min_size=30, weight="bold")
+            tw = d.textlength(ll[0], font=fl)
+            d.text((x + (box_w - tw) / 2, y + 34), ll[0], font=fl, fill=color if i == 2 else pal["text_secondary"])
+            fv, vl = fit_text(cfg, d, parts[1], "display_s", box_w - 30, 1, min_size=48)
+            tw = d.textlength(vl[0], font=fv)
+            d.text((x + (box_w - tw) / 2, y + 100), vl[0], font=fv, fill=color if i == 2 else pal["positive"])
+        else:
+            fv, vl = fit_text(cfg, d, txt, "title", box_w - 30, 2, min_size=34)
+            ty = y + (box_h - len(vl) * int(fv.size * 1.2)) // 2
+            for ln in vl:
+                tw = d.textlength(ln, font=fv)
+                d.text((x + (box_w - tw) / 2, ty), ln, font=fv, fill=color)
+                ty += int(fv.size * 1.2)
+        if i < 2:
+            op = "−" if i == 0 else "＝"
+            tw = d.textlength(op, font=f_op)
+            d.text((x + box_w + (100 - tw) / 2, y + box_h // 2 - f_op.size // 2 - 8), op, font=f_op, fill=pal["accent2"])
+        x += box_w + 100
+    return _save(img, out)
+
+
+def render_table(cfg: Config, title: str, items: list[str], note: str, out: Path) -> Path:
+    """2 列の表（項目 | 値）."""
+    from . import design
+
+    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, title, note)
+    rows = [[c.strip() for c in it.split("|", 1)] for it in items[:5] if it]
+    rows = [r if len(r) == 2 else [r[0], ""] for r in rows] or [["…", ""]]
+    avail = h - 128 - y0 - 20
+    row_h = min(120, avail // len(rows))
+    y = y0 + (avail - row_h * len(rows)) // 2
+    r = design.radius(cfg, "s")
+    for i, (k, v) in enumerate(rows):
+        fill = pal["surface_high"] if i % 2 == 0 else pal["surface"]
+        _rounded(d, [m, y, cw - m, y + row_h - 10], fill, None, r)
+        fk, kl = fit_text(cfg, d, k, "title", (cw - m * 2) * 0.55, 1, min_size=34)
+        d.text((m + 36, y + (row_h - 10 - fk.size) // 2), kl[0], font=fk, fill=pal["text"])
+        fv, vl = fit_text(cfg, d, v, "title", (cw - m * 2) * 0.35, 1, min_size=34)
+        tw = d.textlength(vl[0], font=fv)
+        d.text((cw - m - 36 - tw, y + (row_h - 10 - fv.size) // 2), vl[0], font=fv, fill=pal["positive"])
+        y += row_h
+    return _save(img, out)
+
+
+def render_diagram(cfg: Config, kind: str, title: str, items: list[str], note: str, out: Path) -> Path:
+    fn = {"flow": render_flow, "compare": render_compare, "steps": render_steps,
+          "balance": render_balance, "table": render_table}.get(kind, render_steps)
+    return fn(cfg, title, items, note, out)

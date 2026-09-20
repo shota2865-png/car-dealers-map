@@ -324,3 +324,25 @@ def test_subtitles_never_start_with_particles_or_orphans():
         assert all(not p.startswith(tuple("はがをにでともへやのか")) for p in got), got
         assert all(len(p.rstrip("、")) >= 4 for p in got), got
         assert all(len(p.replace('、', '')) <= 17 for p in got), got   # 読点は幅が狭いので数えない
+
+
+@pytest.mark.parametrize("kind,items", [
+    ("flow", ["輸入コスト上昇", "企業間の取引価格", "店頭の値札"]),
+    ("compare", ["見る回数|週に何十回|月に1回", "動く頻度|毎週|年1回"]),
+    ("balance", ["名目賃金 +5.1%", "物価 +3.2%", "実質 ▲1.9%"]),
+    ("steps", ["額面と手取りを分ける", "物価の伸びを引く"]),
+    ("table", ["2022年|2.1%", "2023年|3.6%"]),
+])
+def test_diagrams_render(tmp_path, cfg, kind, items):
+    from ytecon.assets import render_diagram
+    p = render_diagram(cfg, kind, "値札 vs 給料", items, "出典テスト", tmp_path / f"{kind}.jpg")
+    assert p.exists() and p.stat().st_size > 10_000
+
+
+def test_script_parses_diagrams():
+    from ytecon.script import VideoScript
+    s = VideoScript.from_dict({"topic_title": "t", "hook": "h", "closing": "c", "sections": [
+        {"heading": "a", "narration": "b。", "diagrams": [
+            {"type": "flow", "title": "順番", "items": ["A", "B", "C"], "after_sentence": 0},
+            {"type": "table", "items": []}]}]})
+    assert len(s.sections[0].diagrams) == 1 and s.sections[0].diagrams[0].items == ["A", "B", "C"]

@@ -64,6 +64,24 @@ class Card:
 
 
 @dataclass
+class Diagram:
+    """図解。言葉で説明される部分を「絵」にする.
+
+    type:
+      flow    : A → B → C（因果・順番）。items は 2〜4 個の短い語（各 ≤10 字）
+      compare : 左右の比較。items は "見出し|値" を 2〜4 行、title に左右の名前を「A vs B」で
+      steps   : 番号つきの手順・条件。items は 2〜4 行（各 ≤16 字）
+      balance : 2 つの数字の差し引き。items は ["名目 +5.1%", "物価 +3.2%", "実質 −"] のように 3 個
+      table   : 2 列の表。items は "項目|値" を 2〜5 行
+    """
+    type: str
+    title: str = ""
+    items: list[str] = field(default_factory=list)
+    note: str = ""              # 出典や補足（小さく出す）
+    after_sentence: int = 0
+
+
+@dataclass
 class SoundCue:
     """効果音1つ."""
     type: str = "POP"        # POP/CLICK/WHOOSH/IMPACT/COMEDY/ERROR/RISER/TRANSITION
@@ -80,6 +98,7 @@ class Section:
     captions: list[Caption] = field(default_factory=list)
     sounds: list[SoundCue] = field(default_factory=list)
     cards: list[Card] = field(default_factory=list)   # 体言止めの文字カード（一文カードの代わり）
+    diagrams: list[Diagram] = field(default_factory=list)   # 図解（流れ・比較・手順・差し引き・表）
 
     @property
     def char_count(self) -> int:
@@ -169,6 +188,13 @@ class VideoScript:
                              after_sentence=int(c.get("after_sentence", 0) or 0))
                         for c in (s.get("cards") or []) if c.get("text")
                     ],
+                    diagrams=[
+                        Diagram(type=str(g.get("type", "flow")), title=g.get("title", "") or "",
+                                items=[str(x) for x in (g.get("items") or []) if str(x).strip()],
+                                note=g.get("note", "") or "",
+                                after_sentence=int(g.get("after_sentence", 0) or 0))
+                        for g in (s.get("diagrams") or []) if g.get("items")
+                    ],
                     visual=Visual(
                         kind=v.get("kind", "stock"),
                         query=v.get("query", ""),
@@ -256,6 +282,20 @@ _SE_TYPES = ["POP", "CLICK", "WHOOSH", "IMPACT", "COMEDY", "ERROR",
 _BEATS = ["FAMILIAR_SCENE", "ACADEMIC_LENS", "EVIDENCE_DROP",
           "MECHANISM_REVEAL", "PERSPECTIVE_FLIP", "HUMAN_RETURN"]
 
+_DIAGRAM_TYPES = ["flow", "compare", "steps", "balance", "table"]
+_DIAGRAM_SCHEMA = llm.obj({
+    "type": {"type": "string", "enum": _DIAGRAM_TYPES},
+    "title": llm.STR,
+    "items": llm.arr(llm.STR),
+    "note": llm.STR,
+    "after_sentence": llm.INT,
+})
+
+# 既存の台本に図解だけ後付けするとき用
+_DIAGRAMS_SCHEMA = llm.obj({
+    "sections": llm.arr(llm.obj({"heading": llm.STR, "diagrams": llm.arr(_DIAGRAM_SCHEMA)})),
+})
+
 # 既存の台本にカードだけ後付けするとき用
 _CARDS_SCHEMA = llm.obj({
     "sections": llm.arr(llm.obj({
@@ -324,6 +364,7 @@ _SCRIPT_SCHEMA = llm.obj(
                             "after_sentence": llm.INT,
                         })
                     ),
+                    "diagrams": llm.arr(_DIAGRAM_SCHEMA),
                     "visual": _VISUAL_SCHEMA,
                 }
             )
@@ -476,6 +517,24 @@ open_loops には「question」と「payoff_section（何番目のセクショ�
 | [怒] | 理不尽・怒りを代弁する文（まれに） |
 
 例) 「[驚]ところが、数字は逆を向いているのだ。」
+
+# 図解（diagrams）を出す — 言葉だけで説明しない（最重要）
+
+視聴者は「タイトルだけ出て言葉で説明される」と分からなくなる。**仕組み・順番・比較・
+差し引きは必ず図にする。** 各セクションに 1〜3 個、MECHANISM_REVEAL と ACADEMIC_LENS には必ず 1 個以上。
+type と items の書き方:
+
+| type | 使う場面 | items の例 |
+|---|---|---|
+| flow | 因果・順番（A→B→C） | ["輸入コスト上昇", "企業間の取引価格", "店頭の値札"]（2〜4 個、各 10 字以内） |
+| compare | 2 つのものの違い | title "値札 vs 給料", items ["見る回数\|週に何十回\|月に1回", "動く頻度\|毎週\|年1回"]（行は 見出し\|左\|右） |
+| balance | 数字の差し引き | ["名目賃金 +5.1%", "物価 +3.2%", "実質 ▲1.9%"]（3 個。最後が結果） |
+| steps | 手順・見分け方・条件 | ["額面と手取りを分ける", "物価の伸びを引く", "100gあたりで比べる"]（2〜4 行、各 16 字以内） |
+| table | 数字の一覧 | ["2022年\|2.1%", "2023年\|3.6%", "2024年\|5.1%"]（項目\|値 を 2〜5 行） |
+
+- title は 16 字以内の体言止め。note に出典（機関名・調査名）
+- after_sentence は、その説明を話している文の番号（0 始まり）
+- 図の中の数字は台本にあるものだけ。作らない
 
 # 画面の文字は「文章」ではなく「体言止め」で書く（最重要の見た目の規則）
 
@@ -825,6 +884,11 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
             ensure_cards(cfg, script)
         except Exception as exc:
             log.warning("文字カードを作れませんでした（一文カードで代用）: %s", exc)
+    if cfg.get("script.diagrams", True):
+        try:
+            ensure_diagrams(cfg, script)
+        except Exception as exc:
+            log.warning("図解を作れませんでした（カードで代用）: %s", exc)
     _sanitize(script)
     _check_style(cfg, script)
     log.info("台本生成完了: %s (%d文字)", script.topic_title, script.total_chars)
@@ -1028,6 +1092,51 @@ def ensure_cards(cfg: Config, script: VideoScript, force: bool = False) -> Video
     return script
 
 
+_DIAGRAMS_SYSTEM = """あなたは日本語の解説動画の図解担当です。台本の各セクションの本文を読み、
+言葉だけで説明している「仕組み・順番・比較・差し引き・手順・数字の一覧」を図解(diagrams)にします。
+各セクションに 1〜3 個。仕組みの説明（因果の鎖）があるセクションには必ず flow を 1 つ。
+
+type と items の書き方:
+- flow    : 因果・順番。items は 2〜4 個の短い語（各 10 字以内）。例 ["輸入コスト上昇", "企業間の取引価格", "店頭の値札"]
+- compare : 2 つの違い。title は「A vs B」、items は "見出し|左|右" を 2〜4 行。例 "見る回数|週に何十回|月に1回"
+- balance : 数字の差し引き。items は 3 個で最後が結果。例 ["名目賃金 +5.1%", "物価 +3.2%", "実質 ▲1.9%"]
+- steps   : 手順・条件・見分け方。items は 2〜4 行（各 16 字以内）
+- table   : 数字の一覧。items は "項目|値" を 2〜5 行
+
+規則:
+- title は 16 字以内の体言止め。note に出典（機関名・調査名）があれば書く
+- after_sentence は、その説明を話している文の番号（0 始まり）
+- 数字・固有名詞は台本にあるものだけ。作らない
+- sections の並びと数は入力と同じにし、heading にブロック名（s0 など）を入れる
+"""
+
+
+def ensure_diagrams(cfg: Config, script: VideoScript, force: bool = False) -> VideoScript:
+    """diagrams が無い（古い）台本に、図解を後付けする."""
+    if not force and any(sec.diagrams for sec in script.sections):
+        return script
+    body = []
+    for i, sec in enumerate(script.sections):
+        sents = split_sentences(strip_tags(sec.narration))
+        body.append(f"## s{i}: {sec.heading}（{sec.beat}）\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
+    user = "次の台本の各セクションに diagrams を作ってください。\n\n" + "\n\n".join(body)
+    data = llm.complete_json(_DIAGRAMS_SYSTEM, user, _DIAGRAMS_SCHEMA,
+                             model=cfg.get("script.model", llm.DEFAULT_MODEL), effort="medium")
+    got = data.get("sections") or []
+    by_name = {str(item.get("heading", "")).strip().split(":")[0]: item for item in got}
+    for i, sec in enumerate(script.sections):
+        item = by_name.get(f"s{i}") or (got[i] if i < len(got) else None)
+        if not item:
+            continue
+        sec.diagrams = [Diagram(type=str(g.get("type", "flow")), title=plain_heading(g.get("title", "") or "")[:20],
+                                items=[plain_heading(str(x))[:40] for x in (g.get("items") or []) if str(x).strip()],
+                                note=(g.get("note") or "")[:40],
+                                after_sentence=int(g.get("after_sentence", 0) or 0))
+                        for g in (item.get("diagrams") or []) if g.get("items")]
+    log.info("図解を後付け: %d 個", sum(len(s.diagrams) for s in script.sections))
+    return script
+
+
 _NOMINAL_TAILS = ("なのだ", "のだ", "のです", "です", "ます", "である", "だ", "のかな", "かな", "だろうか")
 
 
@@ -1096,6 +1205,9 @@ def _sanitize(script: VideoScript) -> None:
             cap.text = plain_heading(cap.text)[:16]
         for card in sec.cards:
             card.text = plain_heading(card.text)[:40]
+        for g in sec.diagrams:
+            g.title = plain_heading(g.title)[:20]
+            g.items = [plain_heading(x)[:40] for x in g.items]
     for cards in script.block_cards.values():
         for card in cards:
             card.text = plain_heading(card.text)[:40]

@@ -161,6 +161,10 @@ class _Painter:
         p = assets.render_reference_card(self.cfg, name, url, note, self._next("ref"))
         return self._bg(Scene(p, start, end, True, "card", f"出典: {name[:10]}"))
 
+    def diagram(self, g, start: float, end: float) -> Scene:
+        p = assets.render_diagram(self.cfg, g.type, g.title, g.items, g.note, self._next(f"dg_{g.type}"))
+        return self._bg(Scene(p, start, end, True, "diagram", f"図解({g.type}): {g.title[:10]}"))
+
     def photo(self, query: str, prompt: str, heading: str, bullets: list[str],
               start: float, end: float) -> Scene:
         """写真系。順に: 実写フッテージ（Artlist など）→ 写真 → AI 画像 → 動く抽象背景.
@@ -320,18 +324,27 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         for j, ch in enumerate(chunks):
             s, e = _span(ch)
             lo_i, hi_i = ch[0].index, ch[-1].index
+            dg = next((g for g in sec.diagrams
+                       if lo_i <= g.after_sentence <= hi_i and id(g) not in used_cards), None)
             hit = next((c for c in sec.cards
                         if lo_i <= c.after_sentence <= hi_i and id(c) not in used_cards), None)
             if j == 0 and pool:
                 scenes.append(pool[0](s, e)); k = 1          # 最初は必ず本体（図表 / 見出し）
+            elif dg is not None:                             # 図解が最優先（言葉だけで説明しない）
+                used_cards.add(id(dg))
+                scenes.append(painter.diagram(dg, s, e))
             elif hit is not None:
                 used_cards.add(id(hit))
                 scenes.append(painter.quote(hit.text, s, e, source=hit.source))
             elif k < len(pool):
                 scenes.append(pool[k](s, e)); k += 1
             else:
+                rest_g = [g for g in sec.diagrams if id(g) not in used_cards]
                 rest = [c for c in sec.cards if id(c) not in used_cards]
-                if rest:
+                if rest_g:
+                    used_cards.add(id(rest_g[0]))
+                    scenes.append(painter.diagram(rest_g[0], s, e))
+                elif rest:
                     used_cards.add(id(rest[0]))
                     scenes.append(painter.quote(rest[0].text, s, e, source=rest[0].source))
                 elif (j % 2) == 0:
