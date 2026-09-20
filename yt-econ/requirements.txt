@@ -13,6 +13,8 @@ imageio-ffmpeg>=0.4.9
 # --- 画像・図表・サムネ ---
 Pillow>=10.3
 matplotlib>=3.8
+# 立ち絵の PSD（ずんだもん立ち絵素材など）を読む
+psd-tools>=1.9
 
 # --- YouTube アップロード ---
 google-api-python-client>=2.130

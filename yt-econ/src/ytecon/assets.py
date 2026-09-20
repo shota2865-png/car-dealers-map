@@ -204,7 +204,8 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
-          max_width: int, _balance_ok: bool = True) -> list[str]:
+          max_width: int, _balance_ok: bool = True, strict: bool = False) -> list[str] | None:
+    """折り返す。strict=True のときは、自然な位置で割れなければ None を返す（fit_text が縮める）."""
     """日本語は単語境界がないので1文字ずつ詰めて折り返す."""
     text = _safe_for_font(font, text)
     lines: list[str] = []
@@ -226,44 +227,19 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
     if current:
         lines.append(current)
     lines = [ln for ln in lines if ln]
-    # 2 行に収まる長さなら、割る位置を総当たりで選ぶ（「価値／が下がる」「逆算す／る」を避ける）
-    if _balance_ok and len(lines) == 2:
-        best = _best_two_line_split(draw, text, font, max_width)
+    # 2〜3 行なら、割る位置を総当たりで選ぶ（「価値／が下がる」「お／よそ」を避ける）
+    if _balance_ok and len(lines) in (2, 3):
+        best = _best_split(draw, text, font, max_width, len(lines))
         if best:
             return best
+        if strict:
+            return None
     return lines
-
-
-_PARTICLE_CHARS = set("がをにはでともへやのか")
-_BREAK_BONUS = set(" 　、。，・／→はがをにでともへのか")
-
-
-def _best_two_line_split(draw, text: str, font, max_width: int) -> list[str] | None:
-    """2 行の割り位置を点数で選ぶ: 幅に収まる／行頭に助詞・句読点を置かない／長さが釣り合う."""
-    n = len(text)
-    best, best_score = None, -1e9
-    for i in range(2, n - 1):
-        a, b = text[:i].rstrip(" 　"), text[i:].lstrip(" 　")
-        if not a or not b:
-            continue
-        if draw.textlength(a, font=font) > max_width or draw.textlength(b, font=font) > max_width:
-            continue
-        if b[0] in _NO_LINE_START or b[0] in _PARTICLE_CHARS:
-            continue
-        score = -abs(len(a) - len(b)) * 2.0
-        prev, nxt = text[i - 1], text[i]
-        # 助詞の直後は切りやすい。ただし次がひらがな（「上が｜らない」）なら語の途中の可能性が高い
-        if prev in _PARTICLE_CHARS and not ("ぁ" <= nxt <= "ん"):
-            score += 5
-        if prev in " 　、。，・／→":
-            score += 9
-        if score > best_score:
-            best, best_score = [a, b], score
-    return best
 
 
 _NO_LINE_START = set("、。，．・：；？！?!」』）〕］｝〉》〟ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶー～")
 _BREAK_AFTER = (" ", "　", "、", "。", "，", "・", "／", "→")
+_PARTICLE_CHARS = set("がをにはでともへやのか")
 
 
 def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_width: int,
@@ -277,8 +253,12 @@ def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_widt
     size = ts(cfg, role)
     while True:
         font = load_font(cfg, size, weight)
-        lines = _wrap(d, text, font, max_width)
-        if len(lines) <= max_lines or size <= min_size:
+        # 自然な位置で割れない（語の途中で切れる）ときも縮めて試す
+        lines = _wrap(d, text, font, max_width, strict=True)
+        if lines is not None and len(lines) <= max_lines:
+            break
+        if size <= min_size:
+            lines = _wrap(d, text, font, max_width)
             break
         size = max(min_size, int(size * 0.92))
     if len(lines) > max_lines:
@@ -287,6 +267,65 @@ def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_widt
             lines[-1] = lines[-1][:-1]
         lines[-1] += "…"
     return font, lines
+
+
+def _cut_score(text: str, i: int) -> float | None:
+    """位置 i で切るときの点数（None = 切ってはいけない）."""
+    b = text[i:].lstrip(" 　")
+    if not b or b[0] in _NO_LINE_START or b[0] in _PARTICLE_CHARS:
+        return None
+    prev, nxt = text[i - 1], b[0]
+    score = 0.0
+    # 助詞の直後は切りやすい。ただし次がひらがな（「上が｜らない」）なら語の途中の可能性が高い
+    if prev in _PARTICLE_CHARS and not ("ぁ" <= nxt <= "ん"):
+        score += 5
+    if prev in " 　、。，・／→":
+        score += 9
+    # ひらがなの途中で切る（「お｜よそ」）のは避ける
+    if ("ぁ" <= prev <= "ん") and ("ぁ" <= nxt <= "ん") and prev not in _PARTICLE_CHARS:
+        score -= 6
+    return score
+
+
+def _best_split(draw, text: str, font, max_width: int, k: int) -> list[str] | None:
+    """k 行（2 or 3）の割り位置を点数で選ぶ: 幅に収まる／行頭に助詞・句読点を置かない／長さが釣り合う."""
+    n = len(text)
+
+    def fits(seg: str) -> bool:
+        return draw.textlength(seg, font=font) <= max_width
+
+    best, best_score = None, -1e9
+    if k == 2:
+        for i in range(2, n - 1):
+            a, b = text[:i].rstrip(" 　"), text[i:].lstrip(" 　")
+            if not a or not b or not fits(a) or not fits(b):
+                continue
+            sc = _cut_score(text, i)
+            if sc is None:
+                continue
+            sc -= abs(len(a) - len(b)) * 2.0
+            if sc > best_score:
+                best, best_score = [a, b], sc
+        return best
+    for i in range(2, n - 3):
+        a = text[:i].rstrip(" 　")
+        if not a or not fits(a):
+            continue
+        sa = _cut_score(text, i)
+        if sa is None:
+            continue
+        for j in range(i + 2, n - 1):
+            b, c = text[i:j].strip(" 　"), text[j:].lstrip(" 　")
+            if not b or not c or not fits(b) or not fits(c):
+                continue
+            sb = _cut_score(text, j)
+            if sb is None:
+                continue
+            avg = n / 3
+            sc = sa + sb - (abs(len(a) - avg) + abs(len(b) - avg) + abs(len(c) - avg)) * 1.5
+            if sc > best_score:
+                best, best_score = [a, b, c], sc
+    return best
 
 
 # ----------------------------------------------------------------------
@@ -702,6 +741,7 @@ def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path
 def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
     """いま読み上げている一文をそのまま大きく出す。「文字で分かりやすく」の主力."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "quote"))
+    sentence = sentence.strip().rstrip("。")
     f, lines = fit_text(cfg, d, sentence, "headline_l", w - 360, 3, min_size=56)
     total = len(lines) * (f.size + 24)
     y = (h - total) // 2

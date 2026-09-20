@@ -31,3 +31,12 @@ venv/
 *.egg-info/
 .pytest_cache/
 yt-econ/colab/ytecon_colab.zip
+
+# 立ち絵（配布素材の再配布はしない。各自で assets/character/ に置く）
+assets/character/*/
+*.psd
+# 動く背景・BGM の素材（Artlist 等。各自で置く）
+assets/footage/**
+!assets/footage/tags.yaml
+assets/bgm/*
+!assets/bgm/.gitkeep

@@ -56,7 +56,20 @@ def character_dir(cfg: Config) -> Path:
 
 
 def find_assets(cfg: Config) -> dict[str, Path] | None:
+    """使う画像を決める。本物の立ち絵（フォルダ形式 / PSD）→ 4 枚の PNG → 無し."""
     d = character_dir(cfg)
+    ymm = find_ymm_dir(cfg)
+    if ymm is not None:
+        try:
+            return compose_ymm(cfg, ymm, cfg.workdir / "character_composed")
+        except Exception as exc:
+            log.warning("立ち絵フォルダ %s を合成できませんでした（仮キャラにします）: %s", ymm, exc)
+    psd = find_psd(cfg)
+    if psd is not None:
+        try:
+            return compose_psd(cfg, psd, cfg.workdir / "character_composed")
+        except Exception as exc:
+            log.warning("立ち絵 PSD %s を合成できませんでした（仮キャラにします）: %s", psd, exc)
     found = {s: d / f"{s}.png" for s in STATES}
     if all(p.exists() for p in found.values()):
         return found
@@ -64,12 +77,6 @@ def find_assets(cfg: Config) -> dict[str, Path] | None:
         # 足りない表情は base で代用する
         base = d / "base.png"
         return {s: (p if p.exists() else base) for s, p in found.items()}
-    ymm = find_ymm_dir(cfg)
-    if ymm is not None:
-        try:
-            return compose_ymm(cfg, ymm, cfg.workdir / "character_composed")
-        except Exception as exc:
-            log.warning("立ち絵フォルダ %s を合成できませんでした（仮キャラにします）: %s", ymm, exc)
     return None
 
 
@@ -148,7 +155,7 @@ def compose_ymm(cfg: Config, src: Path, out_dir: Path) -> dict[str, Path]:
 
     # 更新チェック（部品が変わっていなければ前回の合成を使う）
     stamp = "|".join(f"{p}:{v['base'].stat().st_mtime_ns}" for p, v in layers) + \
-            f"|{parts_cfg}|{flip}"
+            f"|{parts_cfg}|{flip}|{cfg.get('character.crop_bottom', 0)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp_file = out_dir / "stamp.txt"
     result = {s: out_dir / f"{s}.png" for s in STATES}
@@ -177,19 +184,7 @@ def compose_ymm(cfg: Config, src: Path, out_dir: Path) -> dict[str, Path]:
             canvas.alpha_composite(im)
         canvases[state] = canvas
 
-    # 4 枚に共通の余白を落とす（大きな透過キャンバスのままだと重い）
-    bbox = None
-    for c in canvases.values():
-        b = c.getbbox()
-        if b:
-            bbox = b if bbox is None else (min(bbox[0], b[0]), min(bbox[1], b[1]),
-                                           max(bbox[2], b[2]), max(bbox[3], b[3]))
-    for state, c in canvases.items():
-        if bbox:
-            c = c.crop(bbox)
-        if flip:
-            c = c.transpose(Image.FLIP_LEFT_RIGHT)
-        c.save(result[state])
+    _finish(cfg, canvases, result)
     stamp_file.write_text(stamp)
     mouth_frames = next((len(v["frames"]) for p, v in layers if p == "口"), 0)
     eye_frames = next((len(v["frames"]) for p, v in layers if p == "目"), 0)
@@ -372,7 +367,10 @@ def detect_credit(cfg: Config) -> str:
         return explicit
     ymm = find_ymm_dir(cfg)
     if ymm is None:
-        return ""
+        psd = find_psd(cfg)
+        if psd is None:
+            return ""
+        ymm = psd.parent
     text = ""
     for p in list(ymm.glob("*.txt")) + list(ymm.parent.glob("*.txt")):
         try:
@@ -385,3 +383,155 @@ def detect_credit(cfg: Config) -> str:
     if "坂本アヒル" in text or "坂本アヒル" in ymm.name or "坂本アヒル" in ymm.parent.name:
         return "立ち絵：坂本アヒル 様"
     return f"立ち絵：{ymm.name}"
+
+
+def _finish(cfg: Config, canvases: dict, result: dict[str, Path]) -> None:
+    """4 枚に共通の余白を落とし、下を切ってバストアップにし、必要なら反転して保存する."""
+    from PIL import Image
+
+    flip = bool(cfg.get("character.flip", False))
+    crop_bottom = float(cfg.get("character.crop_bottom", 0.0))   # 下から何割を切るか（脚を画面外へ）
+    bbox = None
+    for c in canvases.values():
+        b = c.getbbox()
+        if b:
+            bbox = b if bbox is None else (min(bbox[0], b[0]), min(bbox[1], b[1]),
+                                           max(bbox[2], b[2]), max(bbox[3], b[3]))
+    for st, c in canvases.items():
+        if bbox:
+            c = c.crop(bbox)
+        if 0 < crop_bottom < 0.9:
+            c = c.crop((0, 0, c.width, int(c.height * (1 - crop_bottom))))
+        if flip:
+            c = c.transpose(Image.FLIP_LEFT_RIGHT)
+        c.save(result[st])
+
+
+# ----------------------------------------------------------------------
+# PSD 形式の立ち絵（坂本アヒル様の「ずんだもん立ち絵素材」など、PSDTool 対応のもの）
+# ----------------------------------------------------------------------
+# レイヤー名の約束（PSDTool 流儀）:
+#   グループ名の先頭 "!" = 必ず表示 / 子のうち "*" 付きはラジオボタン（どれか1つを表示）
+#   ここでは「各グループから1枚選ぶ」を基本に、口と目だけ状態ごとに差し替える
+_PSD_DEFAULTS = {
+    "口": "むふ", "黒目": "普通目", "目セット": "普通白目", "眉": "普通眉", "顔色": "ほっぺ",
+    "服装1": "いつもの服", "右腕": "基本", "左腕": "基本", "枝豆": "枝豆通常",
+}
+_PSD_MOUTH = {"base": "むふ", "mouth_half": "ほあ", "mouth_open": "ほあー"}
+_PSD_BLINK = "UU"
+# これらのグループは既定で丸ごと使わない（服装の別バージョン・記号類）
+_PSD_SKIP_GROUPS = ("服装2", "記号など")
+
+
+def find_psd(cfg: Config) -> Path | None:
+    explicit = str(cfg.get("character.psd", "") or "").strip()
+    if explicit:
+        p = Path(explicit)
+        p = p if p.is_absolute() else cfg.root / p
+        return p if p.exists() else None
+    root = character_dir(cfg)
+    if not root.exists():
+        return None
+    found = sorted(root.rglob("*.psd"))
+    return found[0] if found else None
+
+
+def _clean(name: str) -> str:
+    return name.lstrip("*!").strip()
+
+
+def compose_psd(cfg: Config, psd_path: Path, out_dir: Path) -> dict[str, Path]:
+    """PSD のレイヤーを選んで重ね、base / mouth_half / mouth_open / blink の 4 枚を作る."""
+    from PIL import Image
+
+    try:
+        from psd_tools import PSDImage
+    except ImportError as exc:
+        raise RuntimeError("psd-tools が要ります: pip install psd-tools") from exc
+
+    parts_cfg = {str(k): str(v) for k, v in (cfg.get("character.parts", {}) or {}).items()}
+    mouth_cfg = {**_PSD_MOUTH, **{str(k): str(v) for k, v in (cfg.get("character.mouth", {}) or {}).items()}}
+    blink_name = str(cfg.get("character.blink", "") or _PSD_BLINK)
+    skip = tuple(cfg.get("character.skip_groups", []) or _PSD_SKIP_GROUPS)
+    flip = bool(cfg.get("character.flip", False))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = (f"{psd_path}:{psd_path.stat().st_mtime_ns}|{parts_cfg}|{mouth_cfg}|{blink_name}|{skip}|{flip}"
+             f"|{cfg.get('character.crop_bottom', 0)}")
+    stamp_file = out_dir / "stamp.txt"
+    result = {s: out_dir / f"{s}.png" for s in STATES}
+    if stamp_file.exists() and stamp_file.read_text() == stamp and all(p.exists() for p in result.values()):
+        return result
+
+    psd = PSDImage.open(str(psd_path))
+    size = psd.size
+    used: list[str] = []
+
+    def pick_child_from(kids, wanted: str | None):
+        """候補から1つ選ぶ。config/既定の名前 → 表示中のもの → 最後の候補."""
+        if wanted:
+            for k in kids:
+                if _clean(k.name) == wanted:
+                    return k
+        vis = [k for k in kids if k.visible and _clean(k.name) != "(非表示)"]
+        return vis[-1] if vis else (kids[-1] if kids else None)
+
+    def pick_child(group, wanted: str | None):
+        return pick_child_from(list(group), wanted)
+
+    def choices_for(state: str) -> dict[str, str]:
+        ch = {**_PSD_DEFAULTS, **parts_cfg}
+        if "目" in ch:                       # 「目: 普通目2」のように書かれたら黒目の選択とみなす
+            ch.setdefault("黒目", ch["目"])
+            ch["黒目"] = ch["目"]
+        ch["口"] = mouth_cfg.get(state, mouth_cfg["base"])
+        if state == "blink":
+            ch["目"] = blink_name
+        return ch
+
+    def render(state: str) -> Image.Image:
+        canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+        ch = choices_for(state)
+
+        def paint(layer) -> None:
+            if layer.is_group():
+                name = _clean(layer.name)
+                if name in skip:
+                    return
+                if name == "目" and state == "blink":
+                    # まばたきは「目」グループ直下の閉じ目レイヤー1枚に差し替える
+                    k = pick_child(layer, ch["目"])
+                    if k is not None and not k.is_group():
+                        paint(k)
+                        return
+                kids = list(layer)
+                radio = [k for k in kids if k.name.startswith("*")]
+                always = [k for k in kids if k.name.startswith("!")]
+                plain = [k for k in kids if not k.name.startswith(("*", "!"))]
+                # "!" 付きは必ず描く。"*" 付きはラジオボタン（1つだけ）。無印は表示中のものだけ
+                chosen = pick_child_from(radio, ch.get(name)) if radio else None
+                for k in kids:                       # 重ね順は元の並びを保つ
+                    if k in always or k is chosen or (k in plain and k.visible):
+                        paint(k)
+                return
+            if _clean(layer.name) == "(非表示)":
+                return
+            im = layer.topil()
+            if im is None:
+                return
+            if im.mode != "RGBA":
+                im = im.convert("RGBA")
+            canvas.alpha_composite(im, (max(layer.left, 0), max(layer.top, 0)))
+            if state == "base":
+                used.append(_clean(layer.name))
+
+        for top in psd:
+            if top.is_group() or top.visible:
+                paint(top)
+        return canvas
+
+    canvases = {st: render(st) for st in STATES}
+    _finish(cfg, canvases, result)
+    stamp_file.write_text(stamp)
+    log.info("立ち絵(PSD)を合成しました: %s（使ったレイヤー: %s）", psd_path.name, " / ".join(used))
+    return result

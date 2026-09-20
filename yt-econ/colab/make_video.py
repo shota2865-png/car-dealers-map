@@ -66,7 +66,7 @@ print("   展開しました")
 # ------------------------------------------------------------
 print("② 部品を入れます（2〜3分）")
 sh([sys.executable, "-m", "pip", "install", "-q",
-    "pyyaml", "pillow", "matplotlib", "requests", "anthropic", "gtts"])
+    "pyyaml", "pillow", "matplotlib", "requests", "anthropic", "gtts", "psd-tools"])
 
 # ------------------------------------------------------------
 if USE_VOICEVOX:

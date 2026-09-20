@@ -26,7 +26,7 @@ if [ ! -x .venv/bin/python ]; then
   python3 -m venv .venv || { echo "仮想環境を作れませんでした"; read -r -p "Enter で閉じる"; exit 1; }
   .venv/bin/python -m pip install -q --upgrade pip
 fi
-.venv/bin/python -m pip install -q pyyaml pillow matplotlib requests gtts imageio-ffmpeg \
+.venv/bin/python -m pip install -q pyyaml pillow matplotlib requests gtts imageio-ffmpeg psd-tools \
   || { echo "部品を入れられませんでした（ネット接続を確認）"; read -r -p "Enter で閉じる"; exit 1; }
 
 .venv/bin/python make_video.py "$@"
