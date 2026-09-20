@@ -125,8 +125,8 @@ def phrase_split(text: str, max_chars: int) -> list[str]:
     for pc in pieces:
         if merged and (len(pc.rstrip("、，")) <= 5 or len(merged[-1].rstrip("、，")) <= 5):
             joined = merged[-1] + pc
-            # 読点は幅が狭いので、含むときは 2 字までのはみ出しを許す
-            slack = 2 if "、" in joined or "，" in joined else 1
+            # 読点は幅が狭いので含むときは 2 字、3 字以下の断片（呼ぶ／いる）を孤立させるくらいなら 2 字までのはみ出しを許す
+            slack = 2 if ("、" in joined or "，" in joined or len(pc.rstrip("、，")) <= 3) else 1
             if len(joined) <= max_chars + slack:
                 merged[-1] = joined
                 continue
