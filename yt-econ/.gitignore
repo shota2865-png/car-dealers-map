@@ -40,3 +40,8 @@ assets/footage/**
 !assets/footage/tags.yaml
 assets/bgm/*
 !assets/bgm/.gitkeep
+
+# 素材の実体（Artlist / Mixkit から各自で集める）
+assets/footage/*/
+assets/sfx/*
+!assets/sfx/.gitkeep

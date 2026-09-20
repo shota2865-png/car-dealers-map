@@ -50,7 +50,22 @@ else:
         print("   見つかりませんでした → 代替の声で続けます")
         print("   （ずんだもんにしたいときは VOICEVOX アプリを先に開いてから、もう一度実行）")
 
-print("② 動画を作ります")
+print("② 素材を確認します")
+_foot = HERE / "assets" / "footage"
+_n_videos = sum(1 for p in _foot.rglob("*") if p.suffix.lower() in (".mp4", ".mov", ".webm")) if _foot.exists() else 0
+_n_bgm = sum(1 for p in (HERE / "assets" / "bgm").glob("*") if p.suffix.lower() in (".mp3", ".wav", ".m4a")) if (HERE / "assets" / "bgm").exists() else 0
+if _n_videos < 5 or _n_bgm < 1:
+    print("   動く背景や曲が足りないので、ログイン不要のフリー素材（Mixkit）を集めます（初回のみ 3〜5 分）…")
+    try:
+        from ytecon import freeassets
+        from ytecon.config import load_config as _lc
+        print("  ", freeassets.fetch_all(_lc(), per_query=1))
+    except Exception as exc:
+        print("   集められませんでした（無くても動きます）:", exc)
+else:
+    print(f"   動画 {_n_videos} 本 / 曲 {_n_bgm} 曲")
+
+print("③ 動画を作ります")
 from ytecon.config import load_config                    # noqa: E402
 from ytecon.script import VideoScript                    # noqa: E402
 from ytecon import character, render, scenes, subtitles, thumbnail, tts   # noqa: E402

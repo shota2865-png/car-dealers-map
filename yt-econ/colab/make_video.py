@@ -191,6 +191,28 @@ else:
     print("③ VOICEVOX は使いません（代替の音声で進めます）")
 
 # ------------------------------------------------------------
+print("③b 動く背景・曲・効果音を用意します（ログイン不要のフリー素材）")
+import shutil as _sh
+_assets_cache = (CACHE / "assets") if CACHE else None
+if _assets_cache and (_assets_cache / "footage").exists():
+    print("   Drive に保存済みの素材を使います")
+    for sub in ("footage", "bgm", "sfx"):
+        if (_assets_cache / sub).exists():
+            _sh.copytree(_assets_cache / sub, WORK / "assets" / sub, dirs_exist_ok=True)
+else:
+    try:
+        from ytecon import freeassets
+        from ytecon.config import load_config as _lc
+        print("   初回なので集めます（3〜5 分）…", freeassets.fetch_all(_lc(), per_query=1))
+        if _assets_cache:
+            for sub in ("footage", "bgm", "sfx"):
+                if (WORK / "assets" / sub).exists():
+                    _sh.copytree(WORK / "assets" / sub, _assets_cache / sub, dirs_exist_ok=True)
+            print("   Drive に保存しました（次回から速い）")
+    except Exception as exc:
+        print("   集められませんでした（無くても動きます）:", exc)
+
+# ------------------------------------------------------------
 print("④ 動画を作ります")
 from ytecon.config import load_config                    # noqa: E402
 from ytecon.script import VideoScript                    # noqa: E402

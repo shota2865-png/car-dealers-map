@@ -10,8 +10,14 @@ if [ ! -x .venv/bin/python ]; then
 fi
 .venv/bin/python -m pip install -q playwright pyyaml && .venv/bin/python -m playwright install chromium
 echo
-echo "Artlist を開きます。初回はログインしてください。"
-.venv/bin/python artlist_fetch.py "$@"
+echo "まずログイン不要のフリー素材（Mixkit: 動画・曲・効果音）を集めます…"
+PYTHONPATH=src .venv/bin/python -m ytecon.freeassets --videos 1
+echo
+read -r -p "Artlist からも集めますか？（Artlist のログインが要ります） [y/N] " yn
+if [ "$yn" = "y" ] || [ "$yn" = "Y" ]; then
+  echo "Artlist を開きます。初回はログインしてください。"
+  .venv/bin/python artlist_fetch.py "$@"
+fi
 echo
 echo "ダウンロードフォルダの素材を振り分けます…"
 .venv/bin/python import_assets.py
