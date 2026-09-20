@@ -209,14 +209,10 @@ def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
     else:
         pool.append(lambda s, e: painter.bullets(sec.heading, sec.on_screen, s, e))
 
-    # 2. テロップ由来（体言止めカードは plan_and_render 側で「話している文」に合わせて差す）
+    # 2. テロップ由来。「タイトルだけ」のカードはほぼ要らないので、数字（DATA）だけ残す
     for cap in sec.captions:
-        if cap.type == "KEYWORD":
-            pool.append(lambda s, e, c=cap: painter.keyword(c.text, sec.heading, s, e))
-        elif cap.type == "DATA":
+        if cap.type == "DATA":
             pool.append(lambda s, e, c=cap: painter.number(c.text, sec.heading, "", s, e))
-        elif cap.type in ("EMPHASIS", "PUNCHLINE"):
-            pool.append(lambda s, e, c=cap: painter.quote(c.text, s, e))
 
     # 3. 写真を1枚は挟む（本体が写真でなければ）
     if kind != "stock":
@@ -271,11 +267,22 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             return inside[0]
         return min(cards, key=lambda c: min(abs(c.after_sentence - lo_i), abs(c.after_sentence - hi_i)))
 
+    used_block: set[int] = set()
+
     def block_card(block: str, j: int, ch: list[Line]):
-        """導入・締めの枠に出すカード。話している文に合う block_cards → 無ければ体言止めに寄せた一文."""
+        """導入・締めの枠。話している文に合う図解 → 文字カード → 体言止めに寄せた一文."""
+        lo_i, hi_i = ch[0].index, ch[-1].index
+        for g in script.block_diagrams.get(block) or []:
+            if lo_i <= g.after_sentence <= hi_i and id(g) not in used_block:
+                used_block.add(id(g))
+                return painter.diagram(g, *_span(ch))
         c = pick_card(script.block_cards.get(block) or [], ch)
         if c is not None:
             return painter.quote(c.text, _span(ch)[0], _span(ch)[1], source=c.source)
+        rest = [g for g in script.block_diagrams.get(block) or [] if id(g) not in used_block]
+        if rest:
+            used_block.add(id(rest[0]))
+            return painter.diagram(rest[0], *_span(ch))
         return painter.quote(nominalize(_key_sentence(ch)), *_span(ch))
 
     # --- hook: タイトル → キーワード → カード ---

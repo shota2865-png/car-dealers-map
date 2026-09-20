@@ -120,8 +120,8 @@ def library(cfg: Config) -> list[Clip]:
 
 
 def pick(clips: list[Clip], words: str | set[str], kind: str | None, used: Counter,
-         seed: int = 0, min_seconds: float = 3.0) -> Clip | None:
-    """語の重なりが多く、まだ使っていない素材を選ぶ."""
+         seed: int = 0, min_seconds: float = 3.0, reuse_penalty: float = 1.5) -> Clip | None:
+    """語の重なりが多く、まだ使っていない素材を選ぶ（reuse_penalty が大きいほど使い回しを嫌う）."""
     want = _tokens(words) if isinstance(words, str) else set(words)
     cands = [c for c in clips if (kind is None or c.kind == kind) and c.duration >= min_seconds]
     if not cands:
@@ -129,7 +129,7 @@ def pick(clips: list[Clip], words: str | set[str], kind: str | None, used: Count
     rnd = random.Random(seed)
     best, best_score = None, -1e9
     for c in cands:
-        score = 3.0 * len(want & c.tags) - 1.5 * used[c.name] + rnd.random()
+        score = 3.0 * len(want & c.tags) - reuse_penalty * used[c.name] + rnd.random() * 2.0
         if score > best_score:
             best, best_score = c, score
     return best
@@ -288,6 +288,7 @@ class Picker:
         self.cfg = cfg
         self.enabled = bool(cfg.get("visuals.motion_backgrounds", True))
         self.used: Counter = Counter()
+        self.last = ""
         self.lib = library(cfg) if self.enabled else []
         self.loops = generated_loops(cfg) if self.enabled else []
         self.n = 0
@@ -297,17 +298,19 @@ class Picker:
                      len(self.loops))
 
     def abstract(self, words: str = "", seed: int = 0) -> Path | None:
-        """カードの後ろに敷く抽象背景。素材 → 合成ループ の順。連続で同じものを避ける."""
+        """カードの後ろに敷く背景。実写も抽象も全部候補にし、場面の語に合うもの・まだ使っていない
+        ものを優先する（ぼかして敷くので実写でも文字の邪魔にならない）。合成ループは最後の手段."""
         if not self.enabled:
             return None
         self.n += 1
-        pool = [c for c in self.lib if c.kind in ("abstract", "texture")] or self.loops
+        pool = list(self.lib) or self.loops
         if not pool:
             return None
-        clip = pick(pool, words, None, self.used, seed=seed + self.n)
+        clip = pick(pool, words, None, self.used, seed=seed + self.n, reuse_penalty=4.0)
         if clip is None:
             return None
         self.used[clip.name] += 1
+        self.last = clip.name
         return clip.path
 
     def broll(self, words: str, seed: int = 0) -> Path | None:

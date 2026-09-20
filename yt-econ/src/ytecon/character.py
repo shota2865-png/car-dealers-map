@@ -441,11 +441,19 @@ def _finish(cfg: Config, canvases: dict, result: dict[str, Path]) -> None:
         if b:
             bbox = b if bbox is None else (min(bbox[0], b[0]), min(bbox[1], b[1]),
                                            max(bbox[2], b[2]), max(bbox[3], b[3]))
+    fade = int(cfg.get("character.bottom_fade_px", 70))
     for st, c in canvases.items():
         if bbox:
             c = c.crop(bbox)
         if 0 < crop_bottom < 0.9:
             c = c.crop((0, 0, c.width, int(c.height * (1 - crop_bottom))))
+            if fade > 0:
+                # 切り口を透明に溶かす（宙に浮いて見えない）
+                a = c.getchannel("A").load()
+                for y in range(max(c.height - fade, 0), c.height):
+                    k = (c.height - y) / fade
+                    for x in range(c.width):
+                        a[x, y] = int(a[x, y] * k)
         if flip:
             c = c.transpose(Image.FLIP_LEFT_RIGHT)
         c.save(result[st])
@@ -523,7 +531,7 @@ def compose_psd(cfg: Config, psd_path: Path, out_dir: Path, expression: str = "�
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = (f"{psd_path}:{psd_path.stat().st_mtime_ns}|{parts_cfg}|{mouth_cfg}|{blink_name}|{skip}|{flip}"
-             f"|{cfg.get('character.crop_bottom', 0)}|{expression}")
+             f"|{cfg.get('character.crop_bottom', 0)}|{cfg.get('character.bottom_fade_px', 70)}|{expression}")
     stamp_file = out_dir / f"stamp_{expression}.txt"
     result = {s: out_dir / (f"{s}.png" if expression == "通常" else f"{expression}_{s}.png") for s in STATES}
     if stamp_file.exists() and stamp_file.read_text() == stamp and all(p.exists() for p in result.values()):

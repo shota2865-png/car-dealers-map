@@ -61,7 +61,7 @@ _PUNCT = "、。，！？!?…"
 # 切った直後にこれが来る位置では切らない（「と｜いう」「し｜て」のような不自然な割れを防ぐ）
 _NO_CUT_BEFORE = ("いう", "いえ", "して", "した", "なる", "なっ", "いる", "いた", "ある", "あっ",
                   "おく", "みる", "くる", "しまう", "ください", "ほしい", "のだ", "なのだ",
-                  "です", "ます", "だっ", "だ", "か", "ね", "よ")
+                  "ない", "なく", "なかっ", "ません", "です", "ます", "だっ", "だ", "か", "ね", "よ")
 # 節の終わりになりやすい助詞（ここで切ると自然）
 _CLAUSE_END = ("ので", "けど", "けれど", "から", "たら", "ながら", "ように", "て", "と", "ば")
 
@@ -97,8 +97,10 @@ def _best_cut(seg: str, max_chars: int) -> int:
             best_i, best_score = i, score
     if best_i > 0:
         return best_i
+    # 自然な切れ目が無いときも、助詞・否定・禁則文字を行頭に置かない位置まで左へ寄せる
     i = min(max_chars, len(seg) - 1)
-    while i > 1 and seg[i] in _NO_LINE_START:
+    while i > 3 and (seg[i] in _NO_LINE_START or seg[i] in _PARTICLE_HEADS
+                     or seg[i:].startswith(_NO_CUT_BEFORE)):
         i -= 1
     return i
 
@@ -150,9 +152,9 @@ def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
 
     w, _h = cfg.get("video.resolution", [1920, 1080])
     size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "subtitle", 64))
-    margin_r = max(120, int(reserve_right))
+    margin_r = 120 if cfg.get("visuals.subtitle.full_width", True) else max(120, int(reserve_right))
     usable = w - margin_r * 2          # 左右対称の余白（中央揃え）
-    by_width = max(8, int(usable / (size * 1.02)))
+    by_width = max(7, int(usable / (size * 1.0)))
     limit = int(cfg.get("visuals.subtitle.max_chars_per_line", 20))
     return min(by_width, limit)
 
@@ -297,13 +299,13 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
     from . import design
     # 字幕の大きさは本文トークン（body_l）が既定。config で明示したらそちら
     base_size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "subtitle", 64))
-    outline = int(cfg.get("visuals.subtitle.outline", 0) or design.stroke(cfg, "text_outline"))
+    outline = int(cfg.get("visuals.subtitle.outline", 0) or max(design.stroke(cfg, "text_outline"), base_size // 14))
     w, h = cfg.get("video.resolution", [1920, 1080])
     family = font_family(cfg)
     stroke = "#0B1120"
 
-    # 右下にキャラクターがいるぶん右を空けるが、左も同じだけ空けて字幕は画面中央に置く
-    margin_r = max(120, int(reserve_right))
+    # 字幕は画面中央。キャラが字幕帯の上にいる（full_width）なら左右 120px だけ空ける
+    margin_r = 120 if cfg.get("visuals.subtitle.full_width", True) else max(120, int(reserve_right))
     styles = [
         # 字幕。画面下（alignment 2 = 下中央）
         _style_line("Default", family, base_size, colors["text"], stroke,

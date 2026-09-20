@@ -139,6 +139,7 @@ class VideoScript:
     terms: list[Term] = field(default_factory=list)
     research: dict[str, Any] = field(default_factory=dict)   # 台本前の「リサーチの木」
     block_cards: dict[str, list[Card]] = field(default_factory=dict)  # hook/proof/promise/closing の文字カード
+    block_diagrams: dict[str, list[Diagram]] = field(default_factory=dict)  # 同じく図解
 
     @property
     def narration_blocks(self) -> list[tuple[str, str]]:
@@ -234,6 +235,13 @@ class VideoScript:
                          after_sentence=int(c.get("after_sentence", 0) or 0))
                     for c in (v or []) if c.get("text")]
                 for k, v in (d.get("block_cards") or {}).items()
+            },
+            block_diagrams={
+                k: [Diagram(type=str(g.get("type", "flow")), title=g.get("title", "") or "",
+                            items=[str(x) for x in (g.get("items") or []) if str(x).strip()],
+                            note=g.get("note", "") or "", after_sentence=int(g.get("after_sentence", 0) or 0))
+                    for g in (v or []) if g.get("items")]
+                for k, v in (d.get("block_diagrams") or {}).items()
             },
         )
 
@@ -521,7 +529,9 @@ open_loops には「question」と「payoff_section（何番目のセクショ�
 # 図解（diagrams）を出す — 言葉だけで説明しない（最重要）
 
 視聴者は「タイトルだけ出て言葉で説明される」と分からなくなる。**仕組み・順番・比較・
-差し引きは必ず図にする。** 各セクションに 1〜3 個、MECHANISM_REVEAL と ACADEMIC_LENS には必ず 1 個以上。
+差し引きは必ず図にする。** 各セクションに **3〜5 個**（画面は 8 秒ごとに変わるので、その半分以上を図解に）。
+**調査結果・統計は積極的に引用し、必ず note に引用元（機関名・調査名・年）を書く。**
+「〇〇の調査では△△が□□%」のような文には table か balance を必ず 1 つ付ける。
 type と items の書き方:
 
 | type | 使う場面 | items の例 |
@@ -532,9 +542,10 @@ type と items の書き方:
 | steps | 手順・見分け方・条件 | ["額面と手取りを分ける", "物価の伸びを引く", "100gあたりで比べる"]（2〜4 行、各 16 字以内） |
 | table | 数字の一覧 | ["2022年\|2.1%", "2023年\|3.6%", "2024年\|5.1%"]（項目\|値 を 2〜5 行） |
 
-- title は 16 字以内の体言止め。note に出典（機関名・調査名）
+- title は 16 字以内の体言止め。note に出典（機関名・調査名・年）。出典が無い図も「概念図」と分かるようにする
 - after_sentence は、その説明を話している文の番号（0 始まり）
 - 図の中の数字は台本にあるものだけ。作らない
+- 文字だけのカード（cards）は図にできないものに限る。図にできるなら diagrams にする
 
 # 画面の文字は「文章」ではなく「体言止め」で書く（最重要の見た目の規則）
 
@@ -1094,7 +1105,9 @@ def ensure_cards(cfg: Config, script: VideoScript, force: bool = False) -> Video
 
 _DIAGRAMS_SYSTEM = """あなたは日本語の解説動画の図解担当です。台本の各セクションの本文を読み、
 言葉だけで説明している「仕組み・順番・比較・差し引き・手順・数字の一覧」を図解(diagrams)にします。
-各セクションに 1〜3 個。仕組みの説明（因果の鎖）があるセクションには必ず flow を 1 つ。
+各セクションに **3〜5 個**（できるだけ多く。画面は 8 秒ごとに変わる）。仕組みの説明（因果の鎖）があれば flow、
+**調査結果・統計・数字がある文には必ず table か balance** を付け、note に引用元（機関名・調査名・年）を書く。
+概念の対比は compare、条件・手順は steps。
 
 type と items の書き方:
 - flow    : 因果・順番。items は 2〜4 個の短い語（各 10 字以内）。例 ["輸入コスト上昇", "企業間の取引価格", "店頭の値札"]
@@ -1115,25 +1128,44 @@ def ensure_diagrams(cfg: Config, script: VideoScript, force: bool = False) -> Vi
     """diagrams が無い（古い）台本に、図解を後付けする."""
     if not force and any(sec.diagrams for sec in script.sections):
         return script
+    blocks = [("hook", "導入・つかみ", script.hook), ("proof", "導入・裏づけ", script.proof),
+              ("promise", "導入・約束", script.promise), ("closing", "締め", script.closing)]
     body = []
+    keys: list[str] = []
+    for key, name, text in blocks:
+        sents = split_sentences(strip_tags(text))
+        if sents:
+            body.append(f"## {key}: {name}\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
+            keys.append(key)
     for i, sec in enumerate(script.sections):
         sents = split_sentences(strip_tags(sec.narration))
         body.append(f"## s{i}: {sec.heading}（{sec.beat}）\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
-    user = "次の台本の各セクションに diagrams を作ってください。\n\n" + "\n\n".join(body)
+        keys.append(f"s{i}")
+    user = ("次の台本の各ブロック（hook / proof / promise / s0.. / closing）に diagrams を作ってください。"
+            "sections の並びと数は入力と同じにし、heading にブロック名（hook, s0 など）を入れてください。\n\n"
+            + "\n\n".join(body))
     data = llm.complete_json(_DIAGRAMS_SYSTEM, user, _DIAGRAMS_SCHEMA,
                              model=cfg.get("script.model", llm.DEFAULT_MODEL), effort="medium")
     got = data.get("sections") or []
     by_name = {str(item.get("heading", "")).strip().split(":")[0]: item for item in got}
-    for i, sec in enumerate(script.sections):
-        item = by_name.get(f"s{i}") or (got[i] if i < len(got) else None)
+
+    def to_diagrams(items):
+        return [Diagram(type=str(g.get("type", "flow")), title=plain_heading(g.get("title", "") or "")[:20],
+                        items=[plain_heading(str(x))[:40] for x in (g.get("items") or []) if str(x).strip()],
+                        note=(g.get("note") or "")[:48],
+                        after_sentence=int(g.get("after_sentence", 0) or 0))
+                for g in (items or []) if g.get("items")]
+
+    for pos, key in enumerate(keys):
+        item = by_name.get(key) or (got[pos] if pos < len(got) else None)
         if not item:
             continue
-        sec.diagrams = [Diagram(type=str(g.get("type", "flow")), title=plain_heading(g.get("title", "") or "")[:20],
-                                items=[plain_heading(str(x))[:40] for x in (g.get("items") or []) if str(x).strip()],
-                                note=(g.get("note") or "")[:40],
-                                after_sentence=int(g.get("after_sentence", 0) or 0))
-                        for g in (item.get("diagrams") or []) if g.get("items")]
-    log.info("図解を後付け: %d 個", sum(len(s.diagrams) for s in script.sections))
+        if key.startswith("s") and key[1:].isdigit():
+            script.sections[int(key[1:])].diagrams = to_diagrams(item.get("diagrams"))
+        else:
+            script.block_diagrams[key] = to_diagrams(item.get("diagrams"))
+    log.info("図解を後付け: 本編 %d 個 / 導入・締め %d 個",
+             sum(len(s.diagrams) for s in script.sections), sum(len(v) for v in script.block_diagrams.values()))
     return script
 
 
