@@ -191,8 +191,9 @@ visuals:
     font_size: 0
     max_chars_per_line: 20
     outline: 0
-    # 字幕を画面の全幅で中央に出す（キャラは字幕帯の上にいるので重ならない）
-    full_width: true
+    # 字幕は画面中央。キャラの幅ぶん左右を空け、その幅に入らない長い行だけ字を縮める
+    full_width: false
+    min_font_size: 84
 
 # 画面右下の解説キャラクター（ずんだもんなど）。
 # assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を
@@ -221,13 +222,13 @@ character:
   # 概要欄に自動で入れるクレジット。配布元の規約に従って書く
   #   例) "立ち絵：坂本アヒル 様（https://seiga.nicovideo.jp/seiga/im10788496）"
   credit: ""
-  # 画面の高さに対する大きさ（0.38 = 画面の38%の高さ）。字幕を大きくしたぶん少し控えめ
-  height_ratio: 0.38
+  # 画面の高さに対する大きさ（0.40 = 画面の40%の高さ）。胸から上が右下に接地する
+  height_ratio: 0.40
   # 全身の立ち絵は下を切ってバストアップにする（0.45 = 下から45%を画面外へ）
   crop_bottom: 0.45
-  # 右端・下端からの余白（px）。字幕を全幅で大きく出すため、キャラは字幕帯（下 200px）の上に置く
+  # 右端・下端からの余白（px）。下端 0 で胸から上が画面の底に接地する
   margin_right: 24
-  margin_bottom: 200
+  margin_bottom: 0
   # 口を開ける音量の閾値（0〜1。小さいほどよく動く）
   mouth_half_threshold: 0.08
   mouth_open_threshold: 0.22
@@ -244,11 +245,12 @@ render:
     enabled: true
     # assets/bgm/ に置いた曲（Artlist など）を使う。合成音は使わない。
     # 曲が1つも無ければ BGM なしで作る。入手と置き方は docs/Artlistの使い方.md
-    # 1曲を全編に使うならファイル名をここに書く（空なら気分ごとの切り替え）
-    file: ""
+    # 1曲を全編に使うならファイル名をここに書く（空なら気分ごとの切り替え）。
+    # 動画の長さに合わせて切り、最後は 3 秒でフェードアウトする
+    file: "Yair Cohen - Rise Within.mp3"
     # 声に対する BGM の大きさ（BGM を一定の音量に揃えたあとの相対値）。
-    # -6dB ≒ 声の間で声より10dBほど小さい（体感で3割ほど）。目立つなら -10、寂しいなら -3
-    volume_db: -6
+    # -10dB ≒ 声の間で声より14dBほど小さい（以前の -6dB の約6割の音量）。目立つなら -13、寂しいなら -7
+    volume_db: -10
     # 声が乗っている間は BGM をさらに下げる（ダッキング）
     ducking: true
     # ブロックごとに気分を切り替える（導入=ambient / 探究=curiosity / 意外な事実=tension /

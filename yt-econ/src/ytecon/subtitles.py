@@ -152,7 +152,8 @@ def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
 
     w, _h = cfg.get("video.resolution", [1920, 1080])
     size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "subtitle", 64))
-    margin_r = 120 if cfg.get("visuals.subtitle.full_width", True) else max(120, int(reserve_right))
+    size = min(size, int(cfg.get("visuals.subtitle.min_font_size", size) or size))   # 長い行は縮めてよい
+    margin_r = 120 if cfg.get("visuals.subtitle.full_width", False) else max(120, int(reserve_right))
     usable = w - margin_r * 2          # 左右対称の余白（中央揃え）
     by_width = max(7, int(usable / (size * 1.0)))
     limit = int(cfg.get("visuals.subtitle.max_chars_per_line", 20))
@@ -305,7 +306,7 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
     stroke = "#0B1120"
 
     # 字幕は画面中央。キャラが字幕帯の上にいる（full_width）なら左右 120px だけ空ける
-    margin_r = 120 if cfg.get("visuals.subtitle.full_width", True) else max(120, int(reserve_right))
+    margin_r = 120 if cfg.get("visuals.subtitle.full_width", False) else max(120, int(reserve_right))
     styles = [
         # 字幕。画面下（alignment 2 = 下中央）
         _style_line("Default", family, base_size, colors["text"], stroke,
@@ -341,10 +342,21 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
+    usable = w - margin_r * 2
+    min_fs = int(cfg.get("visuals.subtitle.min_font_size", base_size) or base_size)
+
+    def fit_tag(text: str) -> str:
+        """キャラを避けた幅に入らない長い行だけ、字を縮める ASS タグを付ける."""
+        need = len(text.replace("、", "").replace("，", "")) * base_size
+        if need <= usable:
+            return ""
+        fs = max(min_fs, int(usable / max(len(text), 1)))
+        return f"{{\\fs{fs}}}"
+
     events = [
         "Dialogue: 0,{},{},{},,0,0,0,,{}".format(
             _ass_time(c.start), _ass_time(c.end), c.style,
-            r"\N".join(safe_text(cfg, ln) for ln in c.lines)
+            r"\N".join(fit_tag(ln) + safe_text(cfg, ln) for ln in c.lines)
         )
         for c in cues
     ]

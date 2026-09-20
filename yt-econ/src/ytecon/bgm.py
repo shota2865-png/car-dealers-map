@@ -300,6 +300,8 @@ def resolve(cfg: Config, script=None, track=None, outdir: Path | None = None) ->
         log.warning("assets/bgm に曲が無いので BGM なしで作ります（Artlist などの曲を置いてください。"
                     "docs/Artlistの使い方.md）")
         return None
+    if len(files) == 1:
+        return files[0]                     # 1 曲しか無ければ切り替えはしない（頭出しを繰り返さない）
     if script is not None and track is not None and outdir is not None \
             and cfg.get("render.bgm.mood_timeline", True):
         try:

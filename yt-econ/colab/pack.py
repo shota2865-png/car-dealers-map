@@ -38,10 +38,8 @@ def build(script_json: Path, out: Path | None = None, mac: bool = False) -> Path
         # 右下のキャラクター（置いてあれば本物、無ければ仮キャラ）
         for png in (ROOT / "assets" / "character").glob("*.png"):
             z.write(png, f"{prefix}assets/character/{png.name}")
-        # BGM（置いてあれば。無ければ実行時に合成音を作る）
-        for ext in ("*.mp3", "*.wav", "*.m4a", "*.ogg"):
-            for m in (ROOT / "assets" / "bgm").glob(ext):
-                z.write(m, f"{prefix}assets/bgm/{m.name}")
+        # 曲・効果音・動画の素材は zip に入れない（配布できない素材が混ざるため）。
+        # Mac / Colab 側で自動収集するか、素材をそろえる.command で取り込む
         z.write(script_json, f"{prefix}script.json")
 
     return out

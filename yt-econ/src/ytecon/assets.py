@@ -949,7 +949,7 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
 # 図解（flow / compare / steps / balance / table）
 # 「タイトルだけ出て言葉で説明される」を無くすための絵。すりガラスの面に描く
 # ----------------------------------------------------------------------
-SUB_BAND = 270   # 画面下の字幕帯の高さ（ここには図解の中身も出典も置かない。字幕 120px + 余白）
+SUB_BAND = 230   # 画面下の字幕帯の高さ（ここには図解の中身も出典も置かない。字幕 120px + 余白）
 
 
 def _diagram_base(cfg: Config, title: str, note: str):
