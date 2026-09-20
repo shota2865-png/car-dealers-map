@@ -760,6 +760,8 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
         script = fact_check(cfg, script)
 
     script = fit_length(cfg, script)
+    script.research = research            # 校閲・尺調整で作り直されても残す
+    _assign_beats(cfg, script)
     _sanitize(script)
     _check_style(cfg, script)
     log.info("台本生成完了: %s (%d文字)", script.topic_title, script.total_chars)

@@ -127,9 +127,21 @@ def test_aggregate_uses_median_not_mean():
 
 
 # ----------------------------------------------------------------------
+def _isolated_cfg(tmp_path):
+    """本物の config/style.yaml に影響されないよう、設定ディレクトリを複製した Config を作る."""
+    import copy, shutil
+    cfg = copy.deepcopy(load_config())
+    (tmp_path / "config").mkdir()
+    for p in (cfg.root / "config").glob("*"):
+        if p.name != "style.yaml":
+            shutil.copy(p, tmp_path / "config" / p.name)
+    cfg.root = tmp_path
+    return cfg
+
+
 def test_measured_speed_overrides_the_guessed_config(tmp_path, monkeypatch):
     """learn 後は、当て推量の chars_per_minute ではなく実測値で尺を決める."""
-    cfg = load_config()
+    cfg = _isolated_cfg(tmp_path)
     cpm = cfg.get("video.chars_per_minute")
     lo_min = cfg.get("video.target_minutes_min")
     hi_min = cfg.get("video.target_minutes_max")
@@ -148,8 +160,8 @@ def test_measured_speed_overrides_the_guessed_config(tmp_path, monkeypatch):
         style_path.unlink()
 
 
-def test_no_style_file_is_fine():
-    cfg = load_config()
+def test_no_style_file_is_fine(tmp_path):
+    cfg = _isolated_cfg(tmp_path)
     assert load_style(cfg) is None
     assert target_chars(cfg) == cfg.target_chars
 

@@ -82,12 +82,17 @@ if USE_VOICEVOX:
             print("     ", (r.stderr or "").strip().splitlines()[-1][:200])
 
     def _resolve_version():
-        """最新版の番号を取る。GitHub API は Colab から使えないことが多いので、
-        まず /releases/latest のリダイレクト先から読む."""
-        r = sh(f"curl -sIL -o /dev/null -w '%{{url_effective}}' https://github.com/{REPO}/releases/latest")
+        """最新版の番号を取る。順に: /releases/latest のリダイレクト先 → releases ページの
+        HTML → GitHub API（Colab からは回数制限で空になりやすい）."""
+        import re as _re
+        r = sh(f"curl -sL -o /dev/null -w '%{{url_effective}}' https://github.com/{REPO}/releases/latest")
         tag = r.stdout.strip().rstrip("/").rsplit("/", 1)[-1]
         if tag and tag[0].isdigit():
             return tag
+        r = sh(f"curl -sL https://github.com/{REPO}/releases")
+        m = _re.search(rf"/{REPO}/releases/tag/([0-9][^\"/]*)", r.stdout)
+        if m:
+            return m.group(1)
         r = sh(f"curl -sL https://api.github.com/repos/{REPO}/releases/latest")
         import json as _json
         try:
