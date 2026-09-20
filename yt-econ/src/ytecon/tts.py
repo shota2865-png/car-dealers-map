@@ -24,7 +24,7 @@ from typing import Any
 import requests
 
 from .config import Config
-from .script import VideoScript, parse_expression, split_sentences
+from .script import VideoScript, cast_tags, parse_expression, parse_speaker, split_sentences
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class Line:
     start: float = 0.0
     end: float = 0.0
     expression: str = ""   # 文頭の表情タグ（驚 / 笑 / 困 / 考 / 指 / 怒）。無ければ空
+    speaker: str = ""      # 話者キー（掛け合いのとき: metan / zundamon）。1 人なら空
 
     @property
     def duration(self) -> float:
@@ -74,6 +75,7 @@ class VoiceTrack:
                             "block_id": l.block_id, "index": l.index, "text": l.text,
                             "start": round(l.start, 3), "end": round(l.end, 3),
                             "expression": l.expression,
+                            "speaker": l.speaker,
                         }
                         for l in self.lines
                     ],
@@ -91,7 +93,8 @@ class VoiceTrack:
         track = cls(wav_path=Path(d["wav"]), sample_rate=d.get("sample_rate", 24000))
         track.lines = [
             Line(block_id=l["block_id"], index=l["index"], text=l["text"],
-                 start=l["start"], end=l["end"], expression=l.get("expression", ""))
+                 start=l["start"], end=l["end"], expression=l.get("expression", ""),
+                 speaker=l.get("speaker", ""))
             for l in d["lines"]
         ]
         return track
@@ -304,13 +307,31 @@ def synthesize(cfg: Config, script: VideoScript, outdir: str | Path) -> VoiceTra
     channels = width = rate = 0
     cursor = 0.0
 
+    # 掛け合い: 話者タグで VOICEVOX の話者を切り替える。タグの無い文は直前の話者が続ける
+    tags = cast_tags(cfg)
+    voices: dict[str, int] = {}
+    default_speaker = ""
+    for c in (cfg.get("cast.characters", []) or []):
+        key = str(c.get("key", ""))
+        if key and c.get("voicevox_speaker") is not None:
+            voices[key] = int(c["voicevox_speaker"])
+        if c.get("role") == "teacher" and not default_speaker:
+            default_speaker = key
+    speaker = default_speaker if tags else ""
+
     blocks = script.narration_blocks
     for b_i, (block_id, text) in enumerate(blocks):
         sentences = split_sentences(text)
         for s_i, sentence in enumerate(sentences):
+            if tags:
+                who, sentence = parse_speaker(sentence, tags)
+                if who:
+                    speaker = who
             expression, sentence = parse_expression(sentence)   # [驚] などは読まない
             if not sentence:
                 continue
+            if speaker and speaker in voices and hasattr(provider, "speaker"):
+                provider.speaker = voices[speaker]
             audio = provider.synth(reading(sentence))
             pcm, ch, wd, rt = _read_wav(audio)
             if not channels:
@@ -320,7 +341,7 @@ def synthesize(cfg: Config, script: VideoScript, outdir: str | Path) -> VoiceTra
 
             dur = len(pcm) / (rate * channels * width)
             lines.append(Line(block_id=block_id, index=s_i, text=sentence,
-                              start=cursor, end=cursor + dur, expression=expression))
+                              start=cursor, end=cursor + dur, expression=expression, speaker=speaker))
             frames.append(pcm)
             cursor += dur
 

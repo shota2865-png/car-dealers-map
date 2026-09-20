@@ -644,6 +644,34 @@ type と items の書き方:
 - tags は日本語中心に12〜15個。
 """
 
+_DIALOGUE_STYLE = """**この台本は 2 人の掛け合いです。読み上げ本文（hook / proof / promise / narration / closing）は
+すべて、文頭に話者タグを付けた発言の連なりで書いてください。**
+
+出演者:
+{cast}
+
+書き方:
+- 発言の先頭に【{teacher_tag}】または【{student_tag}】を付ける。表情タグ（[驚] など）はその後ろ。
+    例) 【{student_tag}】[困]先輩、給料は上がったはずなのに、なんで苦しいままなのだ？
+        【{teacher_tag}】いい質問ね。答えは「見る回数の差」にあるのよ。
+- 話者が変わるたびにタグを付ける。同じ人が続けて話すときは最初の文だけでよい
+- 分量は {teacher_tag} が 7 割、{student_tag} が 3 割。{student_tag} の発言は 1〜2 文で短く、
+  「視聴者が今まさに思っている疑問」や「素朴な聞き返し」「分かった！の言い直し」にする
+- 各セクションは {student_tag} の疑問か反応で始め、{teacher_tag} が答える形で進める
+- 数字・出典・因果の説明は {teacher_tag} が言う。{student_tag} は数字を言わない
+- {student_tag} は分かったふりをしない。難しい語が出たら必ず「それって何なのだ？」と聞き返し、
+  {teacher_tag} が身近な例で言い換える（ここが視聴者の理解の階段になる）
+- hook は {student_tag} の困りごと（新卒の生活実感）から始め、{teacher_tag} が「今日はそこを解くわ」と受ける
+- closing は {teacher_tag} のまとめ → {student_tag} の「今日分かったこと」の言い直し → {teacher_tag} の締め
+
+やってはいけないこと:
+- タグ無しの文を作らない（誰の声で読むか決まらなくなる）
+- 2 人の語尾を混ぜない（{teacher_tag} が「のだ」、{student_tag} が「〜よ」にならないように）
+- 見出し(heading)・箇条書き(on_screen)・テロップ(captions)・タイトル案・サムネ文言・用語カードは
+  **すべて標準語**で書き、話者タグも語尾の癖も入れない
+- 1文は 20〜30 字。合成音声は長い文だと単調になる
+"""
+
 # 声のキャラクターと台本の語尾は必ずセットで変える。
 # ずんだもんの声で「です・ます」を読ませると、視聴者には強い違和感が出る。
 _SPEECH_STYLE = {
@@ -837,6 +865,36 @@ def _style_block(cfg: Config) -> str:
     return render_for_prompt(style) if style else ""
 
 
+def cast_tags(cfg: Config) -> dict[str, str]:
+    """{話者タグ名: 話者キー}。掛け合いモードでなければ空."""
+    cast = cfg.get("cast", {}) or {}
+    if str(cast.get("mode", "solo")) != "dialogue":
+        return {}
+    out: dict[str, str] = {}
+    for c in cast.get("characters", []) or []:
+        key = str(c.get("key", "")).strip()
+        if not key:
+            continue
+        for name in (c.get("tag"), c.get("name"), key):
+            if name:
+                out[str(name)] = key
+    return out
+
+
+def speech_style(cfg: Config) -> str:
+    """語り口の指示。掛け合いモードなら 2 人分の人物設定を含む."""
+    cast = cfg.get("cast", {}) or {}
+    chars = cast.get("characters", []) or []
+    if str(cast.get("mode", "solo")) == "dialogue" and len(chars) >= 2:
+        teacher = next((c for c in chars if c.get("role") == "teacher"), chars[0])
+        student = next((c for c in chars if c.get("role") == "student"), chars[1])
+        desc = "\n".join(f"- 【{c.get('tag') or c.get('name')}】{c.get('name')}: {str(c.get('persona', '')).strip()}"
+                         for c in chars)
+        return _DIALOGUE_STYLE.format(cast=desc, teacher_tag=teacher.get("tag") or teacher.get("name"),
+                                      student_tag=student.get("tag") or student.get("name"))
+    return _SPEECH_STYLE.get(str(cfg.get("channel.speech_style", "plain")), _SPEECH_STYLE["plain"])
+
+
 def generate(cfg: Config, topic: Topic) -> VideoScript:
     """台本を生成し、尺と事実の観点で補正して返す."""
     from . import bible
@@ -852,8 +910,7 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
     system = _SYSTEM.format(
         bible=bible.render_for_prompt(cfg, n_sections),
         style_block=_style_block(cfg),
-        speech_style=_SPEECH_STYLE.get(
-            str(cfg.get("channel.speech_style", "plain")), _SPEECH_STYLE["plain"]),
+        speech_style=speech_style(cfg),
         horizon_guide=_HORIZON_GUIDE.get(topic.horizon, _HORIZON_GUIDE["flow"]),
         audience=cfg.get("channel.audience", ""),
         tone=cfg.get("channel.tone", ""),
@@ -920,6 +977,7 @@ _REPAIR_SYSTEM = """あなたは日本語動画台本の編集者です。
 - 削るときは具体例と繰り返しから削る。数字と出典は残す
 - 足すときは「なぜそうなるか」の説明と身近な例えを足す。新しい数字を創作しない
 - **語尾の口調を変えない**（「〜のだ」調ならそのまま維持する）
+- 文頭の話者タグ（【めたん】【ずんだもん】など）と表情タグ（[驚] など）は消さない。誰の発言かを変えない
 - 語り口は元のまま
 """
 
@@ -967,6 +1025,7 @@ _FACT_SYSTEM = """あなたは経済メディアの校閲担当です。
 
 構成・セクション数・文字数は大きく変えないでください。
 **語尾の口調も変えないでください**（「〜のだ」調ならそのまま維持する）。
+文頭の話者タグ（【めたん】【ずんだもん】など）と表情タグは消さず、誰の発言かも変えないでください。
 """
 
 
@@ -990,6 +1049,8 @@ def fact_check(cfg: Config, script: VideoScript) -> VideoScript:
 # 音声には読まれず、字幕にも出ず、その一文のあいだだけ立ち絵の表情が変わる
 EXPRESSIONS = ("通常", "笑", "驚", "困", "考", "指", "怒")
 _TAG_RE = re.compile(r"[\[【（(]\s*(" + "|".join(EXPRESSIONS) + r")\s*[\]】）)]")
+# 話者タグ（掛け合い台本）。【めたん】【ずんだもん】のように文頭に置く。表情タグはその後ろ
+_SPEAKER_RE = re.compile(r"[【\[]\s*([^\]】\[【]{1,8}?)\s*[】\]]")
 
 
 def parse_expression(sentence: str) -> tuple[str, str]:
@@ -1000,8 +1061,36 @@ def parse_expression(sentence: str) -> tuple[str, str]:
     return m.group(1), _TAG_RE.sub("", sentence).strip()
 
 
+def parse_speaker(sentence: str, tags: dict[str, str] | None = None) -> tuple[str, str]:
+    """文頭の話者タグを取り出し、(話者キー, タグを除いた文) を返す。無ければ ("", 文).
+
+    tags は {タグ名: 話者キー}（例 {"めたん": "metan", "ずんだもん": "zundamon"}）。
+    None なら表情タグ以外の【…】を話者名とみなす。
+    """
+    s = sentence.lstrip()
+    m = _SPEAKER_RE.match(s)
+    if not m or m.group(1) in EXPRESSIONS:
+        return "", sentence
+    name = m.group(1).strip()
+    if tags is not None and name not in tags:
+        return "", sentence
+    return (tags[name] if tags else name), s[m.end():].lstrip()
+
+
+def strip_speaker(text: str, tags: dict[str, str] | None = None) -> str:
+    """文中の話者タグを全部落とす（画面に出す文字用）."""
+    def rep(m):
+        name = m.group(1).strip()
+        if name in EXPRESSIONS:
+            return m.group(0)
+        if tags is not None and name not in tags:
+            return m.group(0)
+        return ""
+    return _SPEAKER_RE.sub(rep, text)
+
+
 def strip_tags(text: str) -> str:
-    return _TAG_RE.sub("", text)
+    return strip_speaker(_TAG_RE.sub("", text))
 
 
 _TTS_REPLACEMENTS = [
@@ -1019,11 +1108,13 @@ _TTS_REPLACEMENTS = [
 
 def tts_text(text: str) -> str:
     """音声合成がつまずく記号を落とす（表情タグ [驚] などは残す）."""
-    # 表情タグは括弧を落とす処理から守る
+    # 表情タグ・話者タグは括弧を落とす処理から守る
     out = _TAG_RE.sub(lambda m: f"\ue000{m.group(1)}\ue001", text)
+    out = _SPEAKER_RE.sub(lambda m: f"\ue002{m.group(1).strip()}\ue003", out)
     for pattern, repl in _TTS_REPLACEMENTS:
         out = re.sub(pattern, repl, out)
     out = re.sub("\ue000(" + "|".join(EXPRESSIONS) + ")\ue001", r"[\1]", out)
+    out = re.sub("\ue002([^\ue003]{1,8})\ue003", r"【\1】", out)
     return out.strip()
 
 
@@ -1038,7 +1129,7 @@ def plain_heading(text: str) -> str:
       「じゃあ、ぼくらはどうするのだ」→ 「じゃあ、ぼくらはどうするのか」
       「これが円安なのだ」        → 「これが円安」
     """
-    t = text.strip()
+    t = strip_tags(text).strip()          # 話者タグ・表情タグは画面に出さない
     for tail in ("なのだ", "のだ"):
         if t.endswith(tail):
             base = t[: -len(tail)]

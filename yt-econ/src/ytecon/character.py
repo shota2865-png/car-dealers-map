@@ -52,7 +52,57 @@ FPS = 20
 # 画像の用意
 # ----------------------------------------------------------------------
 def character_dir(cfg: Config) -> Path:
+    """立ち絵の置き場。character.dir が指定されていればそこ（出演者ごとに違う）."""
+    explicit = str(cfg.get("character.dir", "") or "").strip()
+    if explicit:
+        p = Path(explicit)
+        return p if p.is_absolute() else cfg.root / p
     return cfg.root / "assets" / "character"
+
+
+# ----------------------------------------------------------------------
+# 出演者（cast）。掛け合いなら 2 人、そうでなければ character の 1 人
+# ----------------------------------------------------------------------
+_CAST_KEYS = ("dir", "psd", "parts", "mouth", "blink", "expressions", "flip", "credit",
+              "skip_groups", "height_ratio", "crop_bottom", "margin_right", "margin_left", "margin_bottom")
+
+
+def cast_entries(cfg: Config) -> list[dict]:
+    """出演者の一覧。掛け合いモードでなければ [] （従来どおり character 1 人）."""
+    cast = cfg.get("cast", {}) or {}
+    if str(cast.get("mode", "solo")) != "dialogue":
+        return []
+    return [dict(c) for c in (cast.get("characters", []) or []) if c.get("key")]
+
+
+def char_cfg(cfg: Config, entry: dict | None) -> Config:
+    """出演者ごとの設定に差し替えた Config（character.* を entry の値で上書き）."""
+    if not entry:
+        return cfg
+    import copy
+    from .config import Config as _Config
+    raw = copy.deepcopy(cfg.raw)
+    ch = dict(raw.get("character", {}) or {})
+    for k in _CAST_KEYS:
+        if k in entry:
+            ch[k] = entry[k]
+    ch["key"] = entry["key"]
+    ch["name"] = entry.get("name", entry["key"])
+    ch["side"] = entry.get("side", "right")
+    ch["enabled"] = True
+    hr = (cfg.get("cast.height_ratio") if cfg.get("cast.height_ratio") else None)
+    if hr and "height_ratio" not in entry:
+        ch["height_ratio"] = float(hr)
+    raw["character"] = ch
+    return _Config(raw=raw, root=cfg.root)
+
+
+def characters(cfg: Config) -> list[Config]:
+    """描く出演者ぶんの Config。掛け合いなら 2 つ、1 人なら [cfg]（無効なら []）."""
+    entries = cast_entries(cfg)
+    if entries:
+        return [char_cfg(cfg, e) for e in entries]
+    return [cfg] if cfg.get("character.enabled", False) else []
 
 
 def find_assets(cfg: Config, expression: str = "通常") -> dict[str, Path] | None:
@@ -70,7 +120,8 @@ def find_assets(cfg: Config, expression: str = "通常") -> dict[str, Path] | No
     psd = find_psd(cfg)
     if psd is not None:
         try:
-            return compose_psd(cfg, psd, cfg.workdir / "character_composed", expression)
+            key = str(cfg.get("character.key", "") or "")
+            return compose_psd(cfg, psd, cfg.workdir / "character_composed" / key if key else cfg.workdir / "character_composed", expression)
         except Exception as exc:
             log.warning("立ち絵 PSD %s を合成できませんでした（仮キャラにします）: %s", psd, exc)
     found = {s: d / f"{s}.png" for s in STATES}
@@ -239,17 +290,36 @@ def make_placeholder(cfg: Config, size: int = 640) -> dict[str, Path]:
     return out
 
 
-def reserved_width(cfg: Config) -> int:
-    """キャラクターが占める横幅（px）。字幕をその左に収めるために使う."""
-    if not cfg.get("character.enabled", False):
-        return 0
+def _one_reserved_width(cfg: Config) -> int:
     from PIL import Image
 
     assets = find_assets(cfg) or make_placeholder(cfg)
     w, h = Image.open(assets["base"]).size
     _rw, rh = cfg.get("video.resolution", [1920, 1080])
     ch_h = rh * float(cfg.get("character.height_ratio", 0.42))
-    return int(w * ch_h / h) + int(cfg.get("character.margin_right", 24)) + 12
+    side = str(cfg.get("character.side", "right"))
+    margin = int(cfg.get("character.margin_left", cfg.get("character.margin_right", 24))) if side == "left" \
+        else int(cfg.get("character.margin_right", 24))
+    return int(w * ch_h / h) + margin + 12
+
+
+def reserved_widths(cfg: Config) -> tuple[int, int]:
+    """(左, 右) に立ち絵が占める横幅（px）。いない側は 0."""
+    left = right = 0
+    for c in characters(cfg):
+        wdt = _one_reserved_width(c)
+        if str(c.get("character.side", "right")) == "left":
+            left = max(left, wdt)
+        else:
+            right = max(right, wdt)
+    return left, right
+
+
+def reserved_width(cfg: Config) -> int:
+    """キャラクターが占める横幅（px）。字幕を左右対称に空けるので、左右の大きいほう."""
+    if not characters(cfg):
+        return 0
+    return max(reserved_widths(cfg))
 
 
 # ----------------------------------------------------------------------
@@ -325,12 +395,25 @@ def _padded(src: Path, out: Path, pad: int, up: bool) -> Path:
     return out
 
 
+def build_tracks(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
+                 track=None) -> list[tuple[Path, Config]]:
+    """出演者ぶんのレイヤーを作る。[(mov, その出演者の Config), ...]。掛け合いなら 2 本."""
+    out: list[tuple[Path, Config]] = []
+    for c in characters(cfg):
+        key = str(c.get("character.key", "") or "")
+        p = build_track(c, wav_path, total_seconds, outdir, track=track, speaker=key or None)
+        if p is not None:
+            out.append((p, c))
+    return out
+
+
 def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
-                track=None) -> Path | None:
+                track=None, speaker: str | None = None) -> Path | None:
     """キャラクターのレイヤー（透過動画）を作って返す。無効なら None.
 
     track（VoiceTrack）があれば、文ごとの表情タグ（[驚] など）で差分を切り替え、
     話しているコマは bob_px だけ上に動かす（ゆっくり動画でよくある「喋ると揺れる」）。
+    speaker を渡すと、その話者の文の間だけ口が動く（掛け合い用）。
     """
     if not cfg.get("character.enabled", False):
         return None
@@ -338,15 +421,26 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
 
     base_assets = find_assets(cfg) or make_placeholder(cfg)
     env = envelope(wav_path)
-    states = apply_blinks(cfg, mouth_states(cfg, env))
+    if speaker and track is not None:
+        # 自分の発言の間だけ声の大きさを見る。それ以外は口を閉じる
+        mask = [0.0] * len(env)
+        for ln in track.lines:
+            if ln.speaker == speaker:
+                a, b = int(ln.start * FPS), min(int(ln.end * FPS) + 1, len(env))
+                for i in range(a, b):
+                    mask[i] = 1.0
+        env = [e * m for e, m in zip(env, mask)]
+    states = apply_blinks(cfg, mouth_states(cfg, env), seed=7 + len(speaker or ""))
     need = int(total_seconds * FPS) + 1
     if len(states) < need:
         states += ["base"] * (need - len(states))     # 音声が終わったあとは口を閉じて待つ
 
-    # 文ごとの表情
+    # 文ごとの表情（掛け合いなら自分の文だけ）
     exprs = ["通常"] * len(states)
     if track is not None:
         for ln in track.lines:
+            if speaker and ln.speaker != speaker:
+                continue
             if ln.expression and ln.expression != "通常":
                 a, b = int(ln.start * FPS), min(int(ln.end * FPS) + 1, len(states))
                 for i in range(a, b):
@@ -357,7 +451,8 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
         sets[e] = got if got and got is not base_assets and got.get("base") != base_assets.get("base") else base_assets
 
     bob = int(cfg.get("character.bob_px", 8))
-    pad_dir = outdir / "character_frames"
+    key = str(cfg.get("character.key", "") or "")
+    pad_dir = outdir / (f"character_frames_{key}" if key else "character_frames")
 
     def frame_file(e: str, st: str) -> Path:
         src = sets[e][st]
@@ -368,7 +463,7 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
 
     # 同じコマが続く区間をまとめて concat リストにする
     outdir.mkdir(parents=True, exist_ok=True)
-    listing = outdir / "character_frames.txt"
+    listing = outdir / (f"character_frames_{key}.txt" if key else "character_frames.txt")
     lines: list[str] = []
     keys = list(zip(exprs, states))
     run_key, run_len = keys[0], 0
@@ -382,7 +477,7 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
               f"file '{frame_file(*run_key).as_posix()}'"]     # concat の仕様で最後をもう一度
     listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    out = outdir / "character.mov"
+    out = outdir / (f"character_{key}.mov" if key else "character.mov")
     proc = subprocess.run(
         [ensure_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
          "-f", "concat", "-safe", "0", "-i", str(listing),
@@ -396,8 +491,19 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path,
         log.warning("キャラクターレイヤーの生成に失敗（無しで続けます）: %s", proc.stderr[-300:])
         return None
     used = sorted(set(exprs))
-    log.info("キャラクターレイヤー: %d 状態区間 / %.1f秒 / 表情 %s", len(lines) // 2, total_seconds, "・".join(used))
+    log.info("キャラクターレイヤー%s: %d 状態区間 / %.1f秒 / 表情 %s",
+             f"（{cfg.get('character.name', key)}）" if key else "", len(lines) // 2, total_seconds, "・".join(used))
     return out
+
+
+def detect_credits(cfg: Config) -> list[str]:
+    """出演者全員ぶんのクレジット（重複は 1 つに）."""
+    seen: list[str] = []
+    for c in characters(cfg):
+        s = detect_credit(c)
+        if s and s not in seen:
+            seen.append(s)
+    return seen
 
 
 def detect_credit(cfg: Config) -> str:

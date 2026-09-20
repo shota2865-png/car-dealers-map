@@ -699,21 +699,24 @@ def _card_base(cfg: Config, style: str = "solid"
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     dim = int(255 * float(cfg.get("visuals.backdrop_dim", 0.30)))
+    try:
+        x0, x1 = content_span(cfg)
+        if x0 > 0:                       # 左にも立ち絵がいる（掛け合い）ときだけ位置を直す
+            img.info["span"] = (x0, x1)
+    except Exception:
+        pass
+    # 背景を少し落とす層（backdrop）と、すりガラスの面は _save で中身の下に敷く。
+    # ここでは中身だけを透明レイヤーに描く（中身の位置・大きさを後から測って直せるように）
+    img.info["dim"] = dim
     if style == "glass":
-        # すりガラスの面は、描き終わった中身の大きさに合わせて _save で敷く
-        # （画面いっぱいの板にしない）。ここでは中身だけを透明レイヤーに描く
         r, g, b = _rgb(pal["surface"])
         orr, og, ob = _rgb(pal["outline"])
         img.info["glass"] = {
-            "dim": dim,
             "fill": (r, g, b, int(255 * 0.82)),
             "outline": (orr, og, ob, 160),
             "width": max(design.stroke(cfg, "card"), 2),
             "radius": design.radius(cfg, "l"),
         }
-    else:
-        # 背景を少し落として文字を立たせる（動画側にフィルタを掛けずに済む）
-        d.rectangle([0, 0, w, h], fill=(0, 0, 0, dim))
     return img, d, pal, content_width(cfg), h
 
 
@@ -721,16 +724,17 @@ GLASS_PAD = (56, 40)   # すりガラスの面が中身の外側に取る余白�
 
 
 def _fit_glass(img: Image.Image) -> Image.Image:
-    """中身（透明レイヤーに描いた文字・図）の外接矩形にだけ、すりガラスの面を敷く."""
+    """中身（透明レイヤーに描いた文字・図）の下に、背景を落とす層と（glass なら）外接矩形の面を敷く."""
     spec = img.info.get("glass")
-    if not spec:
+    dim = img.info.get("dim")
+    if not spec and dim is None:
         return img
     w, h = img.size
     bbox = img.getchannel("A").getbbox()
     base = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(base)
-    d.rectangle([0, 0, w, h], fill=(0, 0, 0, spec["dim"]))
-    if bbox:
+    d.rectangle([0, 0, w, h], fill=(0, 0, 0, int(dim or 0)))
+    if spec and bbox:
         px, py = GLASS_PAD
         box = [max(bbox[0] - px, 16), max(bbox[1] - py, 16),
                min(bbox[2] + px, w - 16), min(bbox[3] + py, h - 16)]
@@ -738,6 +742,38 @@ def _fit_glass(img: Image.Image) -> Image.Image:
                             outline=spec["outline"], width=spec["width"])
     base.alpha_composite(img)
     return base
+
+
+def content_span(cfg: Config) -> tuple[int, int]:
+    """左右の立ち絵に掛からない x の範囲 (x0, x1)."""
+    w, _h = cfg.get("video.resolution", [1920, 1080])
+    from .character import reserved_widths
+    left, right = reserved_widths(cfg)
+    return left, w - right
+
+
+def _fit_h(img: Image.Image, x0: int, x1: int) -> Image.Image:
+    """中身を (x0, x1) の間に収める。はみ出すなら縦横同じ比率で縮め、左右はその範囲の中央に."""
+    bbox = img.getchannel("A").getbbox()
+    if not bbox:
+        return img
+    px, _py = GLASS_PAD
+    lo, hi = x0 + px + 8, x1 - px - 8
+    bw = bbox[2] - bbox[0]
+    scale = min(1.0, (hi - lo) / max(bw, 1))
+    cx_want = (lo + hi) / 2
+    cx_have = (bbox[0] + bbox[2]) / 2
+    if scale >= 0.999 and abs(cx_want - cx_have) < 2:
+        return img
+    content = img.crop(bbox)
+    if scale < 0.999:
+        content = content.resize((max(int(content.width * scale), 1), max(int(content.height * scale), 1)),
+                                 Image.LANCZOS)
+    cy = (bbox[1] + bbox[3]) / 2
+    moved = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    moved.alpha_composite(content, (int(cx_want - content.width / 2), int(cy - content.height / 2)))
+    moved.info.update(img.info)
+    return moved
 
 
 def _vcenter(img: Image.Image) -> Image.Image:
@@ -796,6 +832,9 @@ def _save(img: Image.Image, out: Path) -> Path:
     if img.mode == "RGBA":
         out = out.with_suffix(".png")
         _draw_note(img)
+        span = img.info.pop("span", None)
+        if span:
+            img = _fit_h(img, *span)
         _shadow(_fit_glass(_vcenter(img))).save(out)
         return out
     img.save(out, quality=94)

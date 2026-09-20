@@ -171,6 +171,7 @@ def test_glass_panel_fits_content_and_bar_aligns(cfg, tmp_path):
     from ytecon import assets
     cfg = copy.deepcopy(cfg)
     cfg.raw["visuals"]["motion_backgrounds"] = True     # 透過カード（すりガラス）を作る経路
+    cfg.raw.setdefault("cast", {})["mode"] = "solo"     # 1 人のときの位置で測る（掛け合いは別テスト）
     p = assets.render_diagram(cfg, "compare", "行動経済学 vs マクロ経済",
                               ["見るもの|感じ方のクセ|お金の流れ", "焦点|受け取り方|順番"], "", tmp_path / "c.png")
     im = Image.open(p)
@@ -301,3 +302,75 @@ def test_subtitle_cues_never_overlap(cfg):
         Line("s0", 1, "実質的な値上げ、という意味の言葉。", 2.98, 6.0)])   # 音声の実測は少し重なることがある
     cues = build_cues(cfg, track, reserve_right=400)
     assert all(a.end <= b.start + 1e-6 for a, b in zip(cues, cues[1:]))
+
+
+# ----------------------------------------------------------------------
+# 掛け合い（2 人）
+# ----------------------------------------------------------------------
+def test_speaker_tags_are_parsed_and_hidden_from_screen(cfg):
+    from ytecon.script import cast_tags, parse_speaker, strip_tags, tts_text
+    tags = cast_tags(cfg)
+    assert tags["めたん"] == "metan" and tags["ずんだもん"] == "zundamon"
+    who, rest = parse_speaker("【ずんだもん】[困]先輩、なんで苦しいままなのだ？", tags)
+    assert who == "zundamon" and rest.startswith("[困]")
+    assert parse_speaker("[驚]数字は逆なのだ", tags) == ("", "[驚]数字は逆なのだ")   # 表情タグは話者ではない
+    assert strip_tags("【めたん】[指]ここが要点よ。") == "ここが要点よ。"
+    assert tts_text("【めたん】[指]ここが要点（本当）よ。").startswith("【めたん】[指]")   # 括弧落としから守る
+
+
+def test_tts_switches_voice_by_speaker(cfg, tmp_path, monkeypatch):
+    """話者タグごとに VOICEVOX の話者番号が切り替わり、行に話者が記録される."""
+    import struct, wave, io
+    from ytecon import tts as tts_mod
+
+    calls: list[int] = []
+
+    class FakeVoice:
+        speaker = 3
+        sample_rate = 24000
+
+        def synth(self, text: str) -> bytes:
+            calls.append(self.speaker)
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+                w.writeframes(struct.pack("<h", 0) * 2400)
+            return buf.getvalue()
+
+    monkeypatch.setattr(tts_mod, "make_provider", lambda cfg: FakeVoice())
+    script = VideoScript(topic_title="t", hook="【ずんだもん】先輩、聞きたいのだ。【めたん】いいわよ。二つ目の文。",
+                         sections=[], closing="【ずんだもん】分かったのだ。",
+                         title_candidates=[], description="", tags=[], thumbnail_copy={}, sources=[])
+    track = tts_mod.synthesize(cfg, script, tmp_path)
+    assert [l.speaker for l in track.lines] == ["zundamon", "metan", "metan", "zundamon"]
+    assert calls == [3, 2, 2, 3]
+    assert all("【" not in l.text for l in track.lines)
+    again = tts_mod.VoiceTrack.load_manifest(tmp_path / "narration.json")
+    assert [l.speaker for l in again.lines] == [l.speaker for l in track.lines]
+
+
+def test_two_characters_reserve_both_sides_and_get_their_own_layers(cfg, tmp_path):
+    from ytecon import character, assets
+    chars = character.characters(cfg)
+    assert [c.get("character.side") for c in chars] == ["left", "right"]
+    left, right = character.reserved_widths(cfg)
+    assert left > 200 and right > 200
+    x0, x1 = assets.content_span(cfg)
+    assert x0 == left and x1 == 1920 - right
+    # 掛け合いのカードは、両側の立ち絵のあいだに収まる
+    import copy
+    c2 = copy.deepcopy(cfg); c2.raw["visuals"]["motion_backgrounds"] = True
+    from PIL import Image
+    p = assets.render_diagram(c2, "compare", "物価 vs 給料", ["間隔|毎月|年1回", "時期|随時|4月"], "", tmp_path / "c.png")
+    bbox = Image.open(p).getchannel("A").point(lambda a: 255 if a > 200 else 0).getbbox()
+    assert bbox[0] >= x0 - 8 and bbox[2] <= x1 + 8
+
+
+def test_subtitles_have_a_style_per_speaker(cfg, tmp_path):
+    from ytecon.subtitles import build
+    track = VoiceTrack(wav_path=Path("x.wav"), lines=[
+        Line("s0", 0, "先輩、聞きたいのだ。", 0.0, 2.0, speaker="zundamon"),
+        Line("s0", 1, "いいわよ。", 2.0, 3.0, speaker="metan")])
+    ass = build(cfg, track, tmp_path, reserve_right=400)["ass"].read_text(encoding="utf-8")
+    assert "Style: S_metan," in ass and "Style: S_zundamon," in ass
+    assert ",S_zundamon,,0,0,0,,先輩" in ass and ",S_metan,,0,0,0,,いいわよ" in ass

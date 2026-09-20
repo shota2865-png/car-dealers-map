@@ -264,12 +264,13 @@ def build_cues(cfg: Config, track: VoiceTrack, reserve_right: int = 0) -> list[C
             else:
                 end = t + max(line.duration * len(piece) / total_chars, min_show)
                 end = min(end, line.end)
-            cues.append(Cue(start=t, end=max(end, t + 0.3), lines=[piece]))
+            cues.append(Cue(start=t, end=max(end, t + 0.3), lines=[piece],
+                            style=f"S_{line.speaker}" if line.speaker else "Default"))
             t = end
     # 表示が短すぎる断片は次と結合して読める長さにする（1行に収まるときだけ）
     out: list[Cue] = []
     for c in cues:
-        if out and (c.end - c.start) < min_show * 0.6 and \
+        if out and (c.end - c.start) < min_show * 0.6 and c.style == out[-1].style and \
                 len(out[-1].lines[0]) + len(c.lines[0]) <= per_line:
             out[-1].lines[0] += c.lines[0]
             out[-1].end = c.end
@@ -513,6 +514,11 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
         _style_line("Default", family, base_size, colors["text"], stroke,
                     outline, 2, 72, margin_r=margin_r),
     ]
+    # 掛け合い: 話者ごとに縁の色を変える（ずんだもん動画の慣例。文字色は白のまま）
+    for c in (cfg.get("cast.characters", []) or []):
+        if c.get("key"):
+            styles.append(_style_line(f"S_{c['key']}", family, base_size, colors["text"],
+                                      str(c.get("subtitle_outline") or stroke), outline, 2, 72, margin_r=margin_r))
     # テロップは字幕のすぐ上（下三分の一）に置く。
     # 画面上部は背景側の見出しが使うので、そこへ出すと必ずぶつかる。
     sub_margin = 72

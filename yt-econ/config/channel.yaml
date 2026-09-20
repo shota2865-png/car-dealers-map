@@ -207,6 +207,49 @@ visuals:
       max_per_line: 2
       colors: {red: "#FF6B6B", blue: "#4CC2FF", yellow: "#FFD93D", green: "#B4E65A"}
 
+# 出演者。mode: dialogue なら 2 人の掛け合い（左: 解説役、右: 聞き役）。solo なら下の character だけ
+cast:
+  mode: dialogue
+  characters:
+    - key: metan
+      name: 四国めたん
+      tag: めたん                 # 台本の話者タグ【めたん】
+      role: teacher              # 解説役（経済に詳しい先輩）
+      voicevox_speaker: 2        # VOICEVOX 四国めたん（ノーマル）
+      side: left
+      dir: assets/character/四国めたん立ち絵素材2.1
+      flip: true                 # 画面中央（右）を向かせる
+      subtitle_outline: "#7A2E8E"
+      parts: {服: "白ロリ服", 右腕: "普通", 左腕: "普通", 顔色: "普通2", 眉: "太眉ごきげん"}
+      mouth: {base: "ほほえみ", mouth_half: "ゆ", mouth_open: "わあー"}
+      blink: "目閉じ"
+      skip_groups: ["その他の服", "記号など"]
+      expressions:
+        通常: {}
+        笑: {眉: "太眉ごきげん", 顔色: "赤面"}
+        驚: {目セット: "見開き白目", 眉: "太眉ごきげん"}
+        困: {眉: "太眉こまり"}
+        考: {眉: "太眉こまり", 左腕: "口元に指"}
+        指: {右腕: "指差す"}
+        怒: {眉: "太眉おこ"}
+      persona: >-
+        経済に詳しい先輩。落ち着いていて面倒見がよい。語尾は「〜よ」「〜ね」「〜かしら」「〜なの」。
+        です・ます調にはしない。数字と出典は必ず自分が言う
+    - key: zundamon
+      name: ずんだもん
+      tag: ずんだもん
+      role: student              # 聞き役（新卒社会人。何も知らないので素朴に聞く）
+      voicevox_speaker: 3        # VOICEVOX ずんだもん（ノーマル）
+      side: right
+      dir: assets/character/ずんだもん立ち絵素材2.3
+      flip: false
+      subtitle_outline: "#1E7F3C"
+      persona: >-
+        今年入社した新卒社会人。経済は何も知らないが好奇心はある。語尾は「〜のだ」「〜なのだ」。
+        視聴者が思う疑問を代わりに聞く。一人称は「ぼく」
+  # 掛け合いのときの立ち絵の大きさ（画面の高さに対する比）。1 人のときは character.height_ratio
+  height_ratio: 0.34
+
 # 画面右下の解説キャラクター（ずんだもんなど）。
 # assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を
 # 置くと、音声に合わせて口が動き、数秒おきに瞬きする。

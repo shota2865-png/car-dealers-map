@@ -328,10 +328,10 @@ def render(
         inputs.append(path)
         args += ["-i", str(path)]
 
-    char_path = character.build_track(cfg, track.wav_path, total, outdir, track=track)
-    char_idx = None
-    if char_path:
-        char_idx = len(inputs)
+    char_tracks = character.build_tracks(cfg, track.wav_path, total, outdir, track=track)
+    char_inputs: list[tuple[int, Config]] = []
+    for char_path, ccfg in char_tracks:
+        char_inputs.append((len(inputs), ccfg))
         inputs.append(char_path)
         args += ["-i", str(char_path)]
 
@@ -342,13 +342,19 @@ def render(
         sub_filter += f":fontsdir='{_escape_filter_path(fonts_dir)}'"
     chain = [f"[0:v]{sub_filter}[v0]"]
     vout = "[v0]"
-    if char_idx is not None:
-        ch_h = int(h * float(cfg.get("character.height_ratio", 0.42)))
-        mr = int(cfg.get("character.margin_right", 24))
-        mb = int(cfg.get("character.margin_bottom", 0))
-        chain.append(f"[{char_idx}:v]scale=-2:{ch_h}[ch]")
-        chain.append(f"{vout}[ch]overlay=W-w-{mr}:H-h-{mb}:format=auto:eof_action=repeat[v]")
-        vout = "[v]"
+    for n, (char_idx, ccfg) in enumerate(char_inputs):
+        ch_h = int(h * float(ccfg.get("character.height_ratio", 0.42)))
+        mb = int(ccfg.get("character.margin_bottom", 0))
+        side = str(ccfg.get("character.side", "right"))
+        if side == "left":
+            ml = int(ccfg.get("character.margin_left", ccfg.get("character.margin_right", 24)))
+            pos = f"{ml}:H-h-{mb}"
+        else:
+            mr = int(ccfg.get("character.margin_right", 24))
+            pos = f"W-w-{mr}:H-h-{mb}"
+        chain.append(f"[{char_idx}:v]scale=-2:{ch_h}[ch{n}]")
+        chain.append(f"{vout}[ch{n}]overlay={pos}:format=auto:eof_action=repeat[v{n + 1}]")
+        vout = f"[v{n + 1}]"
 
     voice_gain = VOICE_LUFS - measure_loudness(track.wav_path)
     voice_gain = max(-20.0, min(20.0, voice_gain))
