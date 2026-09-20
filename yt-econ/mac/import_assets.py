@@ -91,17 +91,13 @@ for a in sorted(SRC.iterdir()):
     shutil.move(str(a), dest)
     moved["効果音"].append(dest.name)
 
-# 4) 音楽（Artlist）: 名前に気分が入っていればその名前に、無ければ順に空いている気分へ
+# 4) 音楽（Artlist）: 元のファイル名のまま assets/bgm へ。
+#    config/channel.yaml の render.bgm.file にその名前を書けば全編その 1 曲になる
+#    （空なら、置いてある曲を気分の順に割り当てる）
 for a in sorted(SRC.iterdir()):
     if not newest(a) or a.suffix.lower() not in (".mp3", ".wav", ".aac", ".m4a", ".flac"):
         continue
-    mood = next((m for m in MOODS if m in a.name.lower()), None)
-    if mood is None:
-        taken = {p.stem for p in BGM.iterdir() if p.is_file()}
-        mood = next((m for m in MOODS if m not in taken), None)
-    dest = BGM / (f"{mood}{a.suffix.lower()}" if mood else f"{slug(a.name)}{a.suffix.lower()}")
-    if dest.exists():
-        dest = BGM / f"{slug(a.name)}{a.suffix.lower()}"
+    dest = BGM / a.name
     if dest.exists() and dest.stat().st_size == a.stat().st_size:
         continue
     shutil.move(str(a), dest)
