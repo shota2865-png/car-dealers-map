@@ -120,10 +120,17 @@ def library(cfg: Config) -> list[Clip]:
 
 
 def pick(clips: list[Clip], words: str | set[str], kind: str | None, used: Counter,
-         seed: int = 0, min_seconds: float = 3.0, reuse_penalty: float = 1.5) -> Clip | None:
-    """語の重なりが多く、まだ使っていない素材を選ぶ（reuse_penalty が大きいほど使い回しを嫌う）."""
+         seed: int = 0, min_seconds: float = 3.0, reuse_penalty: float = 1.5,
+         exclude: set[str] | None = None) -> Clip | None:
+    """語の重なりが多く、まだ使っていない素材を選ぶ（reuse_penalty が大きいほど使い回しを嫌う）.
+
+    exclude に入っている名前（直前に使ったもの）は候補から外す（同じ背景が続かないように）。
+    """
     want = _tokens(words) if isinstance(words, str) else set(words)
     cands = [c for c in clips if (kind is None or c.kind == kind) and c.duration >= min_seconds]
+    if exclude:
+        rest = [c for c in cands if c.name not in exclude]
+        cands = rest or cands
     if not cands:
         return None
     rnd = random.Random(seed)
@@ -289,6 +296,7 @@ class Picker:
         self.enabled = bool(cfg.get("visuals.motion_backgrounds", True))
         self.used: Counter = Counter()
         self.last = ""
+        self.recent: list[str] = []      # 直近に使った素材（これらは続けて使わない）
         self.lib = library(cfg) if self.enabled else []
         self.loops = generated_loops(cfg) if self.enabled else []
         self.n = 0
@@ -303,23 +311,33 @@ class Picker:
         if not self.enabled:
             return None
         self.n += 1
-        pool = list(self.lib) or self.loops
+        # 実写は場面の語に合うものだけ（関係ない絵を映さない）。抽象・質感・合成ループはいつでも候補
+        want = _tokens(words)
+        pool = [c for c in self.lib if c.kind != "broll" or (want & c.tags)] + list(self.loops)
+        if not pool:
+            pool = list(self.lib) or self.loops
         if not pool:
             return None
-        clip = pick(pool, words, None, self.used, seed=seed + self.n, reuse_penalty=4.0)
+        clip = pick(pool, words, None, self.used, seed=seed + self.n, reuse_penalty=4.0,
+                    exclude=set(self.recent[-3:]))
         if clip is None:
             return None
+        self._remember(clip)
+        return clip.path
+
+    def _remember(self, clip: Clip) -> None:
         self.used[clip.name] += 1
         self.last = clip.name
-        return clip.path
+        self.recent.append(clip.name)
 
     def broll(self, words: str, seed: int = 0) -> Path | None:
         """実写の B-roll。語が合う素材があるときだけ返す（無ければ None → 写真/AI に落ちる）."""
         if not self.enabled or not self.lib:
             return None
-        clip = pick(self.lib, words, "broll", self.used, seed=seed, min_seconds=4.0)
+        clip = pick(self.lib, words, "broll", self.used, seed=seed, min_seconds=4.0,
+                    exclude=set(self.recent[-3:]))
         if clip is None or not (_tokens(words) & clip.tags):
             # 語が一つも合わない実写は「関係ない絵」になるので使わない
             return None
-        self.used[clip.name] += 1
+        self._remember(clip)
         return clip.path

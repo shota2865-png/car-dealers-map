@@ -109,7 +109,7 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     # 切り替えの長さはデザイントークン（motion.fade_ms）。config で明示したらそちら
     fade_frames = int(cfg.get("visuals.fade_in_frames", 0) or design.fade_frames(cfg, fps))
     fade = (f",fade=t=in:st=0:d={fade_frames / fps:.3f}"
-            if fade_frames > 0 and frames > fade_frames * 2 else "")
+            if fade_frames > 0 and frames > fade_frames * 2 and getattr(scene, "fade_in", True) else "")
 
     if scene.background is not None:
         # 背景動画（ループ）＋ 透過カードの重ね合わせ。

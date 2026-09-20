@@ -42,6 +42,7 @@ class Scene:
     label: str = ""             # ログ用
     background: Path | None = None   # 後ろで流す動画（透過カードはこの上に重なる）
     bg_offset: float = 0.0           # 背景動画の再生開始位置（同じ素材でも違う所から）
+    fade_in: bool = True             # False なら切り替えのフェードなし（同じ画面の続き = ハイライトの段階）
 
     @property
     def duration(self) -> float:
@@ -126,9 +127,27 @@ class _Painter:
         p = assets.build_outro_card(self.cfg, self._next("outro"))
         return self._bg(Scene(p, start, end, True, "outro", "アウトロ"))
 
-    def bullets(self, heading: str, items: list[str], start: float, end: float) -> Scene:
-        p = assets.render_textcard(self.cfg, heading, items, self._next("bullets"))
-        return self._bg(Scene(p, start, end, True, "card", f"箇条書き: {heading[:12]}"))
+    def bullets(self, heading: str, items: list[str], start: float, end: float,
+                lines: list[Line] | None = None) -> list[Scene]:
+        """箇条書き。話が進むにつれて、いま話している項目を順にハイライトする（段階ごとに 1 枚）."""
+        items = [x for x in items if x]
+        stages = _stages(start, end, len(items), lines, min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
+        scenes: list[Scene] = []
+        for k, (active, s, e) in enumerate(stages):
+            p = assets.render_textcard(self.cfg, heading, items, self._next("bullets"), active=active)
+            scenes.append(Scene(p, s, e, True, "card", f"箇条書き: {heading[:12]}"))
+        return self._bg_seq(scenes)
+
+    def _bg_seq(self, scenes: list[Scene]) -> list[Scene]:
+        """同じ画面の段階（ハイライトが進むだけ）には同じ背景を続きから敷き、フェードも入れない."""
+        if not scenes:
+            return scenes
+        first = self._bg(scenes[0])
+        for sc in scenes[1:]:
+            sc.background = first.background
+            sc.bg_offset = first.bg_offset + (sc.start - first.start)
+            sc.fade_in = False
+        return scenes
 
     def chart(self, sec: Section, start: float, end: float) -> Scene:
         p = self._next("chart")
@@ -161,9 +180,16 @@ class _Painter:
         p = assets.render_reference_card(self.cfg, name, url, note, self._next("ref"))
         return self._bg(Scene(p, start, end, True, "card", f"出典: {name[:10]}"))
 
-    def diagram(self, g, start: float, end: float) -> Scene:
-        p = assets.render_diagram(self.cfg, g.type, g.title, g.items, g.note, self._next(f"dg_{g.type}"))
-        return self._bg(Scene(p, start, end, True, "diagram", f"図解({g.type}): {g.title[:10]}"))
+    def diagram(self, g, start: float, end: float, lines: list[Line] | None = None) -> list[Scene]:
+        """図解。行（箱）を話の進みに合わせて順にハイライトする（段階ごとに 1 枚、背景は続き）."""
+        n = assets.diagram_rows(g.type, g.items)
+        stages = _stages(start, end, n, lines, min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
+        scenes: list[Scene] = []
+        for active, s, e in stages:
+            p = assets.render_diagram(self.cfg, g.type, g.title, g.items, g.note,
+                                      self._next(f"dg_{g.type}"), active=active)
+            scenes.append(Scene(p, s, e, True, "diagram", f"図解({g.type}): {g.title[:10]}"))
+        return self._bg_seq(scenes)
 
     def photo(self, query: str, prompt: str, heading: str, bullets: list[str],
               start: float, end: float) -> Scene:
@@ -193,6 +219,59 @@ class _Painter:
         return scene
 
 
+def _stages(start: float, end: float, n: int, lines: list[Line] | None,
+            min_seconds: float = 1.6) -> list[tuple[int | None, float, float]]:
+    """ハイライトの段階 [(行番号 or None, 開始, 終了), ...] を決める.
+
+    最初は全体を見せ（None）、そのあと 1 行ずつ。話している文の切れ目に合わせて切り替え、
+    文が足りなければ等分する。段階が短くなりすぎる（min_seconds 未満）なら段階数を減らす。
+    """
+    dur = end - start
+    if n <= 1 or dur < min_seconds * 2:
+        return [(None, start, end)]
+    k = min(n, int(dur // min_seconds) - 1)        # 全体表示のぶんを 1 段階として引く
+    if k <= 0:
+        return [(None, start, end)]
+    rows = list(range(n))[:k] if k < n else list(range(n))
+    # 切り替え時刻: 文の開始時刻を等間隔に採る。文が足りなければ等分
+    starts = sorted({ln.start for ln in (lines or []) if start < ln.start < end})
+    bounds: list[float]
+    if len(starts) >= len(rows):
+        idx = [round((i + 1) * len(starts) / (len(rows) + 1)) for i in range(len(rows))]
+        idx = [min(max(x, 0), len(starts) - 1) for x in idx]
+        bounds = [starts[i] for i in idx]
+        if any(b - a < min_seconds * 0.6 for a, b in zip([start] + bounds, bounds)):
+            bounds = []
+    else:
+        bounds = []
+    if not bounds:
+        step = dur / (len(rows) + 1)
+        bounds = [start + step * (i + 1) for i in range(len(rows))]
+    stages: list[tuple[int | None, float, float]] = [(None, start, bounds[0])]
+    for i, row in enumerate(rows):
+        s = bounds[i]
+        e = bounds[i + 1] if i + 1 < len(bounds) else end
+        stages.append((row, s, e))
+    return stages
+
+
+def _call(fn, s: float, e: float, ch):
+    """プールの描き手を呼ぶ。話している文（ch）を受け取れるもの（引数 ch がある）には渡す."""
+    import inspect
+    try:
+        takes_ch = "ch" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        takes_ch = False
+    return fn(s, e, ch) if takes_ch else fn(s, e)
+
+
+def _extend(scenes: list[Scene], item) -> None:
+    if isinstance(item, list):
+        scenes.extend(item)
+    else:
+        scenes.append(item)
+
+
 def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
                   chunks: list[list[Line]], painter: _Painter):
     """セクション内の各かたまりに割り当てる『描き方』の列を作る（遅延実行）."""
@@ -207,7 +286,7 @@ def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
                                                sec.visual.image_prompt or sec.visual.query,
                                                sec.heading, sec.on_screen, s, e))
     else:
-        pool.append(lambda s, e: painter.bullets(sec.heading, sec.on_screen, s, e))
+        pool.append(lambda s, e, ch=None: painter.bullets(sec.heading, sec.on_screen, s, e, ch))
 
     # 2. テロップ由来。「タイトルだけ」のカードはほぼ要らないので、数字（DATA）だけ残す
     for cap in sec.captions:
@@ -275,14 +354,14 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         for g in script.block_diagrams.get(block) or []:
             if lo_i <= g.after_sentence <= hi_i and id(g) not in used_block:
                 used_block.add(id(g))
-                return painter.diagram(g, *_span(ch))
+                return painter.diagram(g, *_span(ch), lines=ch)
         c = pick_card(script.block_cards.get(block) or [], ch)
         if c is not None:
             return painter.quote(c.text, _span(ch)[0], _span(ch)[1], source=c.source)
         rest = [g for g in script.block_diagrams.get(block) or [] if id(g) not in used_block]
         if rest:
             used_block.add(id(rest[0]))
-            return painter.diagram(rest[0], *_span(ch))
+            return painter.diagram(rest[0], *_span(ch), lines=ch)
         return painter.quote(nominalize(_key_sentence(ch)), *_span(ch))
 
     # --- hook: タイトル → キーワード → カード ---
@@ -295,7 +374,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             main = (script.thumbnail_copy or {}).get("main") or script.topic_title
             scenes.append(painter.keyword(main, "", s, e))
         else:
-            scenes.append(block_card("hook", j - 2, ch))
+            _extend(scenes, block_card("hook", j - 2, ch))
 
     # --- proof: 数字があれば数字カード → カード ---
     for j, ch in enumerate(chunk_lines(lines_of("proof"), target, lo, hi, pivots)):
@@ -305,7 +384,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             value = " → ".join(nums[:2]) if len(nums) >= 2 else nums[0]
             scenes.append(painter.number(value, "数字で見る", "", s, e))
         else:
-            scenes.append(block_card("proof", j, ch))
+            _extend(scenes, block_card("proof", j, ch))
 
     # --- promise: この動画で分かること → カード ---
     for j, ch in enumerate(chunk_lines(lines_of("promise"), target, lo, hi, pivots)):
@@ -314,9 +393,9 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             cards = script.block_cards.get("promise") or []
             items = [c.text for c in cards][:3] or \
                     ([plain_heading(x.rstrip("。")) for x in split_sentences(script.promise)][1:4])
-            scenes.append(painter.bullets("この動画で分かること", items, s, e))
+            _extend(scenes, painter.bullets("この動画で分かること", items, s, e, ch))
         else:
-            scenes.append(block_card("promise", j - 1, ch))
+            _extend(scenes, block_card("promise", j - 1, ch))
 
     # --- 本編 ---
     for i, sec in enumerate(script.sections):
@@ -336,28 +415,28 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             hit = next((c for c in sec.cards
                         if lo_i <= c.after_sentence <= hi_i and id(c) not in used_cards), None)
             if j == 0 and pool:
-                scenes.append(pool[0](s, e)); k = 1          # 最初は必ず本体（図表 / 見出し）
+                _extend(scenes, _call(pool[0], s, e, ch)); k = 1   # 最初は必ず本体（図表 / 見出し）
             elif dg is not None:                             # 図解が最優先（言葉だけで説明しない）
                 used_cards.add(id(dg))
-                scenes.append(painter.diagram(dg, s, e))
+                _extend(scenes, painter.diagram(dg, s, e, lines=ch))
             elif hit is not None:
                 used_cards.add(id(hit))
                 scenes.append(painter.quote(hit.text, s, e, source=hit.source))
             elif k < len(pool):
-                scenes.append(pool[k](s, e)); k += 1
+                _extend(scenes, _call(pool[k], s, e, ch)); k += 1
             else:
                 rest_g = [g for g in sec.diagrams if id(g) not in used_cards]
                 rest = [c for c in sec.cards if id(c) not in used_cards]
                 if rest_g:
                     used_cards.add(id(rest_g[0]))
-                    scenes.append(painter.diagram(rest_g[0], s, e))
+                    _extend(scenes, painter.diagram(rest_g[0], s, e, lines=ch))
                 elif rest:
                     used_cards.add(id(rest[0]))
                     scenes.append(painter.quote(rest[0].text, s, e, source=rest[0].source))
                 elif (j % 2) == 0:
                     scenes.append(painter.quote(nominalize(_key_sentence(ch)), s, e))
                 else:
-                    scenes.append(main_again(s, e))
+                    _extend(scenes, _call(main_again, s, e, ch))
 
     # --- closing: 3行まとめ → アウトロ ---
     closing = chunk_lines(lines_of("closing"), target, lo, hi, pivots)
@@ -367,11 +446,11 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             cards = script.block_cards.get("closing") or []
             items = [c.text for c in cards][:3] or \
                     [plain_heading(x.rstrip("。")) for x in split_sentences(script.closing)][1:4]
-            scenes.append(painter.bullets("今日のまとめ", items, s, e))
+            _extend(scenes, painter.bullets("今日のまとめ", items, s, e, ch))
         elif j == len(closing) - 1:
             scenes.append(painter.outro(s, e))
         else:
-            scenes.append(block_card("closing", j - 1, ch))
+            _extend(scenes, block_card("closing", j - 1, ch))
 
     scenes.sort(key=lambda x: x.start)
     # 隣接シーンの隙間を埋める（無音区間で画が消えないように）

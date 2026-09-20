@@ -88,8 +88,14 @@ def _digit(ch: str) -> bool:
 
 def _bad_head(tail: str) -> bool:
     """この文字列で行を始めてはいけないか（禁則・助詞・「いう」など）. 語（もらう/もの）なら助詞扱いしない."""
-    if not tail or tail[0] in _NO_LINE_START or tail.startswith(_NO_CUT_BEFORE):
+    if not tail or tail[0] in _NO_LINE_START:
         return True
+    for w in _NO_CUT_BEFORE:
+        if not tail.startswith(w):
+            continue
+        # 1 字のもの（だ・か・ね・よ）は終助詞のときだけ。「よかったら」「だから」は語なので切ってよい
+        if len(w) > 1 or len(tail) == 1 or tail[1] in "、。，！？!?…":
+            return True
     return tail[0] in _PARTICLE_HEADS and not tail.startswith(_FALSE_PARTICLE)
 
 
@@ -269,6 +275,11 @@ def build_cues(cfg: Config, track: VoiceTrack, reserve_right: int = 0) -> list[C
             out[-1].end = c.end
         else:
             out.append(c)
+    # 前後の字幕は時間的に重ねない（重なると libass が 2 段に積み、位置がずれて見える）
+    for a, b in zip(out, out[1:]):
+        if a.end > b.start:
+            a.end = max(b.start, a.start + 0.2)
+            b.start = max(b.start, a.end)
     return out
 
 

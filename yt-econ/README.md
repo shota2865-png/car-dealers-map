@@ -175,7 +175,7 @@ python -m ytecon script "円安はなぜ起きるのか" -a "家計への波及�
 # 1本を投稿せずローカルに mp4 まで（最初はこれで品質を確認）
 python -m ytecon run -n 1 --no-upload
 
-# 本番。当日分2本を作って予約投稿
+# 本番。当日分（既定 1 本）を作って 19:00 に予約投稿
 python -m ytecon run
 
 # 途中で落ちたら
@@ -207,14 +207,13 @@ output/20260919-070000-.../
 
 ---
 
-## 毎日2本を自動で回す
+## 毎日 1 本（19:00 公開）を自動で回す
 
 ### A. サーバ / 自宅PC で cron
 
 ```cron
-# JST 06:00 と 18:00 に1本ずつ（予約投稿で 07:30 / 19:30 に公開される）
-0 6  * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/am.log 2>&1
-0 18 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/pm.log 2>&1
+# JST 17:00 に 1 本作る（予約投稿で 19:00 に公開される。upload.publish_times_jst で変更）
+0 17 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/daily.log 2>&1
 ```
 
 ### B. GitHub Actions（PCを起動しっぱなしにしなくていい）
@@ -231,7 +230,7 @@ VOICEVOX は service コンテナとして起動するので、別途用意は�
 「過去に扱った話題」の記憶は Actions のキャッシュで持ち越しています。
 
 > プライベートリポジトリだと Actions の実行時間が課金対象です。
-> 1本あたり10〜20分かかるので、月2本/日なら無料枠を超えます。
+> 1本あたり20〜35分かかるので、1日1本でも月 600〜1,000 分になり無料枠（2,000分）の半分を使います。
 > 常時稼働PCがあるなら A の cron のほうが安上がりです。
 
 ---
@@ -247,7 +246,7 @@ VOICEVOX は service コンテナとして起動するので、別途用意は�
 | 写真 | Pexels 無料枠 | 0円 |
 | フォント | Noto Sans JP（OFL） | 0円 |
 | 動画合成 | ffmpeg | 0円 |
-| YouTube 投稿 | Data API v3 | 0円（1日2本ならクォータ内） |
+| YouTube 投稿 | Data API v3 | 0円（1日1〜2本ならクォータ内） |
 
 ### 台本生成の課金を避ける仕組み
 

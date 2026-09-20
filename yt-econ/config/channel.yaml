@@ -280,8 +280,8 @@ render:
 upload:
   # public | unlisted | private
   privacy: "public"
-  # JST での投稿時刻。1日2本なので2つ
-  publish_times_jst: ["07:30", "19:30"]
+  # JST での投稿時刻。1 日 1 本、19:00。アウトロの「毎日19:00に更新」もここから出る
+  publish_times_jst: ["19:00"]
   category_id: "25"      # News & Politics（経済解説はここか 27:Education）
   language: "ja"
   playlist_title: "経済ニュースを噛み砕く"
@@ -301,7 +301,7 @@ revive:
   cooldown_days: 45
 
 pipeline:
-  videos_per_day: 2
+  videos_per_day: 1
   workdir: "output"
   # 失敗時のリトライ回数
   retries: 2

@@ -224,3 +224,72 @@ def test_heading_overlay_has_no_black_outline(cfg, tmp_path):
 def test_phrase_split_keeps_words_whole(text, expected):
     from ytecon.subtitles import phrase_split
     assert phrase_split(text, 10) == expected
+
+
+def test_highlight_stages_follow_the_speech():
+    from ytecon.scenes import _stages
+    lines = [Line("s0", i, f"文{i}", 10 + i * 2.5, 12 + i * 2.5) for i in range(4)]
+    st = _stages(10, 20, 3, lines)
+    assert [a for a, _, _ in st] == [None, 0, 1, 2]          # 全体 → 1 行ずつ
+    assert st[0][1] == 10 and st[-1][2] == 20                 # 隙間なく覆う
+    assert all(b[1] == a[2] for a, b in zip(st, st[1:]))
+    assert _stages(10, 13, 3, lines) == [(None, 10, 13)]      # 短い場面は段階を作らない
+
+
+def test_diagram_highlight_changes_only_the_active_row(cfg, tmp_path):
+    import copy
+    from PIL import Image, ImageChops
+    from ytecon import assets
+    cfg = copy.deepcopy(cfg)
+    cfg.raw["visuals"]["motion_backgrounds"] = True
+    items = ["価格は据え置き", "中身だけ1割減", "実質的な値上げ"]
+    a = Image.open(assets.render_diagram(cfg, "steps", "t", items, "", tmp_path / "a.png", active=0)).convert("RGB")
+    b = Image.open(assets.render_diagram(cfg, "steps", "t", items, "", tmp_path / "b.png", active=1)).convert("RGB")
+    plain = Image.open(assets.render_diagram(cfg, "steps", "t", items, "", tmp_path / "c.png")).convert("RGB")
+    assert ImageChops.difference(a, b).getbbox() is not None
+    assert ImageChops.difference(a, plain).getbbox() is not None
+    assert assets.diagram_rows("balance", items) == 3 and assets.diagram_rows("table", items[:2]) == 2
+
+
+def test_diagram_scenes_share_background_and_skip_fade(cfg, tmp_path):
+    import copy
+    from ytecon.scenes import _Painter
+    from ytecon.script import Diagram
+    cfg = copy.deepcopy(cfg)
+    cfg.raw["visuals"]["motion_backgrounds"] = True
+    painter = _Painter(cfg, tmp_path)
+    lines = [Line("s0", i, f"文{i}", 10 + i * 2.5, 12 + i * 2.5) for i in range(4)]
+    sc = painter.diagram(Diagram(type="steps", title="t", items=["a", "b", "c"]), 10, 20, lines=lines)
+    assert len(sc) == 4
+    assert sc[0].fade_in and not any(s.fade_in for s in sc[1:])
+    if sc[0].background is not None:
+        assert all(s.background == sc[0].background for s in sc)
+        assert sc[1].bg_offset > sc[0].bg_offset
+
+
+def test_backgrounds_do_not_repeat_back_to_back(cfg):
+    import copy
+    from ytecon import footage
+    cfg = copy.deepcopy(cfg)
+    cfg.raw["visuals"]["motion_backgrounds"] = True
+    picker = footage.Picker(cfg)
+    if len(picker.lib) + len(picker.loops) < 2:
+        pytest.skip("素材が足りない")
+    seq = [picker.abstract("economy office", seed=i) for i in range(12)]
+    assert all(a != b for a, b in zip(seq, seq[1:]))
+
+
+def test_outro_text_uses_publish_time(cfg, tmp_path):
+    from ytecon import assets
+    p = assets.build_outro_card(cfg, tmp_path / "o.png")
+    assert p.exists()
+    assert cfg.get("upload.publish_times_jst") == ["19:00"] and cfg.get("pipeline.videos_per_day") == 1
+
+
+def test_subtitle_cues_never_overlap(cfg):
+    from ytecon.subtitles import build_cues
+    track = VoiceTrack(wav_path=Path("x.wav"), lines=[
+        Line("s0", 0, "これをシュリンクフレーションと呼ぶ。", 0.0, 3.0),
+        Line("s0", 1, "実質的な値上げ、という意味の言葉。", 2.98, 6.0)])   # 音声の実測は少し重なることがある
+    cues = build_cues(cfg, track, reserve_right=400)
+    assert all(a.end <= b.start + 1e-6 for a, b in zip(cues, cues[1:]))
