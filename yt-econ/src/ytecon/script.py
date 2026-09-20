@@ -102,7 +102,7 @@ class Section:
 
     @property
     def char_count(self) -> int:
-        return len(re.sub(r"\s", "", self.narration))
+        return len(re.sub(r"\s", "", strip_tags(self.narration)))
 
 
 @dataclass
@@ -156,7 +156,8 @@ class VideoScript:
 
     @property
     def total_chars(self) -> int:
-        return sum(len(re.sub(r"\s", "", t)) for _, t in self.narration_blocks)
+        # 話者タグ・表情タグは読まないので数えない（尺の見積もりが狂う）
+        return sum(len(re.sub(r"\s", "", strip_tags(t))) for _, t in self.narration_blocks)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
