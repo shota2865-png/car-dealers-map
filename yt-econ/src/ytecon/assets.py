@@ -1128,12 +1128,13 @@ def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Pa
     """A vs B。行ごとに 見出し | 左 | 右."""
     from . import design
 
-    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, "", note)
-    left_name, right_name = "A", "B"
+    left_name, right_name = "", ""
     if title and ("vs" in title.lower() or "対" in title or "と" in title):
         parts = re.split(r"\s*(?:vs\.?|VS|対|と)\s*", title, maxsplit=1)
         if len(parts) == 2 and all(parts):
             left_name, right_name = parts[0].strip(), parts[1].strip()
+    # 「A vs B」の形でなければ、見出しとして出して列の名札（A/B）は付けない
+    img, d, pal, cw, h, m, y0 = _diagram_base(cfg, "" if left_name else title, note)
     rows = []
     for it in items[:4]:
         cells = [c.strip() for c in it.split("|")]
@@ -1148,13 +1149,13 @@ def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Pa
     y = y0 + 10
     head_h = 96
     r = design.radius(cfg, "m")
-    f_head = load_font(cfg, ts(cfg, "title", 56), "black")
-    for k, (name, fill) in enumerate(((left_name, pal["accent"]), (right_name, pal["accent2"]))):
-        x = m + label_w + 20 + k * (col_w + 20)
-        _rounded(d, [x, y, x + col_w, y + head_h], fill, None, r)
-        fh, hl = fit_text(cfg, d, name, "title", col_w - 30, 1, min_size=36)
-        _text_block(d, hl[:1], fh, (x, y, x + col_w, y + head_h), "#0B1120")
-    y += head_h + 20
+    if left_name:
+        for k, (name, fill) in enumerate(((left_name, pal["accent"]), (right_name, pal["accent2"]))):
+            x = m + label_w + 20 + k * (col_w + 20)
+            _rounded(d, [x, y, x + col_w, y + head_h], fill, None, r)
+            fh, hl = fit_text(cfg, d, name, "title", col_w - 30, 1, min_size=36)
+            _text_block(d, hl[:1], fh, (x, y, x + col_w, y + head_h), "#0B1120")
+        y += head_h + 20
     row_h = min(150, (h - 128 - y - 20) // max(len(rows), 1))
     for label, lval, rval in rows:
         _rounded(d, [m, y, cw - m, y + row_h - 14], pal["surface_high"], pal["outline"], r)
@@ -1217,8 +1218,10 @@ def render_balance(cfg: Config, title: str, items: list[str], note: str, out: Pa
             _text_block(d, ll[:1], fl, (x, y + 20, x + box_w, y + 20 + int(fl.size * 1.4)),
                         color if i == 2 else pal["text_secondary"])
             fv, vl = fit_text(cfg, d, parts[1], "display_s", box_w - 30, 1, min_size=48)
-            _text_block(d, vl[:1], fv, (x, y + 20 + int(fl.size * 1.4), x + box_w, y + box_h - 16),
-                        color if i == 2 else pal["positive"])
+            if len(vl) > 1 or vl[-1].endswith("…"):
+                fv, vl = fit_text(cfg, d, parts[1], "title", box_w - 30, 2, min_size=34)
+            _text_block(d, vl[:2], fv, (x, y + 20 + int(fl.size * 1.4), x + box_w, y + box_h - 16),
+                        color if i == 2 else pal["positive"], spacing=1.15)
         else:
             fv, vl = fit_text(cfg, d, txt, "title", box_w - 30, 2, min_size=34)
             _text_block(d, vl, fv, (x, y, x + box_w, y + box_h), color)
