@@ -29,12 +29,18 @@ log = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # データ構造
 # ----------------------------------------------------------------------
+def _normalize_beat(name: str) -> str:
+    from .bible import normalize_beat
+    return normalize_beat(str(name or "ACADEMIC_LENS"))
+
+
 @dataclass
 class Visual:
     kind: str = "stock"              # stock | chart | textcard
     query: str = ""                  # stock 用の検索語（英語）
     chart: dict[str, Any] | None = None   # chart 用の仕様
     caption: str = ""                # 図表の出典キャプション
+    image_prompt: str = ""           # AI 画像用。概念の視覚化（英語。画風はこちらで足す）
 
 
 @dataclass
@@ -99,6 +105,7 @@ class VideoScript:
     promise: str = ""                # 15-30秒。この動画で何が分かるか
     open_loops: list[OpenLoop] = field(default_factory=list)
     terms: list[Term] = field(default_factory=list)
+    research: dict[str, Any] = field(default_factory=dict)   # 台本前の「リサーチの木」
 
     @property
     def narration_blocks(self) -> list[tuple[str, str]]:
@@ -131,7 +138,7 @@ class VideoScript:
                     heading=s.get("heading", ""),
                     narration=s.get("narration", ""),
                     on_screen=s.get("on_screen", []) or [],
-                    beat=s.get("beat", "STORY"),
+                    beat=_normalize_beat(s.get("beat", "ACADEMIC_LENS")),
                     captions=[
                         Caption(text=c.get("text", ""),
                                 type=c.get("type", "NORMAL"),
@@ -148,6 +155,7 @@ class VideoScript:
                         query=v.get("query", ""),
                         chart=v.get("chart") or None,
                         caption=v.get("caption", ""),
+                        image_prompt=v.get("image_prompt", "") or "",
                     ),
                 )
             )
@@ -175,6 +183,7 @@ class VideoScript:
                      section=int(t.get("section", 0) or 0))
                 for t in (d.get("terms") or []) if t.get("term")
             ],
+            research=d.get("research") or {},
         )
 
     def save(self, path: str | Path) -> Path:
@@ -210,14 +219,41 @@ _VISUAL_SCHEMA = llm.obj(
         "query": llm.STR,
         "chart": _CHART_SCHEMA,
         "caption": llm.STR,
+        "image_prompt": llm.STR,
     }
 )
 
 _CAPTION_TYPES = ["NORMAL", "KEYWORD", "EMPHASIS", "PUNCHLINE", "EDITORIAL", "DATA"]
 _SE_TYPES = ["POP", "CLICK", "WHOOSH", "IMPACT", "COMEDY", "ERROR",
              "RISER", "TRANSITION"]
-_BEATS = ["CONTEXT", "QUESTION", "STORY", "REVEAL", "PAYOFF",
-          "COMEDY", "CONCLUSION"]
+# 本編セクションに付ける beat。config/style_bible.yaml の 9 ブロックのうち
+# section に割り当てるもの（S03〜S08）
+_BEATS = ["FAMILIAR_SCENE", "ACADEMIC_LENS", "EVIDENCE_DROP",
+          "MECHANISM_REVEAL", "PERSPECTIVE_FLIP", "HUMAN_RETURN"]
+
+# 台本の前に作る「リサーチの木」
+_RESEARCH_SCHEMA = llm.obj(
+    {
+        "question": llm.STR,                 # 動画全体で解く1つの問い（日常語）
+        "common_belief": llm.STR,            # 普通はこう思われている
+        "paradox": llm.STR,                  # でも実際はこう（hook の種）
+        "everyday_scene": llm.STR,           # 視聴者が自分の生活で見た場面
+        "lenses": llm.arr(
+            llm.obj({
+                "id": llm.STR,               # R01〜R06
+                "name": llm.STR,
+                "hypothesis": llm.STR,       # このレンズだとこう説明できる
+                "evidence": llm.STR,         # 使える実在の統計・調査（名前と年）
+                "interest": llm.INT,         # 1〜5。意外さ×説明力
+                "adopt": {"type": "boolean"},
+            })
+        ),
+        "counterargument": llm.STR,          # 一番強い反論と、それでも成り立つ理由
+        "flip": llm.STR,                     # 中盤で反転させる第二の疑問
+        "human_return": llm.STR,             # 最後に給料・買い物・働き方へどう戻すか
+        "title_candidates": llm.arr(llm.STR),
+    }
+)
 
 _SCRIPT_SCHEMA = llm.obj(
     {
@@ -346,15 +382,21 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 
 # 構成の型（必ずこの流れ）
 
-## 冒頭30秒（ここで残るか決まる）
+このチャンネルは「雑学」でも「論文解説」でもなく、
+**日常の違和感を、経済学を使って映画のように説明する**映像エッセイです。
+骨格は次の 9 ブロック。順番を崩さないこと。
 
-1. **hook（0〜5秒）**: 結論・違和感・事件をいきなり置く。
-   「こんにちは」「今日は〜について話します」から始めない。
-   視聴者の生活に起きている違和感を1文で突きつける。
-2. **proof（5〜15秒）**: その違和感が本当にあることを、具体か数字で裏づける。
-   「実際、〇〇は△△まで上がっているのだ」
-3. **promise（15〜30秒）**: この動画を見ると何が分かるかを約束する。
-   「なぜそうなったのか、これからどうなるのか、今日は全部話すのだ」
+{bible}
+
+## 冒頭 55 秒の書き方（ここで残るか決まる）
+
+1. **hook = S01 PARADOX_HOOK**: 「こんにちは」「今日は〜の話」から始めない。
+   「普通はこう思うのだ」→「でも、実際は逆なのだ」で違和感を突きつける。
+   **答えは言わない。**
+2. **proof = S05a**: その違和感が本当にあることを、数字1つと出典で裏づける。
+   「実際、〇〇によると△△は□□まで上がっているのだ」
+3. **promise = S02 QUESTION_LOCK**: 「では、なぜ〜なのか？」と問いを1つに固定し、
+   「今日は〇〇と△△の2つの視点で解いていくのだ」と道筋だけ約束する。
 
 ## 伏線（open_loops）
 
@@ -364,16 +406,20 @@ open_loops には「question」と「payoff_section（何番目のセクショ�
 を入れること。0〜2本まで。無理に作らない。
 
 ## 本編 {sections} セクション:
+   - 各セクションの beat は、上の 9 ブロックのうち S03〜S08 を**順に**割り当てる
+     （FAMILIAR_SCENE → ACADEMIC_LENS → EVIDENCE_DROP → MECHANISM_REVEAL →
+       PERSPECTIVE_FLIP → HUMAN_RETURN）。セクション数が 6 でなければ順序を保って比例配分
    - 各セクションは「問い → 事実（数字） → なぜそうなるか → だから何」の順
    - 数字を出したら必ず出典（機関名と年）を narration 内で口頭で言う
    - 前のセクションの結論を1句受けてから次に進む（接続を切らない）
    - **各セクションに、視聴者への問いかけを1つ必ず入れる**
    - **各セクションの最後に、そこで分かったことを1文で回収する**
-   - 各セクションに beat を付ける
-     （CONTEXT 前提 / QUESTION 問い / STORY 展開 / REVEAL 判明 /
-       PAYOFF 回収 / COMEDY 笑い / CONCLUSION 結論）
-3. closing: 3行でまとめ → 視聴者への問いかけ → チャンネル登録の一言。
-   押し付けがましくしない。
+   - MECHANISM_REVEAL は「研究によると〇〇」で終わらせない。
+     A → B → C → だから生活で D が起きる、という因果の鎖を必ず言葉にする
+   - PERSPECTIVE_FLIP は「ただし、ここで面白いのが」で始め、別のレンズで説明し直す
+3. **closing = S09 REFLECTIVE_ENDING**: 3行で要点 → 「もしかすると〜なのかもしれないのだ」
+   という余韻 → 視聴者への問いを1つ → チャンネル登録の一言。
+   「だから〜しましょう」で閉じない。押し付けがましくしない。
 
 # テロップ（captions）の決め方
 
@@ -422,6 +468,8 @@ open_loops には「question」と「payoff_section（何番目のセクショ�
   chart.note に「出典: 総務省 消費者物価指数(2024)」のように必ず明記する。
 - kind="textcard": 定義・仕組み・3つのポイントなど、文字で見せた方が早いもの
 - kind="stock": 上記以外。query は英語の検索語（例 "tokyo office workers commuting"）
+- **image_prompt は全セクションに必ず書く**（kind が chart でも）。実写素材が取れない
+  ときに AI 画像で「概念の視覚化」を作るためのもの。上の画像プロンプトの式に従う
 - on_screen は画面に出す短い箇条書き。1項目20字以内、最大4項目。
   ナレーションの丸写しにしない。
 
@@ -533,7 +581,83 @@ answer すべき問い:
 参考になる一次情報（未確認のものは使わない）:
 {sources}
 
+# 台本の前に作った「リサーチの木」
+{research}
+
+採用（adopt=true）したレンズを ACADEMIC_LENS と PERSPECTIVE_FLIP に使い、
+paradox を hook に、question を promise に、flip を PERSPECTIVE_FLIP に、
+human_return を HUMAN_RETURN と closing に反映してください。
 この内容で動画1本ぶんの台本を作ってください。"""
+
+
+_RESEARCH_SYSTEM = """あなたは日本語の経済解説YouTube動画のリサーチャーです。
+**まだ台本は書きません。** 1本の動画を「日常の違和感 → 経済学のレンズ → 意外な説明」
+で作るために、説明できる視点を先に集めます。
+
+手順:
+1. 視聴者（{audience}）が生活で感じている違和感を1つの問い（日常語）にする
+2. 「普通はこう思われている」と「でも実際は」を対にする（ここが冒頭になる）
+3. 次のレンズをすべて当て、それぞれ仮説・使える実在の統計（名前と年）・意外さ(1〜5)を書く
+{lenses}
+4. 一番強い反論を書き、それでも説明が成り立つ理由を書く
+5. 中盤で視点を反転させる第二の疑問（flip）を1つ決める
+6. 最後に、給料・買い物・働き方など視聴者の生活へどう戻すかを書く
+7. Knowledge Gap 型のタイトル案を5つ（なぜ〜なのか？／〜な人ほど〜／意外な〜）
+
+守ること:
+- 統計は実在するものだけ。不確かなら「要確認」と書く。数値を創作しない
+- 扱ってはいけない話題: {banned}
+"""
+
+
+def research_tree(cfg: Config, topic: Topic) -> dict[str, Any]:
+    """台本を書く前に、説明できる視点を集めて 2〜3 個を選ぶ（リサーチの木）."""
+    from . import bible
+
+    system = _RESEARCH_SYSTEM.format(
+        audience=cfg.get("channel.audience", ""),
+        lenses=bible.research_prompt_block(cfg),
+        banned="、".join(cfg.get("channel.banned_topics", []) or []),
+    )
+    user = _USER.split("# 台本の前に作った")[0].format(
+        title=topic.title, angle=topic.angle, horizon=topic.horizon,
+        stage=topic.diffusion_stage, lag=f"{topic.lag_months:.0f}",
+        bridge=topic.japan_bridge or "(指定なし)", why_now=topic.why_now or "(常設テーマ)",
+        hook=topic.audience_hook,
+        questions="\n".join(f"- {q}" for q in topic.key_questions) or "- (自由)",
+        sources=_fmt_sources(topic.sources),
+    ) + "\nこのテーマのリサーチの木を作ってください。"
+    data = llm.complete_json(
+        system, user, _RESEARCH_SCHEMA,
+        model=cfg.get("script.model", llm.DEFAULT_MODEL),
+        effort=cfg.get("script.research_effort", "medium"),
+    )
+    adopted = [x for x in data.get("lenses", []) if x.get("adopt")]
+    log.info("リサーチの木: 問い「%s」/ レンズ %d 個中 %d 個採用",
+             data.get("question", "")[:30], len(data.get("lenses", [])), len(adopted))
+    return data
+
+
+def _fmt_research(r: dict[str, Any]) -> str:
+    if not r:
+        return "(なし)"
+    lines = [
+        f"問い: {r.get('question', '')}",
+        f"普通はこう思われている: {r.get('common_belief', '')}",
+        f"でも実際は: {r.get('paradox', '')}",
+        f"自分ごと化の場面: {r.get('everyday_scene', '')}",
+        "レンズ:",
+    ]
+    for x in r.get("lenses", []):
+        mark = "採用" if x.get("adopt") else "不採用"
+        lines.append(f"  - [{mark}] {x.get('id', '')} {x.get('name', '')}: {x.get('hypothesis', '')}"
+                     f"（根拠: {x.get('evidence', '')}）")
+    lines += [
+        f"反論: {r.get('counterargument', '')}",
+        f"反転させる第二の疑問: {r.get('flip', '')}",
+        f"生活へ戻す: {r.get('human_return', '')}",
+    ]
+    return "\n".join(lines)
 
 
 def _fmt_sources(sources: list[dict[str, str]]) -> str:
@@ -568,8 +692,18 @@ def _style_block(cfg: Config) -> str:
 
 def generate(cfg: Config, topic: Topic) -> VideoScript:
     """台本を生成し、尺と事実の観点で補正して返す."""
+    from . import bible
+
     lo, hi = target_chars(cfg)
+    n_sections = int(cfg.get("video.body_sections", 5))
+    research: dict[str, Any] = {}
+    if cfg.get("script.research_tree", True):
+        try:
+            research = research_tree(cfg, topic)
+        except Exception as exc:              # リサーチが落ちても台本は作る
+            log.warning("リサーチの木を作れませんでした（台本だけ作ります）: %s", exc)
     system = _SYSTEM.format(
+        bible=bible.render_for_prompt(cfg, n_sections),
         style_block=_style_block(cfg),
         speech_style=_SPEECH_STYLE.get(
             str(cfg.get("channel.speech_style", "plain")), _SPEECH_STYLE["plain"]),
@@ -594,6 +728,7 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
         hook=topic.audience_hook,
         questions="\n".join(f"- {q}" for q in topic.key_questions) or "- (自由)",
         sources=_fmt_sources(topic.sources),
+        research=_fmt_research(research),
     )
 
     model = cfg.get("script.model", llm.DEFAULT_MODEL)
@@ -602,12 +737,15 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
     data = llm.complete_json(system, user, _SCRIPT_SCHEMA, model=model, effort=effort)
     script = VideoScript.from_dict(data)
     script.topic_title = script.topic_title or topic.title
+    script.research = research
+    _assign_beats(cfg, script)
 
     if cfg.get("script.fact_check", True):
         script = fact_check(cfg, script)
 
     script = fit_length(cfg, script)
     _sanitize(script)
+    _check_style(cfg, script)
     log.info("台本生成完了: %s (%d文字)", script.topic_title, script.total_chars)
     return script
 
@@ -729,6 +867,42 @@ def plain_heading(text: str) -> str:
                 return base + "のか"
             return base
     return t
+
+
+def _assign_beats(cfg: Config, script: VideoScript) -> None:
+    """beat が欠けた／順序が崩れたセクションに、9ブロックの順で beat を振り直す."""
+    from . import bible
+
+    order = bible.section_beats(cfg)
+    n = len(script.sections)
+    if not order or not n:
+        return
+    seen: list[str] = []
+    for i, sec in enumerate(script.sections):
+        want = bible.beat_for_section(cfg, i, n)
+        ok = sec.beat in order and sec.beat not in seen and \
+            order.index(sec.beat) >= (order.index(seen[-1]) if seen else -1)
+        if not ok:
+            sec.beat = want
+        seen.append(sec.beat)
+
+
+def _check_style(cfg: Config, script: VideoScript) -> None:
+    """バイブルの規則に外れているところを警告する（生成は止めない）."""
+    from . import bible
+
+    bad = [t for t in script.title_candidates if not bible.title_matches(cfg, t)]
+    if bad and len(bad) == len(script.title_candidates):
+        log.warning("タイトル案が全部 Knowledge Gap 型でない: %s", bad[:3])
+    main = (script.thumbnail_copy or {}).get("main", "")
+    if bible.thumbnail_overlaps_title(cfg, main, script.topic_title):
+        log.warning("サムネ主コピーがタイトルをなぞっている: 「%s」 / 「%s」", main, script.topic_title)
+    words = bible.semantic_cut_words(cfg)
+    pivots = sum(1 for sec in script.sections for sent in split_sentences(sec.narration)
+                 if sent.startswith(words))
+    if pivots < len(script.sections):
+        log.warning("接続詞で始まる転換文が少ない（%d 文 / %d セクション）。カット点が減る",
+                    pivots, len(script.sections))
 
 
 def _sanitize(script: VideoScript) -> None:

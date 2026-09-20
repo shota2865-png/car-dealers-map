@@ -187,8 +187,10 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
               for k, v in (sem.get("color_semantics", {}) or {}).items()}
     colors.setdefault("text", cfg.get("visuals.palette.text", "#FFFFFF"))
 
-    base_size = int(cfg.get("visuals.subtitle.font_size", 58))
-    outline = int(cfg.get("visuals.subtitle.outline", 5))
+    from . import design
+    # 字幕の大きさは本文トークン（body_l）が既定。config で明示したらそちら
+    base_size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "body_l", 58) + 4)
+    outline = int(cfg.get("visuals.subtitle.outline", 0) or design.stroke(cfg, "text_outline"))
     w, h = cfg.get("video.resolution", [1920, 1080])
     family = font_family(cfg)
     stroke = "#0B1120"

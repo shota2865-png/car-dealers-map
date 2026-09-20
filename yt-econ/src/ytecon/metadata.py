@@ -181,6 +181,13 @@ def build(cfg: Config, script: VideoScript, track: VoiceTrack,
 
     parts.append("■ 音声\n" + _voice_credit(cfg))
 
+    # 立ち絵・BGM などのクレジット（配布元の規約で表記が要るものは必ずここに書く）
+    credits = [str(cfg.get("character.credit", "") or "").strip(),
+               str(cfg.get("render.bgm.credit", "") or "").strip()]
+    credits = [c for c in credits if c]
+    if credits:
+        parts.append("■ 素材\n" + "\n".join(credits))
+
     description = "\n\n".join(p for p in parts if p.strip())[:MAX_DESCRIPTION]
 
     tags = [t.strip() for t in script.tags if t.strip()][:15]

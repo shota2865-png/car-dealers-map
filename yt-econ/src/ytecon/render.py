@@ -102,14 +102,25 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
         # 拡大時の粗さを防ぐぶんだけ上に取る。2倍まで上げても画質は変わらず遅くなるだけ
         sw, sh = int(w * OVERSAMPLE), int(h * OVERSAMPLE)
         step = (MAX_ZOOM - 1.0) / frames
-        if index % 2 == 0:   # 偶数シーンは寄り、奇数シーンは引き。単調さを避ける
-            zexpr = f"min(zoom+{step:.8f},{MAX_ZOOM})"
-        else:
+        # 寄り → 引き → 横移動 を順に回す（E02〜E04。同じ動きが続くと単調に見える）
+        from . import bible
+        motions = bible.motions(cfg) or ["push_in", "pull_out"]
+        motion = motions[index % len(motions)]
+        xexpr, yexpr = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        if motion == "pull_out":
             zexpr = f"max({MAX_ZOOM}-{step:.8f}*on,1.0)"
+        elif motion == "pan":
+            # 少しだけ寄った状態で、左→右（奇数回は右→左）へゆっくり流す
+            zexpr = f"{1 + (MAX_ZOOM - 1.0) * 0.6:.4f}"
+            span = f"(iw-iw/zoom)"
+            xexpr = (f"{span}*on/{frames}" if (index // len(motions)) % 2 == 0
+                     else f"{span}*(1-on/{frames})")
+        else:
+            zexpr = f"min(zoom+{step:.8f},{MAX_ZOOM})"
         vf = (
             f"scale={sw}:{sh}:force_original_aspect_ratio=increase,"
             f"crop={sw}:{sh},"
-            f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f"zoompan=z='{zexpr}':x='{xexpr}':y='{yexpr}'"
             f":d={frames}:s={w}x{h}:fps={fps}"
         )
     else:
@@ -117,7 +128,9 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
               f"loop=loop={frames}:size=1:start=0,fps={fps}")
 
     # 切り替わった感を出す短いフェードイン（カットの手触りが硬すぎない程度）
-    fade_frames = int(cfg.get("visuals.fade_in_frames", 6))
+    from . import design
+    # 切り替えの長さはデザイントークン（motion.fade_ms）。config で明示したらそちら
+    fade_frames = int(cfg.get("visuals.fade_in_frames", 0) or design.fade_frames(cfg, fps))
     if fade_frames > 0 and frames > fade_frames * 2:
         vf += f",fade=t=in:st=0:d={fade_frames / fps:.3f}"
 
@@ -225,7 +238,7 @@ def render(
     inputs = [silent, track.wav_path]
     args = [ffmpeg, "-y", "-i", str(silent), "-i", str(track.wav_path)]
 
-    bgm_path = bgm_mod.resolve(cfg)
+    bgm_path = bgm_mod.resolve(cfg, script=script, track=track, outdir=outdir)
     bgm_idx = None
     if bgm_path:
         bgm_idx = len(inputs)

@@ -41,6 +41,12 @@ video:
   chars_per_minute: 370
   resolution: [1920, 1080]
   fps: 30
+  # 画面のデザインの下敷き（config/design_tokens.yaml のプリセット）。
+  #   hybrid         : デジタル庁 × Apple HIG × Material 3 の合成（既定）
+  #   digital_agency : デジタル庁デザインシステム寄り（行政資料のような堅さ）
+  #   apple          : Apple HIG のダーク（黒地・大きな見出し・飾りなし）
+  #   material3      : Material Design 3 のダーク（紫系の役割色・大きな角丸）
+  design: "hybrid"
   # 1本あたりの本編セクション数（導入・まとめを除く）。
   # 参考4チャンネルはいずれもチャプター6前後だった
   body_sections: 6
@@ -48,6 +54,10 @@ video:
 script:
   model: "claude-opus-5"
   effort: "high"
+  # 台本の前に「リサーチの木」（説明できる視点を5〜6個集めて2〜3個採用）を作る。
+  # 構成は config/style_bible.yaml の 9 ブロック
+  research_tree: true
+  research_effort: "medium"
   # 生成後にファクトチェック用の第2パスを走らせる
   fact_check: true
   # 尺が目標レンジから外れたら自動で伸縮リライトする回数
@@ -146,15 +156,11 @@ tts:
 visuals:
   # 背景画像の取得元（PEXELS_API_KEY 未設定なら自動で単色/グラデにフォールバック）
   stock_provider: "pexels"
-  # 図表の配色
-  palette:
-    bg: "#0E1525"
-    surface: "#18223A"
-    text: "#F2F5FA"
-    accent: "#4CC2FF"
-    accent2: "#FFC857"
-    positive: "#5BD99A"
-    negative: "#FF6B6B"
+  # 配色は video.design のプリセット（config/design_tokens.yaml）から決まる。
+  # 個別に上書きしたい色だけここに書く（例: 参考チャンネルの実測色に寄せる）
+  palette: {}
+  #  palette:
+  #    accent: "#4CC2FF"
   # Ken Burns（ゆっくりズーム）を効かせる
   ken_burns: true
   # 1シーン（画が変わらない単位）の目標秒数。参考チャンネルは顔で持たせているが
@@ -162,14 +168,15 @@ visuals:
   scene_seconds: 7.0
   scene_seconds_min: 4.0
   scene_seconds_max: 14.0
-  # 各シーンの頭に短いフェードを入れて「切り替わった感」を出す（フレーム数）
-  fade_in_frames: 6
+  # 各シーンの頭に短いフェードを入れて「切り替わった感」を出す（フレーム数。0 ならトークンの motion.fade_ms）
+  fade_in_frames: 0
   # AI 画像生成。空なら使わない。"pollinations" は鍵不要・無料（品質はそこそこ）
   ai_image_provider: "pollinations"
   subtitle:
-    font_size: 58
+    # 0 ならデザイントークンの本文サイズから決める
+    font_size: 0
     max_chars_per_line: 20
-    outline: 5
+    outline: 0
 
 # 画面右下の解説キャラクター（ずんだもんなど）。
 # assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を
@@ -177,6 +184,18 @@ visuals:
 # 無い場合は自動で汎用の仮キャラを生成する（本番前に差し替えること）。
 character:
   enabled: true
+  # ずんだもんの立ち絵（ゆっくりMovieMaker4 の「動く立ち絵」形式）を使う場合は、
+  # 配布フォルダ（体/顔/口/目/…）を assets/character/ の下に置くだけでよい。
+  # 複数ある場合や別の場所に置く場合はここでフォルダを指定する
+  dir: ""
+  # 使う差分の番号（フォルダ内の NN.png の NN）。空なら各部品の最初のもの
+  #   例) parts: {目: "00", 口: "00", 眉: "01", 体: "00"}
+  parts: {}
+  # 左右反転（画面右下に置くので、左を向いている絵は反転して中央を向かせる）
+  flip: false
+  # 概要欄に自動で入れるクレジット。配布元の規約に従って書く
+  #   例) "立ち絵：坂本アヒル 様（https://seiga.nicovideo.jp/seiga/im10788496）"
+  credit: ""
   # 画面の高さに対する大きさ（0.42 = 画面の42%の高さ）
   height_ratio: 0.36
   # 右端・下端からの余白（px）
@@ -205,6 +224,12 @@ render:
     volume_db: -6
     # 声が乗っている間は BGM をさらに下げる（ダッキング）
     ducking: true
+    # ブロックごとに気分を切り替える（導入=ambient / 探究=curiosity / 意外な事実=tension /
+    # 結論=reflective）。assets/bgm/ambient.mp3 のように気分名のファイルを置くとそれを使い、
+    # 無ければ合成音。file を指定した場合はそちらが優先（全編1曲）
+    mood_timeline: true
+    # フリー BGM を使う場合のクレジット（概要欄に自動で入る）
+    credit: ""
   capcut:
     # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
     draft_dir: ""

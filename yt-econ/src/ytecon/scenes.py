@@ -49,15 +49,19 @@ class Scene:
 # ----------------------------------------------------------------------
 # 音声の行を「約8秒のかたまり」に割る
 # ----------------------------------------------------------------------
-def chunk_lines(lines: list[Line], target: float, lo: float, hi: float) -> list[list[Line]]:
+def chunk_lines(lines: list[Line], target: float, lo: float, hi: float,
+                pivots: tuple[str, ...] = ()) -> list[list[Line]]:
+    """約 target 秒ごとに切る。pivots（でも／しかし／つまり…）で始まる文の直前は、
+    lo 秒以上たまっていれば目標前でも切る（Semantic Cut: 意味が変わる所で画を変える）."""
     chunks: list[list[Line]] = []
     cur: list[Line] = []
     for ln in lines:
         if cur:
             span = ln.end - cur[0].start
             cur_span = cur[-1].end - cur[0].start
-            # 目標を超えたら切る。ただし上限を超えそうなときも切る
-            if cur_span >= target or span > hi:
+            pivot = bool(pivots) and ln.text.lstrip("「 　").startswith(pivots)
+            # 目標を超えたら切る。上限を超えそうなときも切る。転換語の前でも切る
+            if cur_span >= target or span > hi or (pivot and cur_span >= lo):
                 chunks.append(cur)
                 cur = []
         cur.append(ln)
@@ -144,6 +148,7 @@ class _Painter:
 
     def photo(self, query: str, prompt: str, heading: str, bullets: list[str],
               start: float, end: float) -> Scene:
+        # prompt は台本の image_prompt（概念の視覚化）。無ければ検索語で代用
         self.seed += 1
         p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
                                            self.seed, self._next("photo"))
@@ -162,7 +167,8 @@ def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
         pool.append(lambda s, e: painter.chart(sec, s, e))
     elif kind == "stock":
         pool.append(lambda s, e: painter.photo(sec.visual.query or sec.heading,
-                                               sec.visual.query, sec.heading, sec.on_screen, s, e))
+                                               sec.visual.image_prompt or sec.visual.query,
+                                               sec.heading, sec.on_screen, s, e))
     else:
         pool.append(lambda s, e: painter.bullets(sec.heading, sec.on_screen, s, e))
 
@@ -178,8 +184,9 @@ def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
     # 3. 写真を1枚は挟む（本体が写真でなければ）
     if kind != "stock":
         query = sec.visual.query or sec.heading
+        prompt = sec.visual.image_prompt or query
         pool.insert(min(2, len(pool)),
-                    lambda s, e: painter.photo(query, query, sec.heading, sec.on_screen[:2], s, e))
+                    lambda s, e: painter.photo(query, prompt, sec.heading, sec.on_screen[:2], s, e))
 
     # 4. 用語カード（このセクションが初出のもの。範囲外は順繰りに）
     terms = [t for t in script.terms if t.section in (index, index + 1)]
@@ -209,6 +216,8 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     target = float(cfg.get("visuals.scene_seconds", 8.0))
     lo = float(cfg.get("visuals.scene_seconds_min", 4.0))
     hi = float(cfg.get("visuals.scene_seconds_max", 14.0))
+    from . import bible
+    pivots = bible.semantic_cut_words(cfg)
 
     scenes: list[Scene] = []
 
@@ -216,7 +225,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         return [ln for ln in track.lines if ln.block_id == block]
 
     # --- hook: タイトル → キーワード ---
-    hook = chunk_lines(lines_of("hook"), target, lo, hi)
+    hook = chunk_lines(lines_of("hook"), target, lo, hi, pivots)
     for j, ch in enumerate(hook):
         s, e = _span(ch)
         if j == 0:
@@ -227,7 +236,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
                           else painter.quote(_key_sentence(ch), s, e))
 
     # --- proof: 数字があれば数字カード ---
-    for j, ch in enumerate(chunk_lines(lines_of("proof"), target, lo, hi)):
+    for j, ch in enumerate(chunk_lines(lines_of("proof"), target, lo, hi, pivots)):
         s, e = _span(ch)
         nums = _numbers(script.proof)
         if j == 0 and nums:
@@ -237,7 +246,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             scenes.append(painter.quote(_key_sentence(ch), s, e))
 
     # --- promise: この動画で分かること ---
-    for j, ch in enumerate(chunk_lines(lines_of("promise"), target, lo, hi)):
+    for j, ch in enumerate(chunk_lines(lines_of("promise"), target, lo, hi, pivots)):
         s, e = _span(ch)
         if j == 0:
             items = [x.rstrip("。") for x in split_sentences(script.promise)][1:4] or \
@@ -248,7 +257,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
 
     # --- 本編 ---
     for i, sec in enumerate(script.sections):
-        chunks = chunk_lines(lines_of(f"s{i}"), target, lo, hi)
+        chunks = chunk_lines(lines_of(f"s{i}"), target, lo, hi, pivots)
         if not chunks:
             continue
         pool = _section_pool(cfg, script, sec, i, chunks, painter)
@@ -263,7 +272,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
                 scenes.append(main_again(s, e))
 
     # --- closing: 3行まとめ → アウトロ ---
-    closing = chunk_lines(lines_of("closing"), target, lo, hi)
+    closing = chunk_lines(lines_of("closing"), target, lo, hi, pivots)
     for j, ch in enumerate(closing):
         s, e = _span(ch)
         if j == 0:

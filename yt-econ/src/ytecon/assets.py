@@ -156,13 +156,31 @@ def content_width(cfg: Config) -> int:
 
 
 def palette(cfg: Config) -> dict[str, str]:
+    """配色。デザイントークン（video.design のプリセット）→ visuals.palette の上書き の順."""
+    from . import design
+
     default = {
-        "bg": "#0E1525", "surface": "#18223A", "text": "#F2F5FA",
-        "accent": "#4CC2FF", "accent2": "#FFC857",
-        "positive": "#5BD99A", "negative": "#FF6B6B",
+        "bg": "#0E1525", "surface": "#18223A", "surface_high": "#22304C",
+        "outline": "#33405C", "text": "#F2F5FA", "text_secondary": "#C7D0DE",
+        "muted": "#9AA7BE", "accent": "#4CC2FF", "accent2": "#FFC857",
+        "positive": "#5BD99A", "negative": "#FF6B6B", "warning": "#FFB84C",
     }
+    default.update(design.colors(cfg))
     default.update(cfg.get("visuals.palette", {}) or {})
     return default
+
+
+def ts(cfg: Config, role: str, fallback: int = 48) -> int:
+    """文字サイズを役割で引く（display_l / headline_m / body_l / label …）."""
+    from . import design
+
+    return design.type_size(cfg, role, fallback)
+
+
+def rad(cfg: Config, size: str = "m") -> int:
+    from . import design
+
+    return design.radius(cfg, size)
 
 
 # ----------------------------------------------------------------------
@@ -214,7 +232,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
     d = ImageDraw.Draw(img)
 
     # 見出し
-    f_head = load_font(cfg, 76, "black")
+    f_head = load_font(cfg, ts(cfg, "headline_l", 76), "black")
     head_lines = _wrap(d, heading, f_head, w - 320)[:2]
     y = 230
     d.rectangle([150, y - 24, 150 + 10, y + 96 * len(head_lines) - 24], fill=pal["accent"])
@@ -223,7 +241,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
         y += 96
 
     # 箇条書き
-    f_body = load_font(cfg, 54)
+    f_body = load_font(cfg, ts(cfg, "body_l", 54))
     y = max(y + 70, 480)
     for bullet in bullets[:4]:
         d.ellipse([200, y + 20, 222, y + 42], fill=pal["accent2"])
@@ -410,7 +428,7 @@ def _overlay_heading(cfg: Config, image_path: Path, heading: str,
     pal = palette(cfg)
     img = Image.open(image_path).convert("RGB")
     d = ImageDraw.Draw(img)
-    f_head = load_font(cfg, 68, "black")
+    f_head = load_font(cfg, ts(cfg, "headline_m", 68), "black")
     lines = _wrap(d, heading, f_head, img.width - 360)[:2]
     y = 170
     d.rectangle([150, y - 16, 160, y + 88 * len(lines) - 16], fill=pal["accent"])
@@ -418,7 +436,7 @@ def _overlay_heading(cfg: Config, image_path: Path, heading: str,
         d.text((196, y), line, font=f_head, fill=pal["text"],
                stroke_width=3, stroke_fill="#00000099")
         y += 88
-    f_b = load_font(cfg, 44)
+    f_b = load_font(cfg, ts(cfg, "body_m", 44))
     y += 36
     for bullet in bullets[:3]:
         d.text((200, y), "・" + bullet, font=f_b, fill=pal["text"],
@@ -463,13 +481,13 @@ def build_title_card(cfg: Config, title: str, out: Path) -> Path:
     img = gradient((w, h), pal["surface"], pal["bg"])
     d = ImageDraw.Draw(img)
     cw = content_width(cfg)
-    f = load_font(cfg, 92, "black")
+    f = load_font(cfg, ts(cfg, "display_m", 92), "black")
     lines = _wrap(d, title, f, cw - 240)[:3]
     total = len(lines) * 120
     y = (h - total) // 2
     for line in lines:
         y = _center_text(d, line, f, y, cw, pal["text"]) + (120 - f.size - 18)
-    f_small = load_font(cfg, 40)
+    f_small = load_font(cfg, ts(cfg, "label", 40))
     _center_text(d, cfg.get("channel.name", ""), f_small, y + 40, cw, pal["accent"])
     img.save(out, quality=95)
     return out
@@ -482,7 +500,7 @@ def build_outro_card(cfg: Config, out: Path) -> Path:
     img = gradient((w, h), pal["bg"], pal["surface"])
     d = ImageDraw.Draw(img)
     cw = content_width(cfg)
-    f = load_font(cfg, 78, "black")
+    f = load_font(cfg, ts(cfg, "headline_l", 78), "black")
     for i, line in enumerate(["毎日 朝と夜に更新", "チャンネル登録で見逃しなく"]):
         _center_text(d, line, f, int(h / 2 - 110 + i * 120), cw,
                      pal["text"] if i == 0 else pal["accent"])
@@ -534,10 +552,10 @@ def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont
 def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     """キーワード1語をドンと置くカード。話題の切り替わりに使う."""
     img, d, pal, w, h = _card_base(cfg)
-    f = load_font(cfg, 150)
+    f = load_font(cfg, ts(cfg, "display_xl", 150))
     lines = _wrap(d, keyword, f, w - 300)[:2]
     if len(lines) > 1:
-        f = load_font(cfg, 120)
+        f = load_font(cfg, ts(cfg, "display_l", 120))
         lines = _wrap(d, keyword, f, w - 300)[:2]
     total = len(lines) * (f.size + 18)
     y = (h - total) // 2 - (50 if sub else 0)
@@ -546,7 +564,7 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     for line in lines:
         y = _center_text(d, line, f, y, w, pal["text"])
     if sub:
-        f2 = load_font(cfg, 52)
+        f2 = load_font(cfg, ts(cfg, "body_l", 52))
         _center_text(d, sub[:30], f2, y + 30, w, pal["accent2"])
     return _save(img, out)
 
@@ -554,11 +572,11 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
 def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path) -> Path:
     """数字を主役にするカード。DATA テロップの内容を大きく見せる."""
     img, d, pal, w, h = _card_base(cfg)
-    f_val = load_font(cfg, 210)
+    f_val = load_font(cfg, ts(cfg, "numeral_xl", 210))
     if d.textlength(value, font=f_val) > w - 240:
-        f_val = load_font(cfg, 150)
-    f_lab = load_font(cfg, 60)
-    f_note = load_font(cfg, 36, "bold")
+        f_val = load_font(cfg, ts(cfg, "display_xl", 150))
+    f_lab = load_font(cfg, ts(cfg, "title", 60))
+    f_note = load_font(cfg, ts(cfg, "label", 36), "bold")
     y = h // 2 - 200
     y = _center_text(d, label[:22], f_lab, y, w, pal["accent"])
     y = _center_text(d, value, f_val, y + 10, w, pal["positive"])
@@ -570,10 +588,10 @@ def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path
 def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
     """いま読み上げている一文をそのまま大きく出す。「文字で分かりやすく」の主力."""
     img, d, pal, w, h = _card_base(cfg)
-    f = load_font(cfg, 84)
+    f = load_font(cfg, ts(cfg, "headline_l", 84))
     lines = _wrap(d, sentence, f, w - 360)[:3]
     if len(lines) == 3:
-        f = load_font(cfg, 70)
+        f = load_font(cfg, ts(cfg, "headline_m", 70))
         lines = _wrap(d, sentence, f, w - 360)[:3]
     total = len(lines) * (f.size + 24)
     y = (h - total) // 2
@@ -590,15 +608,15 @@ def render_term_card(cfg: Config, term: str, meaning: str, example: str, out: Pa
     """ビジネス用語カード。用語 → 一文の意味 → 数字つきの例."""
     img, d, pal, w, h = _card_base(cfg)
     # 見出しタグ
-    f_tag = load_font(cfg, 40)
+    f_tag = load_font(cfg, ts(cfg, "label", 40))
     d.rectangle([150, 150, 150 + 330, 150 + 64], fill=pal["accent2"])
     d.text((174, 158), "ビジネス用語", font=f_tag, fill="#101010")
 
-    f_term = load_font(cfg, 118)
+    f_term = load_font(cfg, ts(cfg, "display_l", 118))
     lines = _wrap(d, term, f_term, w - 300)[:1]
     d.text((150, 240), lines[0] if lines else _safe_for_font(f_term, term), font=f_term, fill=pal["text"])
 
-    f_mean = load_font(cfg, 56)
+    f_mean = load_font(cfg, ts(cfg, "body_l", 56))
     y = 420
     for line in _wrap(d, meaning, f_mean, w - 340)[:2]:
         d.text((170, y), line, font=f_mean, fill=pal["text"])
@@ -607,7 +625,7 @@ def render_term_card(cfg: Config, term: str, meaning: str, example: str, out: Pa
     if example:
         y += 30
         d.rectangle([170, y, 182, y + 150], fill=pal["positive"])
-        f_ex = load_font(cfg, 48, "bold")
+        f_ex = load_font(cfg, ts(cfg, "body_m", 48), "bold")
         for line in _wrap(d, example, f_ex, w - 420)[:3]:
             d.text((214, y), line, font=f_ex, fill="#CFE3D8")
             y += 64
@@ -623,23 +641,23 @@ def render_reference_card(cfg: Config, name: str, url: str, note: str, out: Path
     img, d, pal, w, h = _card_base(cfg)
     # 疑似ウィンドウ
     x0, y0, x1, y1 = 200, 200, w - 200, h - 220
-    d.rounded_rectangle([x0, y0, x1, y1], radius=28, fill="#1F2A44", outline="#33405C", width=3)
-    d.rounded_rectangle([x0, y0, x1, y0 + 64], radius=28, fill="#2A3655")
+    d.rounded_rectangle([x0, y0, x1, y1], radius=rad(cfg, "l"), fill=pal["surface_high"], outline=pal["outline"], width=3)
+    d.rounded_rectangle([x0, y0, x1, y0 + 64], radius=rad(cfg, "l"), fill=pal["outline"])
     for i, c in enumerate(("#FF6B6B", "#FFC857", "#5BD99A")):
         d.ellipse([x0 + 28 + i * 34, y0 + 20, x0 + 52 + i * 34, y0 + 44], fill=c)
-    f_url = load_font(cfg, 30, "bold")
+    f_url = load_font(cfg, ts(cfg, "label_s", 30), "bold")
     domain = re.sub(r"^https?://", "", url or "").split("/")[0]
     d.text((x0 + 150, y0 + 16), domain[:60], font=f_url, fill="#9AA7BE")
 
-    f_tag = load_font(cfg, 36)
+    f_tag = load_font(cfg, ts(cfg, "label", 36))
     d.text((x0 + 60, y0 + 110), "参考・出典", font=f_tag, fill=pal["accent"])
-    f_name = load_font(cfg, 92)
+    f_name = load_font(cfg, ts(cfg, "display_s", 92))
     y = y0 + 170
     for line in _wrap(d, name, f_name, x1 - x0 - 120)[:2]:
         d.text((x0 + 60, y), line, font=f_name, fill=pal["text"])
         y += 112
     if note:
-        f_note = load_font(cfg, 50, "bold")
+        f_note = load_font(cfg, ts(cfg, "body_m", 50), "bold")
         y += 20
         for line in _wrap(d, note, f_note, x1 - x0 - 120)[:3]:
             d.text((x0 + 60, y), line, font=f_note, fill="#CBD5E1")
@@ -683,8 +701,11 @@ def fetch_ai_image(cfg: Config, prompt: str, out: Path, seed: int = 0) -> Path |
     provider = str(cfg.get("visuals.ai_image_provider", "") or "").lower()
     if provider != "pollinations" or not prompt:
         return None
-    style = ("minimal isometric editorial illustration, dark navy background, "
-             "cyan and amber accents, flat vector, no text, no letters, no human faces")
+    from . import bible
+    # 画風はスタイルバイブルで一元管理（概念を映画のように。文字・ロゴは入れない）
+    style = bible.image_style(cfg) or (
+        "cinematic documentary photography, muted color grading, "
+        "shallow depth of field, subtle film grain, no text, no letters")
     from urllib.parse import quote
 
     url = (f"https://image.pollinations.ai/prompt/{quote(prompt + ', ' + style)}"

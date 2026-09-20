@@ -8,8 +8,23 @@
     assets/character/mouth_open.png  口を開けている
     assets/character/blink.png       目を閉じている
 
-すべて同じサイズ・透過PNGであること。ずんだもんの公式立ち絵を使う場合は
-配布元のガイドライン（クレジット表記など）に従ってください。
+すべて同じサイズ・透過PNGであること。
+
+**ゆっくりMovieMaker4 の「動く立ち絵」形式もそのまま使える。**
+ずんだもんの立ち絵（坂本アヒル様の配布素材など）は、次のようなフォルダで
+配られている。これを assets/character/ の下にフォルダごと置けばよい:
+
+    assets/character/ずんだもん立ち絵/
+        体/00.png            体（服）
+        顔/00.png            顔の下地
+        口/00.png            閉じた口          ← 00.0.png, 00.1.png, 00.2.png が開いていく途中
+        目/00.png            開いた目          ← 00.0.png, 00.1.png … が閉じていく途中（まばたき）
+        眉/00.png  髪/00.png  他/00.png        （あるものだけ）
+
+命名規則は YMM4 と同じ: `NN.png` が基本、`NN.K.png` がアニメーションの K コマ目。
+ここから base / mouth_half / mouth_open / blink の 4 枚を合成して使う。
+使う差分（目 01 番、眉 02 番など）は config の character.parts で選べる。
+配布元のガイドライン（クレジット表記など）に必ず従うこと（character.credit）。
 画像が無いときは、汎用の仮キャラを自動生成する（本番前に差し替える前提）。
 
 仕組み:
@@ -49,7 +64,140 @@ def find_assets(cfg: Config) -> dict[str, Path] | None:
         # 足りない表情は base で代用する
         base = d / "base.png"
         return {s: (p if p.exists() else base) for s, p in found.items()}
+    ymm = find_ymm_dir(cfg)
+    if ymm is not None:
+        try:
+            return compose_ymm(cfg, ymm, cfg.workdir / "character_composed")
+        except Exception as exc:
+            log.warning("立ち絵フォルダ %s を合成できませんでした（仮キャラにします）: %s", ymm, exc)
     return None
+
+
+# ----------------------------------------------------------------------
+# ゆっくりMovieMaker4「動く立ち絵」形式（ずんだもん立ち絵など）
+# ----------------------------------------------------------------------
+# 重ね順（下 → 上）。YMM4 の既定に合わせる
+PARTS_ORDER = ("後", "体", "服", "顔", "口", "目", "眉", "髪", "他")
+
+
+def find_ymm_dir(cfg: Config) -> Path | None:
+    """立ち絵フォルダを探す。config の character.dir → assets/character/ 直下のフォルダの順."""
+    cands: list[Path] = []
+    explicit = str(cfg.get("character.dir", "") or "").strip()
+    if explicit:
+        p = Path(explicit)
+        cands.append(p if p.is_absolute() else cfg.root / p)
+    root = character_dir(cfg)
+    if root.exists():
+        cands += sorted(x for x in root.iterdir() if x.is_dir())
+    for c in cands:
+        if (c / "口").is_dir() and ((c / "体").is_dir() or (c / "顔").is_dir()):
+            return c
+        # 1 段深く入っている配布 zip 対策
+        for sub in sorted(x for x in c.iterdir() if x.is_dir()) if c.exists() else []:
+            if (sub / "口").is_dir() and ((sub / "体").is_dir() or (sub / "顔").is_dir()):
+                return sub
+    return None
+
+
+def _variants(folder: Path) -> dict[str, dict]:
+    """フォルダ内の PNG を「NN → {base, frames[]}」にまとめる（NN.K.png がコマ）."""
+    out: dict[str, dict] = {}
+    for p in sorted(folder.glob("*.png")):
+        stem = p.name[:-4]
+        head, _, tail = stem.partition(".")
+        head = head.lstrip("!")          # YMM4 の「!」付き（既定にする印）も同じ扱い
+        v = out.setdefault(head, {"base": None, "frames": []})
+        if tail == "":
+            v["base"] = p
+        else:
+            try:
+                v["frames"].append((float(tail), p))
+            except ValueError:
+                v["frames"].append((len(v["frames"]), p))
+    for v in out.values():
+        v["frames"] = [p for _, p in sorted(v["frames"])]
+        if v["base"] is None and v["frames"]:
+            v["base"] = v["frames"].pop(0)
+    return {k: v for k, v in out.items() if v["base"] is not None}
+
+
+def _pick(folder: Path, wanted: str | None) -> dict | None:
+    vs = _variants(folder)
+    if not vs:
+        return None
+    key = str(wanted) if wanted is not None and str(wanted) in vs else sorted(vs)[0]
+    return vs[key]
+
+
+def compose_ymm(cfg: Config, src: Path, out_dir: Path) -> dict[str, Path]:
+    """立ち絵の部品を重ねて、base / mouth_half / mouth_open / blink の 4 枚を作る."""
+    from PIL import Image
+
+    parts_cfg = cfg.get("character.parts", {}) or {}
+    flip = bool(cfg.get("character.flip", False))
+    layers: list[tuple[str, dict]] = []
+    for part in PARTS_ORDER:
+        folder = src / part
+        if folder.is_dir():
+            v = _pick(folder, parts_cfg.get(part))
+            if v:
+                layers.append((part, v))
+    if not layers:
+        raise ValueError("部品フォルダが見つかりません")
+
+    # 更新チェック（部品が変わっていなければ前回の合成を使う）
+    stamp = "|".join(f"{p}:{v['base'].stat().st_mtime_ns}" for p, v in layers) + \
+            f"|{parts_cfg}|{flip}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp_file = out_dir / "stamp.txt"
+    result = {s: out_dir / f"{s}.png" for s in STATES}
+    if stamp_file.exists() and stamp_file.read_text() == stamp and all(p.exists() for p in result.values()):
+        return result
+
+    def pick_image(part: str, v: dict, state: str) -> Path:
+        frames = v["frames"]
+        if part == "口" and frames:
+            if state == "mouth_open":
+                return frames[-1]
+            if state == "mouth_half":
+                return frames[len(frames) // 2] if len(frames) > 1 else frames[0]
+        if part == "目" and frames and state == "blink":
+            return frames[-1]
+        return v["base"]
+
+    size = Image.open(layers[0][1]["base"]).size
+    canvases: dict[str, Image.Image] = {}
+    for state in STATES:
+        canvas = Image.new("RGBA", size, (0, 0, 0, 0))
+        for part, v in layers:
+            im = Image.open(pick_image(part, v, state)).convert("RGBA")
+            if im.size != size:
+                im = im.resize(size, Image.LANCZOS)
+            canvas.alpha_composite(im)
+        canvases[state] = canvas
+
+    # 4 枚に共通の余白を落とす（大きな透過キャンバスのままだと重い）
+    bbox = None
+    for c in canvases.values():
+        b = c.getbbox()
+        if b:
+            bbox = b if bbox is None else (min(bbox[0], b[0]), min(bbox[1], b[1]),
+                                           max(bbox[2], b[2]), max(bbox[3], b[3]))
+    for state, c in canvases.items():
+        if bbox:
+            c = c.crop(bbox)
+        if flip:
+            c = c.transpose(Image.FLIP_LEFT_RIGHT)
+        c.save(result[state])
+    stamp_file.write_text(stamp)
+    mouth_frames = next((len(v["frames"]) for p, v in layers if p == "口"), 0)
+    eye_frames = next((len(v["frames"]) for p, v in layers if p == "目"), 0)
+    log.info("立ち絵を合成しました: %s（部品 %s / 口コマ %d / 目コマ %d）",
+             src.name, "".join(p for p, _ in layers), mouth_frames, eye_frames)
+    if mouth_frames == 0:
+        log.warning("口の開きコマ（口/00.0.png など）が無いので口パクしません")
+    return result
 
 
 def make_placeholder(cfg: Config, size: int = 640) -> dict[str, Path]:
