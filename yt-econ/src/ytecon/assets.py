@@ -247,7 +247,9 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
     lines = [ln for ln in lines if ln]
     # 2〜3 行なら、割る位置を総当たりで選ぶ（「価値／が下がる」「お／よそ」を避ける）
     if _balance_ok and len(lines) in (2, 3):
-        best = _best_split(draw, text, font, max_width, len(lines))
+        # strict のときは「自然な切れ目」（読点・助詞の直後など、点数 -3 以上）だけを認める。
+        # 語の途中でしか割れない大きさなら None を返し、fit_text が少し縮めて試し直す
+        best = _best_split(draw, text, font, max_width, len(lines), min_score=-3.0 if strict else None)
         if best:
             return best
         if strict:
@@ -317,8 +319,12 @@ def _cut_score(text: str, i: int) -> float | None:
     return score
 
 
-def _best_split(draw, text: str, font, max_width: int, k: int) -> list[str] | None:
-    """k 行（2 or 3）の割り位置を点数で選ぶ: 幅に収まる／行頭に助詞・句読点を置かない／長さが釣り合う."""
+def _best_split(draw, text: str, font, max_width: int, k: int,
+                min_score: float | None = None) -> list[str] | None:
+    """k 行（2 or 3）の割り位置を点数で選ぶ: 幅に収まる／行頭に助詞・句読点を置かない／長さが釣り合う.
+
+    min_score を渡すと、切れ目の自然さ（釣り合いの減点を除く）がそれ未満の候補は選ばない。
+    """
     n = len(text)
 
     def fits(seg: str) -> bool:
@@ -331,7 +337,7 @@ def _best_split(draw, text: str, font, max_width: int, k: int) -> list[str] | No
             if not a or not b or not fits(a) or not fits(b):
                 continue
             sc = _cut_score(text, i)
-            if sc is None:
+            if sc is None or (min_score is not None and sc < min_score):
                 continue
             sc -= abs(len(a) - len(b)) * 2.0
             if sc > best_score:
@@ -342,14 +348,14 @@ def _best_split(draw, text: str, font, max_width: int, k: int) -> list[str] | No
         if not a or not fits(a):
             continue
         sa = _cut_score(text, i)
-        if sa is None:
+        if sa is None or (min_score is not None and sa < min_score):
             continue
         for j in range(i + 2, n - 1):
             b, c = text[i:j].strip(" 　"), text[j:].lstrip(" 　")
             if not b or not c or not fits(b) or not fits(c):
                 continue
             sb = _cut_score(text, j)
-            if sb is None:
+            if sb is None or (min_score is not None and sb < min_score):
                 continue
             avg = n / 3
             sc = sa + sb - (abs(len(a) - avg) + abs(len(b) - avg) + abs(len(c) - avg)) * 1.5
@@ -1258,7 +1264,7 @@ def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Pa
             rows.append(["", cells[0], cells[1]])
     if not rows:
         rows = [["", title, ""]]
-    label_w = 300
+    label_w = min(300, int((cw - m * 2) * 0.22))
     col_w = (cw - m * 2 - label_w - 40) // 2
     y = y0 + 10
     head_h = 96
