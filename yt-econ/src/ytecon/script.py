@@ -1231,8 +1231,12 @@ type と items の書き方:
 
 def ensure_diagrams(cfg: Config, script: VideoScript, force: bool = False) -> VideoScript:
     """diagrams が無い（古い）台本に、図解を後付けする."""
-    if not force and any(sec.diagrams for sec in script.sections):
+    have_sections = any(sec.diagrams for sec in script.sections)
+    have_blocks = any(script.block_diagrams.values())
+    if not force and have_sections and have_blocks:
         return script
+    # 本編の図解が台本生成の時点で付いていれば、導入・締めのぶんだけ頼む（本編は上書きしない）
+    only_blocks = have_sections and not force
     blocks = [("hook", "導入・つかみ", script.hook), ("proof", "導入・裏づけ", script.proof),
               ("promise", "導入・約束", script.promise), ("closing", "締め", script.closing)]
     body = []
@@ -1243,10 +1247,12 @@ def ensure_diagrams(cfg: Config, script: VideoScript, force: bool = False) -> Vi
             body.append(f"## {key}: {name}\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
             keys.append(key)
     for i, sec in enumerate(script.sections):
+        if only_blocks:
+            break
         sents = split_sentences(strip_tags(sec.narration))
         body.append(f"## s{i}: {sec.heading}（{sec.beat}）\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
         keys.append(f"s{i}")
-    user = ("次の台本の各ブロック（hook / proof / promise / s0.. / closing）に diagrams を作ってください。"
+    user = ("次の台本の各ブロック（" + " / ".join(keys) + "）に diagrams を作ってください。"
             "sections の並びと数は入力と同じにし、heading にブロック名（hook, s0 など）を入れてください。\n\n"
             + "\n\n".join(body))
     data = llm.complete_json(_DIAGRAMS_SYSTEM, user, _DIAGRAMS_SCHEMA,
