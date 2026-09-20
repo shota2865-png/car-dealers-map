@@ -291,6 +291,8 @@ def _cut_score(text: str, i: int) -> float | None:
         score -= 14
     if prev.isdigit() and nxt.isdigit():
         score -= 14
+    if (prev.isdigit() or prev in "%％.．,，") and nxt in "円%％割分倍人年月日時か個台点円兆億万千百":
+        score -= 16                         # 「1000｜円札」「5.1｜%」のように数字と単位を割らない
     if kanji(prev) and kanji(nxt):
         score -= 5
     return score
@@ -344,20 +346,21 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
                     out: Path) -> Path:
     img, d, pal, _cw, h = _card_base(cfg, card_style(cfg, "bullets"))
     w = img.width
+    img.info["vcenter"] = (TOP_BAND, h - SUB_BAND)
 
     # 見出し
     cw = _cw
     f_head, head_lines = fit_text(cfg, d, heading, "headline_l", cw - 320, 2)
     y = 200
     lh = int(f_head.size * 1.28)
-    d.rectangle([150, y - 24, 150 + 10, y + lh * len(head_lines) - 24], fill=pal["accent"])
+    _accent_bar(d, 150, y, head_lines[0], f_head, pal["accent"], lines=len(head_lines), lh=lh) if head_lines else None
     for line in head_lines:
         d.text((196, y), line, font=f_head, fill=pal["text"])
         y += lh
 
     # 箇条書き（4項目 × 最大2行が枠に収まるよう、本文は少し小さくしてもよい）
     y = max(y + 60, 440)
-    bottom = h - 120
+    bottom = h - SUB_BAND - 20
     for bullet in bullets[:4]:
         f_body, blines = fit_text(cfg, d, bullet, "body_l", cw - 480, 2)
         bh = int(f_body.size * 1.3)
@@ -646,8 +649,8 @@ def build_all(cfg: Config, script: VideoScript, outdir: str | Path) -> dict[str,
 #   solid : 従来どおり不透明なグラデーション（動く背景を使わないとき）
 #   glass : 透過 + 半透明の面（すりガラス）。箇条書き・用語・出典・図表など文字が多いもの
 #   clear : 透過のみ。キーワード・数字・一文など短い文字を背景の上に直接置く（影で読ませる）
-GLASS_KINDS = ("bullets", "term", "reference", "chart", "outro")
-CLEAR_KINDS = ("keyword", "number", "quote", "title")
+GLASS_KINDS = ("bullets", "term", "chart", "outro")
+CLEAR_KINDS = ("keyword", "number", "quote", "title", "reference")
 
 
 def card_style(cfg: Config, kind: str) -> str:
@@ -671,17 +674,84 @@ def _card_base(cfg: Config, style: str = "solid"
         return img, ImageDraw.Draw(img), pal, content_width(cfg), h
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # 背景を少し落として文字を立たせる（動画側にフィルタを掛けずに済む）
-    d.rectangle([0, 0, w, h], fill=(0, 0, 0, int(255 * float(cfg.get("visuals.backdrop_dim", 0.30)))))
+    dim = int(255 * float(cfg.get("visuals.backdrop_dim", 0.30)))
     if style == "glass":
-        m = design.safe_margin(cfg) - 24
-        cw = content_width(cfg)
+        # すりガラスの面は、描き終わった中身の大きさに合わせて _save で敷く
+        # （画面いっぱいの板にしない）。ここでは中身だけを透明レイヤーに描く
         r, g, b = _rgb(pal["surface"])
         orr, og, ob = _rgb(pal["outline"])
-        d.rounded_rectangle([m, 64, cw - 8, h - 64], radius=design.radius(cfg, "l"),
-                            fill=(r, g, b, int(255 * 0.80)), outline=(orr, og, ob, 160),
-                            width=max(design.stroke(cfg, "card"), 2))
+        img.info["glass"] = {
+            "dim": dim,
+            "fill": (r, g, b, int(255 * 0.82)),
+            "outline": (orr, og, ob, 160),
+            "width": max(design.stroke(cfg, "card"), 2),
+            "radius": design.radius(cfg, "l"),
+        }
+    else:
+        # 背景を少し落として文字を立たせる（動画側にフィルタを掛けずに済む）
+        d.rectangle([0, 0, w, h], fill=(0, 0, 0, dim))
     return img, d, pal, content_width(cfg), h
+
+
+GLASS_PAD = (56, 40)   # すりガラスの面が中身の外側に取る余白（左右, 上下）
+
+
+def _fit_glass(img: Image.Image) -> Image.Image:
+    """中身（透明レイヤーに描いた文字・図）の外接矩形にだけ、すりガラスの面を敷く."""
+    spec = img.info.get("glass")
+    if not spec:
+        return img
+    w, h = img.size
+    bbox = img.getchannel("A").getbbox()
+    base = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(base)
+    d.rectangle([0, 0, w, h], fill=(0, 0, 0, spec["dim"]))
+    if bbox:
+        px, py = GLASS_PAD
+        box = [max(bbox[0] - px, 16), max(bbox[1] - py, 16),
+               min(bbox[2] + px, w - 16), min(bbox[3] + py, h - 16)]
+        d.rounded_rectangle(box, radius=spec["radius"], fill=spec["fill"],
+                            outline=spec["outline"], width=spec["width"])
+    base.alpha_composite(img)
+    return base
+
+
+def _vcenter(img: Image.Image) -> Image.Image:
+    """中身全体（見出し＋図＋出典）を、上の余白と字幕帯のあいだで上下中央に寄せる."""
+    band = img.info.pop("vcenter", None)
+    if not band:
+        return img
+    top, bottom = band
+    bbox = img.getchannel("A").getbbox()
+    if not bbox:
+        return img
+    want = (top + bottom) / 2
+    have = (bbox[1] + bbox[3]) / 2
+    dy = int(round(want - have))
+    dy = max(min(dy, bottom - bbox[3]), top - bbox[1])   # 帯からはみ出す方向には動かさない
+    if abs(dy) < 2:
+        return img
+    moved = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    moved.alpha_composite(img, (0, dy))
+    moved.info.update(img.info)
+    return moved
+
+
+def _draw_note(img: Image.Image) -> None:
+    """図解の出典行を、中身のすぐ下（字幕帯より上）に描く。_diagram_base が予約した情報を使う."""
+    spec = img.info.pop("note", None)
+    if not spec:
+        return
+    text, font, fill, x, max_w, y_max = spec
+    bbox = img.getchannel("A").getbbox()
+    y = min((bbox[3] + 26) if bbox else y_max, y_max)
+    d = ImageDraw.Draw(img)
+    note_txt = "— " + _safe_for_font(font, text)
+    cut = False
+    while len(note_txt) > 4 and d.textlength(note_txt + "…", font=font) > max_w:
+        note_txt = note_txt[:-1]
+        cut = True
+    d.text((x, y), note_txt + ("…" if cut else ""), font=font, fill=fill)
 
 
 def _shadow(img: Image.Image) -> Image.Image:
@@ -701,10 +771,37 @@ def _save(img: Image.Image, out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     if img.mode == "RGBA":
         out = out.with_suffix(".png")
-        _shadow(img).save(out)
+        _draw_note(img)
+        _shadow(_fit_glass(_vcenter(img))).save(out)
         return out
     img.save(out, quality=94)
     return out
+
+
+def _text_block(d: ImageDraw.ImageDraw, lines: list[str], font: ImageFont.FreeTypeFont,
+                box: list[float] | tuple[float, float, float, float], fill,
+                align: str = "center", spacing: float = 1.2) -> None:
+    """箱の中に文字を上下左右とも中央で置く（字形の実寸で測るので、箱と文字の高さが合う）."""
+    lines = [_safe_for_font(font, ln) for ln in lines if ln is not None]
+    if not lines:
+        return
+    x0, y0, x1, y1 = box
+    lh = int(font.size * spacing)
+    # 字形の実寸（この字体の上端オフセットと高さ）
+    bb = d.textbbox((0, 0), "".join(lines) or "国", font=font)
+    glyph_h = bb[3] - bb[1]
+    total = lh * (len(lines) - 1) + glyph_h
+    y = y0 + ((y1 - y0) - total) / 2 - bb[1]
+    for ln in lines:
+        tw = d.textlength(ln, font=font)
+        if align == "left":
+            x = x0
+        elif align == "right":
+            x = x1 - tw
+        else:
+            x = x0 + ((x1 - x0) - tw) / 2
+        d.text((x, y), ln, font=font, fill=fill)
+        y += lh
 
 
 def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
@@ -721,8 +818,9 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     """キーワード1語をドンと置くカード。話題の切り替わりに使う."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "keyword"))
     f, lines = fit_text(cfg, d, keyword, "display_xl", w - 300, 2, min_size=80)
-    total = len(lines) * (f.size + 18)
-    y = (h - total) // 2 - (50 if sub else 0)
+    total = len(lines) * (f.size + 18) + (int(ts(cfg, "body_l") * 1.6) if sub else 0)
+    # 字幕の帯（下 SUB_BAND px）には掛けない。その上の範囲で中央に
+    y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
     # 左右のアクセント線
     d.rectangle([w // 2 - 260, y - 40, w // 2 + 260, y - 30], fill=pal["accent"])
     for line in lines:
@@ -739,11 +837,16 @@ def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path
     f_val, vl = fit_text(cfg, d, value, "numeral_xl", w - 240, 1, min_size=96)
     f_lab, ll = fit_text(cfg, d, label, "title", w - 300, 1, min_size=36)
     f_note, nl = fit_text(cfg, d, note, "label", w - 300, 1, weight="bold", min_size=26) if note else (None, [])
-    y = h // 2 - 200
-    y = _center_text(d, ll[0], f_lab, y, w, pal["accent"])
-    y = _center_text(d, vl[0], f_val, y + 10, w, pal["positive"])
+    lab_h = int(f_lab.size * 1.4)
+    val_bb = d.textbbox((0, 0), vl[0], font=f_val)
+    val_h = val_bb[3] - val_bb[1] + 24
+    note_h = int(f_note.size * 1.6) if note else 0
+    total = lab_h + val_h + note_h
+    y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
+    _text_block(d, ll[:1], f_lab, (0, y, w, y + lab_h), pal["accent"])
+    _text_block(d, vl[:1], f_val, (0, y + lab_h, w, y + lab_h + val_h), pal["positive"])
     if note:
-        _center_text(d, nl[0], f_note, y + 20, w, "#9AA7BE")
+        _text_block(d, nl[:1], f_note, (0, y + lab_h + val_h, w, y + total), "#9AA7BE")
     return _save(img, out)
 
 
@@ -761,9 +864,9 @@ def render_quote_card(cfg: Config, sentence: str, out: Path, source: str = "") -
         f, lines = fit_text(cfg, d, text, "display_s", w - 360, 2, min_size=56)
     lh = f.size + 24
     total = len(lines) * lh + (int(ts(cfg, "label") * 1.8) if source else 0)
-    y = (h - total) // 2
+    y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
     # 左のアクセントバー（引用符の代わり。発言者「引用」形式でも邪魔にならない）
-    d.rectangle([150, y + 8, 150 + 12, y + len(lines) * lh - 16], fill=pal["accent"])
+    _accent_bar(d, 150, y, lines[0], f, pal["accent"], lines=len(lines), lh=lh)
     for line in lines:
         d.text((200, y), line, font=f, fill=pal["text"])
         y += lh
@@ -794,6 +897,9 @@ def render_term_card(cfg: Config, term: str, meaning: str, example: str, out: Pa
         y += 30
         f_ex, el = fit_text(cfg, d, example, "body_m", w - 420, 3, weight="bold")
         eh = int(f_ex.size * 1.34)
+        # 字幕の帯には掛けない（入らない行は落とす）
+        while len(el) > 1 and y + eh * len(el) > h - SUB_BAND - 20:
+            el = el[:-1]
         d.rectangle([170, y, 182, y + eh * len(el) - 10], fill=pal["positive"])
         for line in el:
             d.text((214, y), line, font=f_ex, fill="#CFE3D8")
@@ -926,22 +1032,26 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
     """
     from . import design
 
-    img, d, pal, cw, h = _card_base(cfg, "clear")
+    # 図解と同じ見た目（黒い縁取りは付けない。すりガラスの面を中身の大きさで敷く）
+    img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "chart"))
     m = design.safe_margin(cfg)
-    f_head, lines = fit_text(cfg, d, heading, "headline_m", cw - m * 2, 2) if heading else (load_font(cfg, 68), [])
-    y = h - 300 - 96 * len(lines) - (len(bullets[:2]) * 64 if bullets else 0)
-    y = max(y, 120)
-    if lines:
-        d.rectangle([m, y - 8, m + 10, y + 96 * len(lines) - 24], fill=pal["accent"])
-    for line in lines:
-        d.text((m + 36, y), line, font=f_head, fill=pal["text"],
-               stroke_width=design.stroke(cfg, "text_outline"), stroke_fill="#06090F")
-        y += 96
+    f_head, lines = fit_text(cfg, d, heading, "headline_m", cw - m * 2 - 60, 2) if heading else (load_font(cfg, 68), [])
+    lh = int(f_head.size * 1.3)
+    bullets = [b for b in (bullets or []) if b][:2]
     f_b = load_font(cfg, ts(cfg, "body_m", 44))
-    for b in (bullets or [])[:2]:
-        d.text((m + 36, y + 10), "・" + b, font=f_b, fill=pal["text_secondary"],
-               stroke_width=3, stroke_fill="#06090F")
-        y += 64
+    bh = int(f_b.size * 1.45)
+    total = lh * len(lines) + (bh * len(bullets) + 10 if bullets else 0)
+    y = min(h - SUB_BAND - 80 - total, h - 360 - total)
+    y = max(y, TOP_BAND)
+    if lines:
+        _accent_bar(d, m, y, lines[0], f_head, pal["accent"], lines=len(lines), lh=lh)
+    for line in lines:
+        d.text((m + 36, y), line, font=f_head, fill=pal["text"])
+        y += lh
+    y += 10 if bullets else 0
+    for b in bullets:
+        d.text((m + 36, y), "・" + _safe_for_font(f_b, b), font=f_b, fill=pal["text_secondary"])
+        y += bh
     return _save(img, out)
 
 
@@ -949,7 +1059,17 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
 # 図解（flow / compare / steps / balance / table）
 # 「タイトルだけ出て言葉で説明される」を無くすための絵。すりガラスの面に描く
 # ----------------------------------------------------------------------
-SUB_BAND = 230   # 画面下の字幕帯の高さ（ここには図解の中身も出典も置かない。字幕 120px + 余白）
+SUB_BAND = 230   # 画面下の字幕帯の高さ（ここには図解の中身も出典も置かない。字幕 110px + 余白）
+TOP_BAND = 110   # 画面上の余白（ここより上には置かない）
+
+
+def _accent_bar(d, x: int, y: int, sample: str, font, fill, lines: int = 1, lh: int | None = None) -> None:
+    """見出しの左に置く縦線。字形の実寸（上端〜下端）に合わせるので、文字と上下が揃う."""
+    bb = d.textbbox((x + 30, y), _safe_for_font(font, sample) or "国", font=font)
+    top, bottom = bb[1], bb[3]
+    if lines > 1 and lh:
+        bottom += lh * (lines - 1)
+    d.rectangle([x, top, x + 10, bottom], fill=fill)
 
 
 def _diagram_base(cfg: Config, title: str, note: str):
@@ -957,19 +1077,17 @@ def _diagram_base(cfg: Config, title: str, note: str):
 
     img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "chart"))
     m = design.safe_margin(cfg)
-    y = 120
+    y = TOP_BAND + 20
     if title:
-        f_t, tl = fit_text(cfg, d, title, "headline_m", cw - m * 2, 1, min_size=44)
-        d.rectangle([m, y + 6, m + 10, y + f_t.size - 2], fill=pal["accent"])
+        f_t, tl = fit_text(cfg, d, title, "headline_m", cw - m * 2 - 60, 1, min_size=44)
+        _accent_bar(d, m, y, tl[0], f_t, pal["accent"])
         d.text((m + 30, y), tl[0], font=f_t, fill=pal["text"])
         y += int(f_t.size * 1.6)
     if note:
+        # 出典は中身のすぐ下に出す（_save の時点で中身の下端が分かる）。字幕帯には入れない
         f_n = load_font(cfg, ts(cfg, "label_s", 30), "bold")
-        note_txt = "— " + _safe_for_font(f_n, note)
-        while len(note_txt) > 4 and d.textlength(note_txt + "…", font=f_n) > cw - m * 2 - 60:
-            note_txt = note_txt[:-1]
-        d.text((m + 30, h - SUB_BAND - 44), note_txt + ("…" if len(note_txt) < len(note) + 2 else ""),
-               font=f_n, fill=pal["text_secondary"])
+        img.info["note"] = (note, f_n, pal["text_secondary"], m + 30, cw - m * 2 - 60, h - SUB_BAND - 44)
+    img.info["vcenter"] = (TOP_BAND, h - SUB_BAND)   # 見出し＋図をまとめて上下中央に
     # 中身は字幕の帯（下 SUB_BAND px）と出典行より上に収める → 呼び出し側は h - SUB_BAND - 60 を下限に使う
     return img, d, pal, cw, h - SUB_BAND + 128 - 60, m, y
 
@@ -996,11 +1114,7 @@ def render_flow(cfg: Config, title: str, items: list[str], note: str, out: Path)
         color = "#0B1120" if i == n - 1 else pal["text"]
         _rounded(d, [x, y, x + box_w, y + box_h], fill, pal["outline"], r)
         f, lines = fit_text(cfg, d, txt, "title", box_w - 40, 2, min_size=34)
-        ty = y + (box_h - len(lines) * int(f.size * 1.25)) // 2
-        for ln in lines:
-            tw = d.textlength(ln, font=f)
-            d.text((x + (box_w - tw) / 2, ty), ln, font=f, fill=color)
-            ty += int(f.size * 1.25)
+        _text_block(d, lines, f, (x, y, x + box_w, y + box_h), color, spacing=1.25)
         if i < n - 1:
             ax = x + box_w + 8
             cy = y + box_h // 2
@@ -1039,23 +1153,18 @@ def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Pa
         x = m + label_w + 20 + k * (col_w + 20)
         _rounded(d, [x, y, x + col_w, y + head_h], fill, None, r)
         fh, hl = fit_text(cfg, d, name, "title", col_w - 30, 1, min_size=36)
-        tw = d.textlength(hl[0], font=fh)
-        d.text((x + (col_w - tw) / 2, y + (head_h - fh.size) // 2 - 4), hl[0], font=fh, fill="#0B1120")
+        _text_block(d, hl[:1], fh, (x, y, x + col_w, y + head_h), "#0B1120")
     y += head_h + 20
     row_h = min(150, (h - 128 - y - 20) // max(len(rows), 1))
     for label, lval, rval in rows:
         _rounded(d, [m, y, cw - m, y + row_h - 14], pal["surface_high"], pal["outline"], r)
         if label:
             fl, ll = fit_text(cfg, d, label, "body_m", label_w - 30, 1, min_size=30, weight="bold")
-            d.text((m + 24, y + (row_h - 14 - fl.size) // 2), ll[0], font=fl, fill=pal["text_secondary"])
+            _text_block(d, ll[:1], fl, (m + 24, y, m + label_w, y + row_h - 14), pal["text_secondary"], align="left")
         for k, val in enumerate((lval, rval)):
             x = m + label_w + 20 + k * (col_w + 20)
             fv, vl = fit_text(cfg, d, val, "title", col_w - 30, 2, min_size=32)
-            ty = y + (row_h - 14 - len(vl) * int(fv.size * 1.2)) // 2
-            for ln in vl:
-                tw = d.textlength(ln, font=fv)
-                d.text((x + (col_w - tw) / 2, ty), ln, font=fv, fill=pal["text"])
-                ty += int(fv.size * 1.2)
+            _text_block(d, vl, fv, (x, y, x + col_w, y + row_h - 14), pal["text"])
         y += row_h
     return _save(img, out)
 
@@ -1075,14 +1184,9 @@ def render_steps(cfg: Config, title: str, items: list[str], note: str, out: Path
         _rounded(d, [m, y, cw - m, y + row_h - 16], pal["surface_high"], pal["outline"], r)
         cx = m + 70
         d.ellipse([cx - 44, y + (row_h - 16) // 2 - 44, cx + 44, y + (row_h - 16) // 2 + 44], fill=pal["accent"])
-        num = str(i)
-        tw = d.textlength(num, font=f_num)
-        d.text((cx - tw / 2, y + (row_h - 16) // 2 - f_num.size // 2 - 6), num, font=f_num, fill="#0B1120")
+        _text_block(d, [str(i)], f_num, (cx - 44, y + (row_h - 16) // 2 - 44, cx + 44, y + (row_h - 16) // 2 + 44), "#0B1120")
         f, lines = fit_text(cfg, d, txt, "title", cw - m * 2 - 190, 2, min_size=34)
-        ty = y + (row_h - 16 - len(lines) * int(f.size * 1.2)) // 2
-        for ln in lines:
-            d.text((m + 150, ty), ln, font=f, fill=pal["text"])
-            ty += int(f.size * 1.2)
+        _text_block(d, lines, f, (m + 150, y, cw - m - 30, y + row_h - 16), pal["text"], align="left")
         y += row_h
     return _save(img, out)
 
@@ -1110,22 +1214,17 @@ def render_balance(cfg: Config, title: str, items: list[str], note: str, out: Pa
         parts = txt.rsplit(" ", 1) if " " in txt else [txt]
         if len(parts) == 2:
             fl, ll = fit_text(cfg, d, parts[0], "body_m", box_w - 30, 1, min_size=30, weight="bold")
-            tw = d.textlength(ll[0], font=fl)
-            d.text((x + (box_w - tw) / 2, y + 34), ll[0], font=fl, fill=color if i == 2 else pal["text_secondary"])
+            _text_block(d, ll[:1], fl, (x, y + 20, x + box_w, y + 20 + int(fl.size * 1.4)),
+                        color if i == 2 else pal["text_secondary"])
             fv, vl = fit_text(cfg, d, parts[1], "display_s", box_w - 30, 1, min_size=48)
-            tw = d.textlength(vl[0], font=fv)
-            d.text((x + (box_w - tw) / 2, y + 100), vl[0], font=fv, fill=color if i == 2 else pal["positive"])
+            _text_block(d, vl[:1], fv, (x, y + 20 + int(fl.size * 1.4), x + box_w, y + box_h - 16),
+                        color if i == 2 else pal["positive"])
         else:
             fv, vl = fit_text(cfg, d, txt, "title", box_w - 30, 2, min_size=34)
-            ty = y + (box_h - len(vl) * int(fv.size * 1.2)) // 2
-            for ln in vl:
-                tw = d.textlength(ln, font=fv)
-                d.text((x + (box_w - tw) / 2, ty), ln, font=fv, fill=color)
-                ty += int(fv.size * 1.2)
+            _text_block(d, vl, fv, (x, y, x + box_w, y + box_h), color)
         if i < 2:
             op = "−" if i == 0 else "＝"
-            tw = d.textlength(op, font=f_op)
-            d.text((x + box_w + (100 - tw) / 2, y + box_h // 2 - f_op.size // 2 - 8), op, font=f_op, fill=pal["accent2"])
+            _text_block(d, [op], f_op, (x + box_w, y, x + box_w + 100, y + box_h), pal["accent2"])
         x += box_w + 100
     return _save(img, out)
 
@@ -1145,10 +1244,9 @@ def render_table(cfg: Config, title: str, items: list[str], note: str, out: Path
         fill = pal["surface_high"] if i % 2 == 0 else pal["surface"]
         _rounded(d, [m, y, cw - m, y + row_h - 10], fill, None, r)
         fk, kl = fit_text(cfg, d, k, "title", (cw - m * 2) * 0.55, 1, min_size=34)
-        d.text((m + 36, y + (row_h - 10 - fk.size) // 2), kl[0], font=fk, fill=pal["text"])
+        _text_block(d, kl[:1], fk, (m + 36, y, cw - m, y + row_h - 10), pal["text"], align="left")
         fv, vl = fit_text(cfg, d, v, "title", (cw - m * 2) * 0.35, 1, min_size=34)
-        tw = d.textlength(vl[0], font=fv)
-        d.text((cw - m - 36 - tw, y + (row_h - 10 - fv.size) // 2), vl[0], font=fv, fill=pal["positive"])
+        _text_block(d, vl[:1], fv, (m, y, cw - m - 36, y + row_h - 10), pal["positive"], align="right")
         y += row_h
     return _save(img, out)
 

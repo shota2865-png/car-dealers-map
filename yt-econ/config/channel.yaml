@@ -187,13 +187,12 @@ visuals:
   # AI 画像生成。空なら使わない。"pollinations" は鍵不要・無料（品質はそこそこ）
   ai_image_provider: "pollinations"
   subtitle:
-    # 0 ならデザイントークン（subtitle: 120px ≒ 以前の 2 倍）
+    # 0 ならデザイントークン（subtitle: 110px）。全行おなじ大きさで出す（行ごとに縮めない）
     font_size: 0
     max_chars_per_line: 20
     outline: 0
-    # 字幕は画面中央。キャラの幅ぶん左右を空け、その幅に入らない長い行だけ字を縮める
+    # 字幕は画面中央。キャラの幅ぶん左右対称に空け、その幅に入る長さで文節ごとに区切る
     full_width: false
-    min_font_size: 84
 
 # 画面右下の解説キャラクター（ずんだもんなど）。
 # assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を
@@ -249,8 +248,8 @@ render:
     # 動画の長さに合わせて切り、最後は 3 秒でフェードアウトする
     file: "Yair Cohen - Rise Within.mp3"
     # 声に対する BGM の大きさ（BGM を一定の音量に揃えたあとの相対値）。
-    # -10dB ≒ 声の間で声より14dBほど小さい（以前の -6dB の約6割の音量）。目立つなら -13、寂しいなら -7
-    volume_db: -10
+    # -8dB ≒ 声の間で声より12dBほど小さい。目立つなら -11、寂しいなら -6
+    volume_db: -8
     # 声が乗っている間は BGM をさらに下げる（ダッキング）
     ducking: true
     # ブロックごとに気分を切り替える（導入=ambient / 探究=curiosity / 意外な事実=tension /

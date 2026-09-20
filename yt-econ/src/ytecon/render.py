@@ -83,6 +83,11 @@ def _escape_filter_path(path: Path) -> str:
 # Ken Burns の最大ズーム倍率。入力はこれより少しだけ大きく作れば足りる
 MAX_ZOOM = 1.12
 OVERSAMPLE = 1.25
+# 全シーンで色の付帯情報（色域・レンジ）をそろえる。素材動画から引き継いだ値がシーンごとに
+# 違うと、連結後の ffmpeg がその境目でフィルタを組み直し、立ち絵の重ね合わせが数フレーム
+# 抜ける（ジャンプカットでキャラが消える現象）
+COLOR_PARAMS = "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+COLOR_FLAGS = ["-color_range", "tv", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
 
 
 def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
@@ -117,7 +122,7 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
             f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
             f"{calm}fps={fps},format=rgba[bg];"
             f"[1:v]format=rgba[fg];"
-            f"[bg][fg]overlay=0:0:format=auto,format=yuv420p{fade}[v]"
+            f"[bg][fg]overlay=0:0:format=auto,format=yuv420p{fade},{COLOR_PARAMS}[v]"
         )
         _run(
             [ffmpeg, "-y",
@@ -125,7 +130,7 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
              "-i", str(scene.image),
              "-filter_complex", fc, "-map", "[v]", "-frames:v", str(frames),
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-             "-pix_fmt", "yuv420p", "-r", str(fps), "-an", str(out)],
+             "-pix_fmt", "yuv420p", "-r", str(fps), *COLOR_FLAGS, "-an", str(out)],
             f"シーン{index}のレンダリング（動く背景）",
         )
         return out
@@ -158,13 +163,13 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
     else:
         vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
               f"loop=loop={frames}:size=1:start=0,fps={fps}")
-    vf += ",format=yuv420p" + fade
+    vf += ",format=yuv420p" + fade + "," + COLOR_PARAMS
 
     _run(
         [ffmpeg, "-y", "-i", str(scene.image),
          "-vf", vf, "-frames:v", str(frames),
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-         "-pix_fmt", "yuv420p", "-r", str(fps), "-an", str(out)],
+         "-pix_fmt", "yuv420p", "-r", str(fps), *COLOR_FLAGS, "-an", str(out)],
         f"シーン{index}のレンダリング",
     )
     return out
@@ -298,7 +303,8 @@ def render(
 
     # --- 入力を組み立てる（任意のものは有る時だけ） ---
     inputs = [silent, track.wav_path]
-    args = [ffmpeg, "-y", "-i", str(silent), "-i", str(track.wav_path)]
+    # -reinit_filter 0: 途中で映像の付帯情報が変わってもフィルタを組み直さない（立ち絵が消えない保険）
+    args = [ffmpeg, "-y", "-reinit_filter", "0", "-i", str(silent), "-i", str(track.wav_path)]
 
     bgm_path = bgm_mod.resolve(cfg, script=script, track=track, outdir=outdir)
     bgm_idx = None

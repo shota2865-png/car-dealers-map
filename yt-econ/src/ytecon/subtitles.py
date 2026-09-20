@@ -49,21 +49,25 @@ class TelopCue:
     type: str = "NORMAL"
 
 
-_NO_LINE_START = "。、」』）｝】〕〉》・ーぁぃぅぇぉっゃゅょゎ々！？!?"
+_NO_LINE_START = "。、」』）｝】〕〉》・ーぁぃぅぇぉっゃゅょゎ々ん！？!?"
 
 # 文節の切れ目とみなす助詞・接続助詞（この直後で切ってよい）
-_PARTICLES = ("ので", "けど", "けれど", "から", "まで", "って", "とか", "たら", "ながら",
+_PARTICLES = ("ので", "けど", "けれど", "から", "まで", "って", "とか", "たら", "ながら", "なら",
               "ように", "より", "こそ", "だけ", "など", "ほど", "しか", "でも",
-              "は", "が", "を", "に", "で", "と", "も", "へ", "や", "て")
+              "は", "が", "を", "に", "で", "と", "も", "へ", "て")
 _PUNCT = "、。，！？!?…"
 
 
 # 切った直後にこれが来る位置では切らない（「と｜いう」「し｜て」のような不自然な割れを防ぐ）
 _NO_CUT_BEFORE = ("いう", "いえ", "して", "した", "なる", "なっ", "いる", "いた", "ある", "あっ",
-                  "おく", "みる", "くる", "しまう", "ください", "ほしい", "のだ", "なのだ",
+                  "おく", "みる", "くる", "しまう", "ください", "ほしい", "のだ", "なのだ", "する", "すれ", "され", "せる",
                   "ない", "なく", "なかっ", "ません", "です", "ます", "だっ", "だ", "か", "ね", "よ")
 # 節の終わりになりやすい助詞（ここで切ると自然）
-_CLAUSE_END = ("ので", "けど", "けれど", "から", "たら", "ながら", "ように", "て", "と", "ば")
+_CLAUSE_END = ("ので", "けど", "けれど", "から", "たら", "ながら", "なら", "ように", "て", "と", "ば")
+# 1 字の助詞に見えて語の一部（「思う｜はず」「で｜きる」）。この並びでは切らない
+_FALSE_PARTICLE = ("はず", "でき", "とき", "ところ", "がち", "がわ", "にく", "もの", "こと", "やり", "やす", "やっ",
+                   "もら", "もう", "もし", "とも", "でも", "では", "には", "とは")
+OVERFLOW = 1   # 語を割るくらいなら 1 字だけはみ出してよい（字幕の余白に 1 字ぶんの遊びがある）
 
 
 _PARTICLE_HEADS = set("はがをにでともへやのか")   # 行頭に来させない（「で｜は」「と｜いう」を防ぐ）
@@ -73,18 +77,52 @@ def _is_kana(ch: str) -> bool:
     return "ぁ" <= ch <= "ん"
 
 
+def _kanji(ch: str) -> bool:
+    return "一" <= ch <= "龥" or ch == "々"
+
+
+def _digit(ch: str) -> bool:
+    return ch.isdigit() or ch in ".．,"
+
+
+def _bad_head(tail: str) -> bool:
+    """この文字列で行を始めてはいけないか（禁則・助詞・「いう」など）. 語（もらう/もの）なら助詞扱いしない."""
+    if not tail or tail[0] in _NO_LINE_START or tail.startswith(_NO_CUT_BEFORE):
+        return True
+    return tail[0] in _PARTICLE_HEADS and not tail.startswith(_FALSE_PARTICLE)
+
+
+def _kata(ch: str) -> bool:
+    return ("ァ" <= ch <= "ヶ") or ch == "ー"
+
+
 def _best_cut(seg: str, max_chars: int) -> int:
     """seg を max_chars 以内で切る位置を選ぶ。自然さを点数にして一番よい所."""
+    return _cut(seg, max_chars)[0]
+
+
+def _cut(seg: str, max_chars: int, min_head: int = 3) -> tuple[int, bool]:
+    """(切る位置, 自然な切れ目か)。自然な切れ目 = 読点・助詞・名詞のの直後."""
     best_i, best_score = -1, -1e9
-    for i in range(3, min(len(seg) - 1, max_chars) + 1):
+    for i0 in range(min_head, min(len(seg) - 1, max_chars + OVERFLOW) + 1):
+        i = i0
+        if seg[i] in "、，" and i + 1 < len(seg):
+            i += 1                                 # 読点は前の行にくっつける（幅は数えない）
         head, tail = seg[:i], seg[i:]
-        if tail[0] in _NO_LINE_START or tail[0] in _PARTICLE_HEADS or tail.startswith(_NO_CUT_BEFORE):
+        over = max(0, i0 - max_chars)
+        if _bad_head(tail) or len(head.rstrip("、，")) < min_head:
             continue
         hit = next((pt for pt in _PARTICLES if head.endswith(pt)), None)
+        if hit is not None and len(hit) == 1 and (head[-1] + tail).startswith(_FALSE_PARTICLE):
+            continue                               # 「思う｜はず」のような語の途中
         if head[-1] in "、，":
-            score = i + 10                         # 読点の直後が最良
+            score = i0 + 10                        # 読点の直後が最良
         elif hit is not None:
             score = i + (6 if hit in _CLAUSE_END else 0)
+            if len(hit) == 1 and _is_kana(tail[0]):
+                if hit in "てで" and not tail.startswith(_FALSE_PARTICLE):
+                    continue                       # 「打て｜る」「出て｜くる」: て形の次のひらがなは動詞の続き
+                score -= 3                         # 1 字の助詞の次がひらがなだと語の途中かもしれない
         elif head[-1] == "の" and not _is_kana(tail[0]):
             score = i + 2                          # 「名詞の｜名詞」は切ってよい（弱め）
         else:
@@ -93,16 +131,42 @@ def _best_cut(seg: str, max_chars: int) -> int:
             score -= 8                             # 次の行が短すぎる
         if len(head) < 6:
             score -= 6                             # この行が短すぎる
+        score -= over * 5                          # はみ出しは最後の手段
         if score > best_score:
             best_i, best_score = i, score
-    if best_i > 0:
-        return best_i
-    # 自然な切れ目が無いときも、助詞・否定・禁則文字を行頭に置かない位置まで左へ寄せる
-    i = min(max_chars, len(seg) - 1)
-    while i > 3 and (seg[i] in _NO_LINE_START or seg[i] in _PARTICLE_HEADS
-                     or seg[i:].startswith(_NO_CUT_BEFORE)):
-        i -= 1
-    return i
+    if best_i > 0 and best_score >= -4:
+        return best_i, True
+    # 自然な切れ目が無いときは、字種の変わり目（漢字→かな、かな→漢字）を選ぶ。
+    # 漢字熟語・カタカナ語・数字の途中（「以｜来」「パス｜タ」「19｜90」）は避ける
+    best_i, best_score = -1, -1e9
+    for i in range(3, min(len(seg) - 1, max_chars + OVERFLOW) + 1):
+        prev, nxt = seg[i - 1], seg[i]
+        if nxt in _NO_LINE_START or seg[i:].startswith(_NO_CUT_BEFORE):
+            continue
+        score = i * 0.5 - max(0, i - max_chars) * 4   # 長い行のほうがよい（行数が減る）。はみ出しは最後の手段
+        if _bad_head(seg[i:]):
+            score -= 5                             # 助詞で行を始めるのは、語を割るよりはまし
+        if _kanji(prev) and _kanji(nxt):
+            score -= 8
+        elif _kata(prev) and _kata(nxt):
+            score -= 10
+        elif _digit(prev) and (_digit(nxt) or nxt in "年月日円%％割人倍" or seg[i:].startswith("パーセント")):
+            score -= 10
+        elif _is_kana(prev) and _is_kana(nxt):
+            score -= 3
+        elif _is_kana(prev) and (_kanji(nxt) or _kata(nxt)):
+            score += 5                             # 「〜する｜物価」語の始まり
+        elif _kanji(prev) and _is_kana(nxt):
+            score += 2                             # 「物価｜が」語の終わり
+        if score > best_score:
+            best_i, best_score = i, score
+    return (best_i if best_i > 0 else max(3, min(max_chars, len(seg) - 1))), False
+
+
+def _visible(text: str) -> float:
+    """見た目の長さ（全角 1、読点 0.5）."""
+    n = text.count("、") + text.count("，")
+    return len(text) - n * 0.5
 
 
 def phrase_split(text: str, max_chars: int) -> list[str]:
@@ -116,34 +180,51 @@ def phrase_split(text: str, max_chars: int) -> list[str]:
         return []
     pieces: list[str] = []
     seg = text
-    while len(seg) > max_chars:
-        i = _best_cut(seg, max_chars)
+    while _visible(seg) > max_chars:
+        i, natural = _cut(seg, max_chars)
+        if not natural and _visible(seg) <= max_chars + OVERFLOW:
+            break                                  # 語を割るくらいなら 1 字はみ出して 1 行にする
         pieces.append(seg[:i])
         seg = seg[i:]
     if seg:
         pieces.append(seg)
     # 短すぎる断片（「で、」「は」「この感覚」）は隣と結合する。
-    # 収まらなければ前の行と合わせて切り直す。孤立させるくらいなら 1 字だけはみ出してよい
+    # 収まらなければ合わせて切り直し、釣り合う 2 行にする（語を割ってまでは直さない）
+    limit = max_chars + OVERFLOW
+
+    def short(x: str) -> bool:
+        return len(x.rstrip("、，")) <= 5
+
     merged: list[str] = []
     for pc in pieces:
-        if merged and (len(pc.rstrip("、，")) <= 5 or len(merged[-1].rstrip("、，")) <= 5):
+        if merged and (short(pc) or short(merged[-1])):
             joined = merged[-1] + pc
-            # 読点は幅が狭いので数えない。3 字以下の断片（値段は／呼ぶ／いる）を孤立させる
-            # くらいなら 2 字までのはみ出しを許す
-            shortest = min(len(pc.rstrip("、，")), len(merged[-1].rstrip("、，")))
-            visible = len(joined.replace("、", "").replace("，", ""))
-            if visible <= max_chars + (2 if shortest <= 4 else 1):
+            tiny = min(len(pc.rstrip("、，")), len(merged[-1].rstrip("、，"))) <= 3
+            # 「では」「まず」のような 2〜3 字を孤立させるくらいなら、読点ぶん（0.5 字）余計にはみ出してよい
+            if _visible(joined) <= limit + (0.5 if tiny else 0):
                 merged[-1] = joined
                 continue
-            if len(pc) <= 5:
-                i = _best_cut(joined, max_chars)
-                if 5 <= i <= len(joined) - 5:
-                    merged[-1] = joined[:i]
-                    merged.append(joined[i:])
-                    continue
+            done = False
+            for mc in (max_chars, max_chars - 2, max_chars - 4):
+                i, natural = _cut(joined, mc, min_head=4)
+                a, b = joined[:i], joined[i:]
+                if natural and len(a.rstrip("、，")) >= 4 and len(b) >= 4 and _visible(b) <= limit:
+                    merged[-1], done = a, True
+                    merged.append(b)
+                    break
+            if done:
+                continue
         merged.append(pc)
+    # 結合で長くなりすぎた行があれば切り直す（はみ出しは 1 字＋読点まで）
+    final: list[str] = []
+    for pc in merged:
+        while _visible(pc) > limit + 0.5:
+            i = _best_cut(pc, max_chars)
+            final.append(pc[:i])
+            pc = pc[i:]
+        final.append(pc)
     # 行末の読点は落とす（行の中の読点は残す）
-    return [m.rstrip("、，") or m for m in merged]
+    return [m.rstrip("、，") or m for m in final]
 
 
 def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
@@ -152,10 +233,9 @@ def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
 
     w, _h = cfg.get("video.resolution", [1920, 1080])
     size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "subtitle", 64))
-    size = min(size, int(cfg.get("visuals.subtitle.min_font_size", size) or size))   # 長い行は縮めてよい
     margin_r = 120 if cfg.get("visuals.subtitle.full_width", False) else max(120, int(reserve_right))
     usable = w - margin_r * 2          # 左右対称の余白（中央揃え）
-    by_width = max(7, int(usable / (size * 1.0)))
+    by_width = max(7, int(usable / size + 0.25))
     limit = int(cfg.get("visuals.subtitle.max_chars_per_line", 20))
     return min(by_width, limit)
 
@@ -342,21 +422,11 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
-    usable = w - margin_r * 2
-    min_fs = int(cfg.get("visuals.subtitle.min_font_size", base_size) or base_size)
-
-    def fit_tag(text: str) -> str:
-        """キャラを避けた幅に入らない長い行だけ、字を縮める ASS タグを付ける."""
-        need = len(text.replace("、", "").replace("，", "")) * base_size
-        if need <= usable:
-            return ""
-        fs = max(min_fs, int(usable / max(len(text), 1)))
-        return f"{{\\fs{fs}}}"
-
+    # 字の大きさは全行おなじ（行ごとに縮めない）。長さは chars_per_line で先に区切ってある
     events = [
         "Dialogue: 0,{},{},{},,0,0,0,,{}".format(
             _ass_time(c.start), _ass_time(c.end), c.style,
-            r"\N".join(fit_tag(ln) + safe_text(cfg, ln) for ln in c.lines)
+            r"\N".join(safe_text(cfg, ln) for ln in c.lines)
         )
         for c in cues
     ]

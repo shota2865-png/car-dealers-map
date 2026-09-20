@@ -118,3 +118,109 @@ def test_filter_path_escaping():
 
 def test_scene_minimum_duration():
     assert Scene(Path("a"), 1.0, 1.0).duration == 0.5
+
+
+# ----------------------------------------------------------------------
+# 画面の細部（ユーザー指摘の再発防止）
+# ----------------------------------------------------------------------
+def test_segments_share_colour_metadata_so_overlay_never_drops():
+    """シーンごとに色の付帯情報が違うと、連結後にフィルタが組み直されて立ち絵が数フレーム消える."""
+    from ytecon import render
+    assert "colorspace=bt709" in render.COLOR_PARAMS
+    assert "-colorspace" in render.COLOR_FLAGS
+    import inspect
+    src = inspect.getsource(render.render_segment)
+    assert src.count("COLOR_FLAGS") >= 2 and src.count("COLOR_PARAMS") >= 2
+    assert '"-reinit_filter", "0"' in inspect.getsource(render.render)
+
+
+def test_subtitle_size_is_uniform(cfg, tmp_path):
+    from ytecon import subtitles
+    cues = [subtitles.Cue(0.0, 1.0, ["短い行"]), subtitles.Cue(1.0, 2.0, ["とても長い長い長い長い長い長い行"])]
+    out = subtitles.write_ass(cfg, cues, tmp_path / "s.ass", reserve_right=400)
+    body = out.read_text(encoding="utf-8")
+    assert "\\fs" not in body            # 行ごとに縮めない
+    assert subtitles.chars_per_line(cfg, 400) <= 12   # 代わりに 1 行の長さを大きさから決める
+
+
+def test_script_sanitize_fixes_words_notes_and_placeholders():
+    from ytecon.script import Card, Diagram, clean_note, fix_words
+    assert fix_words("釣りが減る。お釣りは同じ") == "お釣りが減る。お釣りは同じ"
+    assert clean_note("台本の給与明細の記述より") == ""
+    assert clean_note("台本の例示（仮の数値）") == ""
+    assert clean_note("毎月勤労統計調査（厚生労働省）") == "毎月勤労統計調査（厚生労働省）"
+    sec = Section(heading="同じ買い物なのに、釣りが減る", narration="釣りが減ったのだ。",
+                  visual=Visual(kind="stock"),
+                  captions=[Caption(text="数十円の値上がり（例）", type="DATA"), Caption(text="約5.1%", type="DATA")],
+                  cards=[Card(text="内容量は1割ほど減(例)")],
+                  diagrams=[Diagram(type="flow", title="釣りが減る感覚", items=["釣りが減る"], note="台本の売り場の描写より")])
+    script = VideoScript(topic_title="t", hook="h", sections=[sec], closing="c", title_candidates=[],
+                         description="", tags=[], thumbnail_copy={}, sources=[])
+    from ytecon.script import _sanitize
+    _sanitize(script)
+    assert sec.heading == "同じ買い物なのに、お釣りが減る"
+    assert [c.text for c in sec.captions] == ["約5.1%"]
+    assert sec.cards == []
+    assert sec.diagrams[0].note == "" and sec.diagrams[0].items == ["お釣りが減る"]
+
+
+def test_glass_panel_fits_content_and_bar_aligns(cfg, tmp_path):
+    """すりガラスの面は中身の大きさ、見出しの縦線は文字の上下に合う、黒縁は付かない."""
+    import copy
+    from PIL import Image
+    from ytecon import assets
+    cfg = copy.deepcopy(cfg)
+    cfg.raw["visuals"]["motion_backgrounds"] = True     # 透過カード（すりガラス）を作る経路
+    p = assets.render_diagram(cfg, "compare", "行動経済学 vs マクロ経済",
+                              ["見るもの|感じ方のクセ|お金の流れ", "焦点|受け取り方|順番"], "", tmp_path / "c.png")
+    im = Image.open(p)
+    w, h = im.size
+    a = im.getchannel("A")
+    # 画面の四隅は「暗くするだけ」の薄い透過（面が画面いっぱいではない）
+    dim = a.getpixel((20, 20))
+    assert 0 < dim < 160
+    assert a.getpixel((w // 2, h // 2)) > dim          # 中央には面がある
+    assert a.getpixel((w // 2, h - 40)) == dim         # 字幕帯には面が掛からない
+    # 見出しつきの図: 縦線の上下が見出し文字の上下と一致する
+    p2 = assets.render_diagram(cfg, "steps", "給与明細で起きたこと", ["額面", "手取り"], "", tmp_path / "s.png")
+    im2 = Image.open(p2).convert("RGBA")
+    pal = assets.palette(cfg)
+    accent = assets._rgb(pal["accent"])
+    from ytecon import design
+    m = design.safe_margin(cfg)
+    ys = [y for y in range(im2.height) if im2.getpixel((m + 5, y))[:3] == accent and im2.getpixel((m + 5, y))[3] > 200]
+    assert ys, "縦線が無い"
+    bar_top, bar_bottom = min(ys), max(ys)
+    # 文字（白）の上下
+    text = assets._rgb(pal["text"])
+    tys = [y for y in range(bar_top - 30, bar_bottom + 30)
+           for x in range(m + 30, m + 400, 2) if im2.getpixel((x, y))[:3] == text and im2.getpixel((x, y))[3] > 200]
+    assert abs(min(tys) - bar_top) <= 6 and abs(max(tys) - bar_bottom) <= 6
+
+
+def test_heading_overlay_has_no_black_outline(cfg, tmp_path):
+    import copy
+    from PIL import Image
+    from ytecon import assets
+    cfg = copy.deepcopy(cfg)
+    cfg.raw["visuals"]["motion_backgrounds"] = True
+    p = assets.render_heading_overlay(cfg, "同じ買い物なのに、お釣りが減る", ["値札は週に何十回も見る"], tmp_path / "h.png")
+    im = Image.open(p).convert("RGBA")
+    # 文字のまわりに濃い黒（縁取り）のピクセルが無い（面の色は紺、文字は白）
+    px = [im.getpixel((x, y)) for x in range(0, im.width, 3) for y in range(0, im.height, 3)]
+    outline_like = [p for p in px if p[3] > 200 and max(p[:3]) < 20]
+    assert not outline_like
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("普通ならこう思うはずなのだ。", ["普通なら", "こう思うはずなのだ"]),                 # 「思うは｜ず」にしない
+    ("この差で、次に打てる手が変わるのだ。", ["この差で", "次に打てる手が", "変わるのだ"]),  # 「打て｜る」にしない
+    ("価格は据え置きで、中身だけを減らすやり方なのだ。", ["価格は据え置きで", "中身だけを", "減らすやり方なのだ"]),
+    ("2025年もおよそ5.2パーセントだった。", ["2025年もおよそ", "5.2パーセントだった"]),     # 数字と単位を割らない
+    ("ここから少しややこしくなるのだ。", ["ここから", "少しややこしくなるのだ"]),           # 語を割るより 1 字はみ出す
+    ("さらに、問題はもう一段ある。", ["さらに、問題は", "もう一段ある"]),                   # 2〜3 字を孤立させない
+    ("ところが給与明細の額面は、去年とほとんど同じ。", ["ところが給与明細の", "額面は、去年と", "ほとんど同じ"]),
+])
+def test_phrase_split_keeps_words_whole(text, expected):
+    from ytecon.subtitles import phrase_split
+    assert phrase_split(text, 10) == expected

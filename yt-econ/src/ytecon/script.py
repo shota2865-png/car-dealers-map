@@ -254,7 +254,10 @@ class VideoScript:
 
     @classmethod
     def load(cls, path: str | Path) -> "VideoScript":
-        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+        script = cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+        # 保存済みの台本にも言い換え・出典の掃除を効かせる（何度掛けても同じ結果）
+        _sanitize(script)
+        return script
 
 
 # ----------------------------------------------------------------------
@@ -582,7 +585,7 @@ type と items の書き方:
 | EMPHASIS | その回の主張。ここだけは覚えて帰ってほしい一文 | 動画全体で2〜3回 |
 | PUNCHLINE | オチ・意外な一言 | 動画全体で1〜3回 |
 | EDITORIAL | 編集者視点の注釈「※ここ、ぼくも最初は分からなかった」 | 1分あたり0〜3回 |
-| DATA | 数字・金額・割合 | 数字を言うたび |
+| DATA | 数字・金額・割合（**台本にある実際の数字だけ**。「数十円（例）」のような仮の数字は付けない） | 数字を言うたび |
 
 - テロップは1つ**16字以内**。長いと読めません
 - EDITORIAL を入れすぎない。編集の声が本人より目立つと嘘くさくなります
@@ -1117,9 +1120,11 @@ type と items の書き方:
 - table   : 数字の一覧。items は "項目|値" を 2〜5 行
 
 規則:
-- title は 16 字以内の体言止め。note に出典（機関名・調査名）があれば書く
+- title は 16 字以内の体言止め。**title だけで何の図か分かる**ようにする（「〜の2つの形」「〜の順番」など）
+- note は **出典（機関名・調査名・年）だけ**。出典が無い図は note を空にする。
+  「台本の〜より」「例示」「仮の数値」「一般的な期待」のような出典でない文は書かない
 - after_sentence は、その説明を話している文の番号（0 始まり）
-- 数字・固有名詞は台本にあるものだけ。作らない
+- 数字・固有名詞は台本にあるものだけ。作らない。「（例）」「（仮）」の付いた数字は使わない
 - sections の並びと数は入力と同じにし、heading にブロック名（s0 など）を入れる
 """
 
@@ -1221,31 +1226,65 @@ def _check_style(cfg: Config, script: VideoScript) -> None:
                     pivots, len(script.sections))
 
 
+# 言い換え（画面にも音声にも効く）。「釣り」は単独だと魚釣りに読めるので「お釣り」
+_WORD_FIXES = (
+    (re.compile(r"(?<!お)釣り"), "お釣り"),
+)
+# 出典ではない note（図解の下に「— 台本の〜より」と出てしまう）
+_BAD_NOTE = re.compile(r"台本|描写|例示|仮の|一般的な期待|イメージ|想定")
+# 仮の数字を数字カードにしない
+_PLACEHOLDER = re.compile(r"[（(]\s*(例|仮|イメージ)\s*[)）]|（例|\(例")
+
+
+def fix_words(text: str) -> str:
+    for pat, rep_ in _WORD_FIXES:
+        text = pat.sub(rep_, text)
+    return text
+
+
+def clean_note(note: str) -> str:
+    """出典として成り立つ note だけ残す."""
+    note = (note or "").strip()
+    if not note or _BAD_NOTE.search(note):
+        return ""
+    return note
+
+
 def _sanitize(script: VideoScript) -> None:
-    script.hook = tts_text(script.hook)
-    script.proof = tts_text(script.proof)
-    script.promise = tts_text(script.promise)
-    script.closing = tts_text(script.closing)
-    script.title_candidates = [plain_heading(t) for t in script.title_candidates]
+    script.hook = fix_words(tts_text(script.hook))
+    script.proof = fix_words(tts_text(script.proof))
+    script.promise = fix_words(tts_text(script.promise))
+    script.closing = fix_words(tts_text(script.closing))
+    script.topic_title = fix_words(script.topic_title)
+    script.title_candidates = [fix_words(plain_heading(t)) for t in script.title_candidates]
     if script.thumbnail_copy:
-        script.thumbnail_copy = {k: plain_heading(v) for k, v in script.thumbnail_copy.items()}
+        script.thumbnail_copy = {k: fix_words(plain_heading(v)) for k, v in script.thumbnail_copy.items()}
     for sec in script.sections:
-        sec.heading = plain_heading(sec.heading)
-        sec.narration = tts_text(sec.narration)
-        sec.on_screen = [plain_heading(s)[:24] for s in sec.on_screen][:4]
+        sec.heading = fix_words(plain_heading(sec.heading))
+        sec.narration = fix_words(tts_text(sec.narration))
+        sec.on_screen = [fix_words(plain_heading(s))[:24] for s in sec.on_screen][:4]
+        sec.captions = [c for c in sec.captions if not _PLACEHOLDER.search(c.text)]
         for cap in sec.captions:
-            cap.text = plain_heading(cap.text)[:16]
+            cap.text = fix_words(plain_heading(cap.text))[:16]
+        sec.cards = [c for c in sec.cards if not _PLACEHOLDER.search(c.text)]
         for card in sec.cards:
-            card.text = plain_heading(card.text)[:40]
+            card.text = fix_words(plain_heading(card.text))[:40]
         for g in sec.diagrams:
-            g.title = plain_heading(g.title)[:20]
-            g.items = [plain_heading(x)[:40] for x in g.items]
-    for cards in script.block_cards.values():
-        for card in cards:
-            card.text = plain_heading(card.text)[:40]
+            g.title = fix_words(plain_heading(g.title))[:20]
+            g.items = [fix_words(plain_heading(x))[:40] for x in g.items]
+            g.note = clean_note(g.note)
+    for key, cards in script.block_cards.items():
+        script.block_cards[key] = [c for c in cards if not _PLACEHOLDER.search(c.text)]
+        for card in script.block_cards[key]:
+            card.text = fix_words(plain_heading(card.text))[:40]
+    for diagrams in script.block_diagrams.values():
+        for g in diagrams:
+            g.title = fix_words(plain_heading(g.title))[:20]
+            g.items = [fix_words(plain_heading(x))[:40] for x in g.items]
+            g.note = clean_note(g.note)
     for term in script.terms:
-        term.term = plain_heading(term.term)
-        term.meaning = plain_heading(term.meaning)
+        term.term = fix_words(plain_heading(term.term))
+        term.meaning = fix_words(plain_heading(term.meaning))
 
 
 def split_sentences(text: str) -> list[str]:
