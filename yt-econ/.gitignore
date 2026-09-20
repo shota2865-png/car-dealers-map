@@ -36,8 +36,8 @@ yt-econ/colab/ytecon_colab.zip
 assets/character/*/
 *.psd
 # 動く背景・BGM の素材（Artlist 等。各自で置く）
-assets/footage/**
-!assets/footage/tags.yaml
+assets/footage/*
+!assets/footage/.gitkeep
 assets/bgm/*
 !assets/bgm/.gitkeep
 
