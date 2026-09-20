@@ -276,14 +276,23 @@ def _cut_score(text: str, i: int) -> float | None:
         return None
     prev, nxt = text[i - 1], b[0]
     score = 0.0
+    kata = lambda c: ("ァ" <= c <= "ヶ") or c == "ー"
+    kanji = lambda c: "一" <= c <= "龥"
     # 助詞の直後は切りやすい。ただし次がひらがな（「上が｜らない」）なら語の途中の可能性が高い
     if prev in _PARTICLE_CHARS and not ("ぁ" <= nxt <= "ん"):
         score += 5
-    if prev in " 　、。，・／→":
-        score += 9
+    if prev in " 　、。，・／→＝「」":
+        score += 12                         # 読点・記号の直後が最良
     # ひらがなの途中で切る（「お｜よそ」）のは避ける
     if ("ぁ" <= prev <= "ん") and ("ぁ" <= nxt <= "ん") and prev not in _PARTICLE_CHARS:
         score -= 6
+    # カタカナ語・数字・漢字熟語の途中（「パスタソー｜ス」「マイ｜ナス」「行動経｜済学」）は避ける
+    if kata(prev) and kata(nxt):
+        score -= 14
+    if prev.isdigit() and nxt.isdigit():
+        score -= 14
+    if kanji(prev) and kanji(nxt):
+        score -= 5
     return score
 
 
@@ -746,7 +755,10 @@ def render_quote_card(cfg: Config, sentence: str, out: Path, source: str = "") -
     """
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "quote"))
     text = sentence.strip().rstrip("。")
-    f, lines = fit_text(cfg, d, text, "display_s", w - 360, 3, min_size=56)
+    # 体言止めの短い句は、まず 1 行に収まる大きさを探す（途中で折らない）。長ければ 2 行
+    f, lines = fit_text(cfg, d, text, "display_s", w - 360, 1, min_size=66)
+    if len(lines) > 1 or lines[-1].endswith("…"):
+        f, lines = fit_text(cfg, d, text, "display_s", w - 360, 2, min_size=56)
     lh = f.size + 24
     total = len(lines) * lh + (int(ts(cfg, "label") * 1.8) if source else 0)
     y = (h - total) // 2

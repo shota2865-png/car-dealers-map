@@ -205,11 +205,7 @@ def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
     else:
         pool.append(lambda s, e: painter.bullets(sec.heading, sec.on_screen, s, e))
 
-    # 2. 体言止めの文字カード（台本の cards）。数字・固有名詞のある文の直後に出す
-    for card in sorted(sec.cards, key=lambda c: c.after_sentence):
-        pool.append(lambda s, e, c=card: painter.quote(c.text, s, e, source=c.source))
-
-    # 2b. テロップ由来
+    # 2. テロップ由来（体言止めカードは plan_and_render 側で「話している文」に合わせて差す）
     for cap in sec.captions:
         if cap.type == "KEYWORD":
             pool.append(lambda s, e, c=cap: painter.keyword(c.text, sec.heading, s, e))
@@ -261,11 +257,20 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     def lines_of(block: str) -> list[Line]:
         return [ln for ln in track.lines if ln.block_id == block]
 
+    def pick_card(cards, ch: list[Line]):
+        """いま話している文（ch の index 範囲）に対応するカードを選ぶ。無ければ一番近いもの."""
+        if not cards:
+            return None
+        lo_i, hi_i = ch[0].index, ch[-1].index
+        inside = [c for c in cards if lo_i <= c.after_sentence <= hi_i]
+        if inside:
+            return inside[0]
+        return min(cards, key=lambda c: min(abs(c.after_sentence - lo_i), abs(c.after_sentence - hi_i)))
+
     def block_card(block: str, j: int, ch: list[Line]):
-        """導入・締めの j 番目の枠に出すカード。台本の block_cards → 無ければ体言止めに寄せた一文."""
-        cards = script.block_cards.get(block) or []
-        if cards:
-            c = cards[j % len(cards)]
+        """導入・締めの枠に出すカード。話している文に合う block_cards → 無ければ体言止めに寄せた一文."""
+        c = pick_card(script.block_cards.get(block) or [], ch)
+        if c is not None:
             return painter.quote(c.text, _span(ch)[0], _span(ch)[1], source=c.source)
         return painter.quote(nominalize(_key_sentence(ch)), *_span(ch))
 
@@ -310,18 +315,29 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         painter.words = f"{sec.visual.query} {sec.visual.image_prompt} {sec.beat}"
         pool = _section_pool(cfg, script, sec, i, chunks, painter)
         main_again = pool[0]
+        used_cards: set[int] = set()
+        k = 0                                   # 汎用プール（本体・写真・用語・出典）の消費位置
         for j, ch in enumerate(chunks):
             s, e = _span(ch)
-            if j < len(pool):
-                scenes.append(pool[j](s, e))
-            elif (j - len(pool)) % 2 == 0:
-                if sec.cards:
-                    c = sec.cards[(j - len(pool)) // 2 % len(sec.cards)]
-                    scenes.append(painter.quote(c.text, s, e, source=c.source))
-                else:
-                    scenes.append(painter.quote(nominalize(_key_sentence(ch)), s, e))
+            lo_i, hi_i = ch[0].index, ch[-1].index
+            hit = next((c for c in sec.cards
+                        if lo_i <= c.after_sentence <= hi_i and id(c) not in used_cards), None)
+            if j == 0 and pool:
+                scenes.append(pool[0](s, e)); k = 1          # 最初は必ず本体（図表 / 見出し）
+            elif hit is not None:
+                used_cards.add(id(hit))
+                scenes.append(painter.quote(hit.text, s, e, source=hit.source))
+            elif k < len(pool):
+                scenes.append(pool[k](s, e)); k += 1
             else:
-                scenes.append(main_again(s, e))
+                rest = [c for c in sec.cards if id(c) not in used_cards]
+                if rest:
+                    used_cards.add(id(rest[0]))
+                    scenes.append(painter.quote(rest[0].text, s, e, source=rest[0].source))
+                elif (j % 2) == 0:
+                    scenes.append(painter.quote(nominalize(_key_sentence(ch)), s, e))
+                else:
+                    scenes.append(main_again(s, e))
 
     # --- closing: 3行まとめ → アウトロ ---
     closing = chunk_lines(lines_of("closing"), target, lo, hi, pivots)
