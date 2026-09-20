@@ -171,7 +171,10 @@ visuals:
   # カードの描き方: mixed（短い文字は背景に直接、文字が多いものはすりガラス）/ glass / clear / solid
   card_style: "mixed"
   # 透過カードの下で背景をどれだけ暗くするか（0〜1）。文字が読みにくければ上げる
-  backdrop_dim: 0.18
+  backdrop_dim: 0.40
+  # 背景のぼかし（px。0 で無し）と彩度（1 で素のまま）。内容に集中させるため控えめに
+  background_blur: 8
+  background_saturation: 0.6
   # Ken Burns（ゆっくりズーム）を効かせる
   ken_burns: true
   # 1シーン（画が変わらない単位）の目標秒数。参考チャンネルは顔で持たせているが
@@ -216,8 +219,8 @@ character:
   # 概要欄に自動で入れるクレジット。配布元の規約に従って書く
   #   例) "立ち絵：坂本アヒル 様（https://seiga.nicovideo.jp/seiga/im10788496）"
   credit: ""
-  # 画面の高さに対する大きさ（0.5 = 画面の半分の高さ）
-  height_ratio: 0.5
+  # 画面の高さに対する大きさ（0.45 = 画面の45%の高さ）
+  height_ratio: 0.45
   # 全身の立ち絵は下を切ってバストアップにする（0.45 = 下から45%を画面外へ）
   crop_bottom: 0.45
   # 右端・下端からの余白（px）

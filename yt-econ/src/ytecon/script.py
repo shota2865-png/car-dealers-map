@@ -52,6 +52,18 @@ class Caption:
 
 
 @dataclass
+class Card:
+    """画面に出す文字カード。**文章ではなく体言止め**で書く。
+
+    例) text="実質賃金がマイナスの月が26か月連続", source="毎月勤労統計調査（厚生労働省）"
+        text="連合「1990年代前半以来の水準」", source=""
+    """
+    text: str
+    source: str = ""
+    after_sentence: int = 0
+
+
+@dataclass
 class SoundCue:
     """効果音1つ."""
     type: str = "POP"        # POP/CLICK/WHOOSH/IMPACT/COMEDY/ERROR/RISER/TRANSITION
@@ -67,6 +79,7 @@ class Section:
     beat: str = "STORY"              # この節が構成上どこか
     captions: list[Caption] = field(default_factory=list)
     sounds: list[SoundCue] = field(default_factory=list)
+    cards: list[Card] = field(default_factory=list)   # 体言止めの文字カード（一文カードの代わり）
 
     @property
     def char_count(self) -> int:
@@ -150,6 +163,11 @@ class VideoScript:
                                  after_sentence=int(c.get("after_sentence", 0) or 0))
                         for c in (s.get("sounds") or [])
                     ],
+                    cards=[
+                        Card(text=c.get("text", ""), source=c.get("source", "") or "",
+                             after_sentence=int(c.get("after_sentence", 0) or 0))
+                        for c in (s.get("cards") or []) if c.get("text")
+                    ],
                     visual=Visual(
                         kind=v.get("kind", "stock"),
                         query=v.get("query", ""),
@@ -231,6 +249,14 @@ _SE_TYPES = ["POP", "CLICK", "WHOOSH", "IMPACT", "COMEDY", "ERROR",
 _BEATS = ["FAMILIAR_SCENE", "ACADEMIC_LENS", "EVIDENCE_DROP",
           "MECHANISM_REVEAL", "PERSPECTIVE_FLIP", "HUMAN_RETURN"]
 
+# 既存の台本にカードだけ後付けするとき用
+_CARDS_SCHEMA = llm.obj({
+    "sections": llm.arr(llm.obj({
+        "heading": llm.STR,
+        "cards": llm.arr(llm.obj({"text": llm.STR, "source": llm.STR, "after_sentence": llm.INT})),
+    })),
+})
+
 # 台本の前に作る「リサーチの木」
 _RESEARCH_SCHEMA = llm.obj(
     {
@@ -281,6 +307,13 @@ _SCRIPT_SCHEMA = llm.obj(
                     "sounds": llm.arr(
                         llm.obj({
                             "type": {"type": "string", "enum": _SE_TYPES},
+                            "after_sentence": llm.INT,
+                        })
+                    ),
+                    "cards": llm.arr(
+                        llm.obj({
+                            "text": llm.STR,          # 体言止め。22字以内
+                            "source": llm.STR,        # 出典（機関・調査名）。無ければ空
                             "after_sentence": llm.INT,
                         })
                     ),
@@ -436,6 +469,24 @@ open_loops には「question」と「payoff_section（何番目のセクショ�
 | [怒] | 理不尽・怒りを代弁する文（まれに） |
 
 例) 「[驚]ところが、数字は逆を向いているのだ。」
+
+# 画面の文字は「文章」ではなく「体言止め」で書く（最重要の見た目の規則）
+
+見出し(heading)・箇条書き(on_screen)・テロップ(captions)・文字カード(cards)は、
+ナレーションの文をそのまま書かない。**名詞で止める。誰かの発言は「発言者「引用」」の形。
+数字は「何が・いくつ・いつ」を名詞句にし、出典は別行（source）に分ける。**
+
+| ナレーション（音声） | 画面に出す形 |
+|---|---|
+| 連合はこれを1990年代前半以来の水準だとしているのだ | 連合「1990年代前半以来の水準」 |
+| それなのに厚生労働省の毎月勤労統計調査では、実質賃金がマイナスの月が長く続いた | text: 実質賃金がマイナスの月が26か月連続 / source: 毎月勤労統計調査（厚生労働省） |
+| 値札が先に動き、給料は年1回しか動かないのだ | 先に動く値札、年1回の給料 |
+| 値上げが止まる会社のほうが危ないのだ | 値上げが止まる会社ほど危険 |
+
+- heading は 18 字以内の体言止め。「〜のか」「〜する」「〜だ」で終わらせない
+- cards は各セクションに 2〜4 枚。text は 22 字以内の体言止め、source は出典があるときだけ。
+  after_sentence（何文目の後に出すか）を付ける。**数字や固有名詞を含む文には必ず 1 枚作る**
+- on_screen・captions も同じ体言止め
 
 # テロップ（captions）の決め方
 
@@ -762,6 +813,11 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
     script = fit_length(cfg, script)
     script.research = research            # 校閲・尺調整で作り直されても残す
     _assign_beats(cfg, script)
+    if cfg.get("script.cards", True):
+        try:
+            ensure_cards(cfg, script)
+        except Exception as exc:
+            log.warning("文字カードを作れませんでした（一文カードで代用）: %s", exc)
     _sanitize(script)
     _check_style(cfg, script)
     log.info("台本生成完了: %s (%d文字)", script.topic_title, script.total_chars)
@@ -907,6 +963,58 @@ def plain_heading(text: str) -> str:
     return t
 
 
+_CARDS_SYSTEM = """あなたは日本語の解説動画のテロップ担当です。台本の各セクションの本文を読み、
+画面に出す文字カード(cards)を 2〜4 枚ずつ作ります。
+
+規則:
+- **文章ではなく体言止め。** 名詞で止める。「〜のだ」「〜する」「〜だ」「〜のか」で終わらせない
+- 誰かの発言・見解は 発言者「引用」 の形（例: 連合「1990年代前半以来の水準」）
+- 数字は「何が・いくつ・いつ」を名詞句にし（例: 実質賃金がマイナスの月が26か月連続）、
+  出典は source に分ける（例: 毎月勤労統計調査（厚生労働省））
+- text は 22 字以内。source は出典があるときだけ、機関名・調査名を短く
+- after_sentence は、その内容を話している文の番号（0 始まり）
+- 数字や固有名詞を含む文には必ず 1 枚作る。それ以外は要点だけ
+- 台本に無い数字・出典を作らない
+"""
+
+
+def ensure_cards(cfg: Config, script: VideoScript, force: bool = False) -> VideoScript:
+    """cards が無い（古い）台本に、体言止めの文字カードを後付けする."""
+    if not force and all(sec.cards for sec in script.sections):
+        return script
+    body = []
+    for i, sec in enumerate(script.sections):
+        sents = split_sentences(strip_tags(sec.narration))
+        body.append(f"## セクション{i}: {sec.heading}\n" +
+                    "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
+    user = "次の台本の各セクションに cards を作ってください。\n\n" + "\n\n".join(body)
+    data = llm.complete_json(_CARDS_SYSTEM, user, _CARDS_SCHEMA,
+                             model=cfg.get("script.model", llm.DEFAULT_MODEL), effort="medium")
+    got = data.get("sections") or []
+    for sec, item in zip(script.sections, got):
+        sec.cards = [Card(text=plain_heading(c.get("text", ""))[:40], source=(c.get("source") or "")[:30],
+                          after_sentence=int(c.get("after_sentence", 0) or 0))
+                     for c in (item.get("cards") or []) if c.get("text")]
+    log.info("文字カードを後付け: %d 枚", sum(len(s.cards) for s in script.sections))
+    return script
+
+
+_NOMINAL_TAILS = ("なのだ", "のだ", "のです", "です", "ます", "である", "だ", "のかな", "かな", "だろうか")
+
+
+def nominalize(sentence: str) -> str:
+    """文を体言止めふうに縮める簡易変換（LLM のカードが無いときの保険）.
+
+    「〜なのだ」「〜です」などの語尾を落とし、「〜のか」の問いは残す。完全ではない。
+    """
+    t = strip_tags(sentence).strip().rstrip("。！？!?")
+    for tail in _NOMINAL_TAILS:
+        if t.endswith(tail) and len(t) > len(tail) + 2:
+            t = t[: -len(tail)]
+            break
+    return t.rstrip("、，")
+
+
 def _assign_beats(cfg: Config, script: VideoScript) -> None:
     """beat が欠けた／順序が崩れたセクションに、9ブロックの順で beat を振り直す."""
     from . import bible
@@ -957,6 +1065,8 @@ def _sanitize(script: VideoScript) -> None:
         sec.on_screen = [plain_heading(s)[:24] for s in sec.on_screen][:4]
         for cap in sec.captions:
             cap.text = plain_heading(cap.text)[:16]
+        for card in sec.cards:
+            card.text = plain_heading(card.text)[:40]
     for term in script.terms:
         term.term = plain_heading(term.term)
         term.meaning = plain_heading(term.meaning)

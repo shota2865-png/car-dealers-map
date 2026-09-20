@@ -65,20 +65,29 @@ _NO_CUT_BEFORE = ("いう", "いえ", "して", "した", "なる", "なっ", "�
 _CLAUSE_END = ("ので", "けど", "けれど", "から", "たら", "ながら", "ように", "て", "と", "ば")
 
 
+_PARTICLE_HEADS = set("はがをにでともへやのか")   # 行頭に来させない（「で｜は」「と｜いう」を防ぐ）
+
+
+def _is_kana(ch: str) -> bool:
+    return "ぁ" <= ch <= "ん"
+
+
 def _best_cut(seg: str, max_chars: int) -> int:
     """seg を max_chars 以内で切る位置を選ぶ。自然さを点数にして一番よい所."""
     best_i, best_score = -1, -1e9
     for i in range(3, min(len(seg) - 1, max_chars) + 1):
         head, tail = seg[:i], seg[i:]
-        if tail[0] in _NO_LINE_START or tail.startswith(_NO_CUT_BEFORE):
+        if tail[0] in _NO_LINE_START or tail[0] in _PARTICLE_HEADS or tail.startswith(_NO_CUT_BEFORE):
             continue
         hit = next((pt for pt in _PARTICLES if head.endswith(pt)), None)
         if head[-1] in "、，":
             score = i + 10                         # 読点の直後が最良
-        elif hit is None:
-            continue
-        else:
+        elif hit is not None:
             score = i + (6 if hit in _CLAUSE_END else 0)
+        elif head[-1] == "の" and not _is_kana(tail[0]):
+            score = i + 2                          # 「名詞の｜名詞」は切ってよい（弱め）
+        else:
+            continue
         if len(tail) < 5:
             score -= 8                             # 次の行が短すぎる
         if len(head) < 6:
@@ -110,13 +119,24 @@ def phrase_split(text: str, max_chars: int) -> list[str]:
         seg = seg[i:]
     if seg:
         pieces.append(seg)
-    # 短すぎる断片は隣と結合（1行に収まる範囲で）
+    # 短すぎる断片（「で、」「は」「この感覚」）は隣と結合する。
+    # 収まらなければ前の行と合わせて切り直す。孤立させるくらいなら 1 字だけはみ出してよい
     merged: list[str] = []
     for pc in pieces:
-        if merged and len(merged[-1]) + len(pc) <= max_chars and (len(pc) <= 4 or len(merged[-1]) <= 4):
-            merged[-1] += pc
-        else:
-            merged.append(pc)
+        if merged and (len(pc.rstrip("、，")) <= 5 or len(merged[-1].rstrip("、，")) <= 5):
+            joined = merged[-1] + pc
+            # 読点は幅が狭いので、含むときは 2 字までのはみ出しを許す
+            slack = 2 if "、" in joined or "，" in joined else 1
+            if len(joined) <= max_chars + slack:
+                merged[-1] = joined
+                continue
+            if len(pc) <= 5:
+                i = _best_cut(joined, max_chars)
+                if 5 <= i <= len(joined) - 5:
+                    merged[-1] = joined[:i]
+                    merged.append(joined[i:])
+                    continue
+        merged.append(pc)
     # 行末の読点は落とす（行の中の読点は残す）
     return [m.rstrip("、，") or m for m in merged]
 
@@ -126,7 +146,7 @@ def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
     from . import design
 
     w, _h = cfg.get("video.resolution", [1920, 1080])
-    size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "body_l", 58) + 4)
+    size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "subtitle", 64))
     margin_r = max(120, int(reserve_right))
     usable = w - margin_r * 2          # 左右対称の余白（中央揃え）
     by_width = max(8, int(usable / (size * 1.02)))
@@ -273,7 +293,7 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
 
     from . import design
     # 字幕の大きさは本文トークン（body_l）が既定。config で明示したらそちら
-    base_size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "body_l", 58) + 4)
+    base_size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "subtitle", 64))
     outline = int(cfg.get("visuals.subtitle.outline", 0) or design.stroke(cfg, "text_outline"))
     w, h = cfg.get("video.resolution", [1920, 1080])
     family = font_family(cfg)

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import assets, footage
 from .config import Config
-from .script import Section, VideoScript, plain_heading, split_sentences
+from .script import Section, VideoScript, nominalize, plain_heading, split_sentences
 from .tts import Line, VoiceTrack
 
 log = logging.getLogger(__name__)
@@ -147,9 +147,11 @@ class _Painter:
         p = assets.render_number_card(self.cfg, value, label, note, self._next("num"))
         return self._bg(Scene(p, start, end, True, "card", f"数字: {value}"))
 
-    def quote(self, sentence: str, start: float, end: float) -> Scene:
-        p = assets.render_quote_card(self.cfg, sentence, self._next("quote"))
-        return self._bg(Scene(p, start, end, True, "card", f"一文: {sentence[:10]}"))
+    def quote(self, sentence: str, start: float, end: float, source: str = "") -> Scene:
+        # 台本の cards（体言止め）が渡されればそのまま、生の文なら語尾を落として体言止めに寄せる
+        text = sentence if source or not sentence.endswith(("のだ", "です", "ます", "だ", "。")) else nominalize(sentence)
+        p = assets.render_quote_card(self.cfg, text, self._next("quote"), source=source)
+        return self._bg(Scene(p, start, end, True, "card", f"カード: {text[:10]}"))
 
     def term(self, t, start: float, end: float) -> Scene:
         p = assets.render_term_card(self.cfg, t.term, t.meaning, t.example, self._next("term"))
@@ -203,7 +205,11 @@ def _section_pool(cfg: Config, script: VideoScript, sec: Section, index: int,
     else:
         pool.append(lambda s, e: painter.bullets(sec.heading, sec.on_screen, s, e))
 
-    # 2. テロップ由来
+    # 2. 体言止めの文字カード（台本の cards）。数字・固有名詞のある文の直後に出す
+    for card in sorted(sec.cards, key=lambda c: c.after_sentence):
+        pool.append(lambda s, e, c=card: painter.quote(c.text, s, e, source=c.source))
+
+    # 2b. テロップ由来
     for cap in sec.captions:
         if cap.type == "KEYWORD":
             pool.append(lambda s, e, c=cap: painter.keyword(c.text, sec.heading, s, e))
@@ -299,7 +305,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             if j < len(pool):
                 scenes.append(pool[j](s, e))
             elif (j - len(pool)) % 2 == 0:
-                scenes.append(painter.quote(_key_sentence(ch), s, e))
+                scenes.append(painter.quote(nominalize(_key_sentence(ch)), s, e))
             else:
                 scenes.append(main_again(s, e))
 

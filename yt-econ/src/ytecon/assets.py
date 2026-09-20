@@ -738,19 +738,26 @@ def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path
     return _save(img, out)
 
 
-def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
-    """いま読み上げている一文をそのまま大きく出す。「文字で分かりやすく」の主力."""
+def render_quote_card(cfg: Config, sentence: str, out: Path, source: str = "") -> Path:
+    """体言止めの文字カード。要点を大きく、出典は小さく別行に（「文章」は出さない）.
+
+    例) 実質賃金がマイナスの月が26か月連続 / — 毎月勤労統計調査（厚生労働省）
+        連合「1990年代前半以来の水準」
+    """
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "quote"))
-    sentence = sentence.strip().rstrip("。")
-    f, lines = fit_text(cfg, d, sentence, "headline_l", w - 360, 3, min_size=56)
-    total = len(lines) * (f.size + 24)
+    text = sentence.strip().rstrip("。")
+    f, lines = fit_text(cfg, d, text, "display_s", w - 360, 3, min_size=56)
+    lh = f.size + 24
+    total = len(lines) * lh + (int(ts(cfg, "label") * 1.8) if source else 0)
     y = (h - total) // 2
-    # 引用符
-    fq = load_font(cfg, 160)
-    d.text((120, y - 120), "“", font=fq, fill=pal["accent"])
+    # 左のアクセントバー（引用符の代わり。発言者「引用」形式でも邪魔にならない）
+    d.rectangle([150, y + 8, 150 + 12, y + len(lines) * lh - 16], fill=pal["accent"])
     for line in lines:
         d.text((200, y), line, font=f, fill=pal["text"])
-        y += f.size + 24
+        y += lh
+    if source:
+        f_src = load_font(cfg, ts(cfg, "label", 36), "bold")
+        d.text((200, y + 12), "— " + _safe_for_font(f_src, source), font=f_src, fill=pal["text_secondary"])
     return _save(img, out)
 
 

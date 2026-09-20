@@ -303,3 +303,24 @@ def test_build_track_switches_expressions_and_bobs(tmp_path, cfg, monkeypatch):
     assert out is not None and out.exists()
     listing = (tmp_path / "out" / "character_frames.txt").read_text()
     assert "驚_" in listing and "_up.png" in listing and "_dn.png" in listing
+
+
+def test_cards_and_nominalize():
+    from ytecon.script import VideoScript, nominalize
+    s = VideoScript.from_dict({"topic_title": "t", "hook": "h", "closing": "c", "sections": [
+        {"heading": "a", "narration": "b。", "cards": [
+            {"text": "実質賃金がマイナスの月が26か月連続", "source": "毎月勤労統計調査（厚生労働省）", "after_sentence": 0},
+            {"text": "連合「1990年代前半以来の水準」"}]}]})
+    assert len(s.sections[0].cards) == 2 and s.sections[0].cards[0].source.startswith("毎月")
+    assert nominalize("値上げが止まる会社のほうが危ないのだ。") == "値上げが止まる会社のほうが危ない"
+    assert nominalize("[驚]物価は上がったのです。") == "物価は上がった"
+
+
+def test_subtitles_never_start_with_particles_or_orphans():
+    from ytecon.subtitles import phrase_split
+    for t in ("それなのに厚生労働省の毎月勤労統計調査では、実質賃金がマイナスの月が長く続いた。",
+              "この感覚、たぶん気のせいではないのだ。", "ここで一度、考えてみてほしいのだ。"):
+        got = phrase_split(t, 15)
+        assert all(not p.startswith(tuple("はがをにでともへやのか")) for p in got), got
+        assert all(len(p.rstrip("、")) >= 4 for p in got), got
+        assert all(len(p) <= 17 for p in got), got

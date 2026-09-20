@@ -107,10 +107,15 @@ def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
             if fade_frames > 0 and frames > fade_frames * 2 else "")
 
     if scene.background is not None:
-        # 背景動画（ループ）＋ 透過カードの重ね合わせ
+        # 背景動画（ループ）＋ 透過カードの重ね合わせ。
+        # 背景は「内容に集中できる」ようにぼかして彩度を落とす（実写 B-roll は弱め）
+        strong = scene.kind not in ("broll",)
+        blur = float(cfg.get("visuals.background_blur", 8)) * (1.0 if strong else 0.35)
+        sat = float(cfg.get("visuals.background_saturation", 0.6)) if strong else 0.85
+        calm = (f"boxblur=lr={blur:.1f}:lp=2," if blur >= 0.5 else "") + f"eq=saturation={sat:.2f}:brightness=-0.03,"
         fc = (
             f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
-            f"fps={fps},format=rgba[bg];"
+            f"{calm}fps={fps},format=rgba[bg];"
             f"[1:v]format=rgba[fg];"
             f"[bg][fg]overlay=0:0:format=auto,format=yuv420p{fade}[v]"
         )
