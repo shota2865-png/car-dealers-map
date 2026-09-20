@@ -119,6 +119,7 @@ class VideoScript:
     open_loops: list[OpenLoop] = field(default_factory=list)
     terms: list[Term] = field(default_factory=list)
     research: dict[str, Any] = field(default_factory=dict)   # 台本前の「リサーチの木」
+    block_cards: dict[str, list[Card]] = field(default_factory=dict)  # hook/proof/promise/closing の文字カード
 
     @property
     def narration_blocks(self) -> list[tuple[str, str]]:
@@ -202,6 +203,12 @@ class VideoScript:
                 for t in (d.get("terms") or []) if t.get("term")
             ],
             research=d.get("research") or {},
+            block_cards={
+                k: [Card(text=c.get("text", ""), source=c.get("source", "") or "",
+                         after_sentence=int(c.get("after_sentence", 0) or 0))
+                    for c in (v or []) if c.get("text")]
+                for k, v in (d.get("block_cards") or {}).items()
+            },
         )
 
     def save(self, path: str | Path) -> Path:
@@ -980,22 +987,44 @@ _CARDS_SYSTEM = """あなたは日本語の解説動画のテロップ担当で�
 
 def ensure_cards(cfg: Config, script: VideoScript, force: bool = False) -> VideoScript:
     """cards が無い（古い）台本に、体言止めの文字カードを後付けする."""
-    if not force and all(sec.cards for sec in script.sections):
+    if not force and all(sec.cards for sec in script.sections) and script.block_cards:
         return script
+    # 導入（hook / proof / promise）と締め（closing）も「セクション」として一緒に頼む
+    blocks = [("hook", "導入・つかみ", script.hook), ("proof", "導入・裏づけ", script.proof),
+              ("promise", "導入・約束", script.promise), ("closing", "締め", script.closing)]
     body = []
+    for key, name, text in blocks:
+        sents = split_sentences(strip_tags(text))
+        if sents:
+            body.append(f"## {key}: {name}\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
     for i, sec in enumerate(script.sections):
         sents = split_sentences(strip_tags(sec.narration))
-        body.append(f"## セクション{i}: {sec.heading}\n" +
-                    "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
-    user = "次の台本の各セクションに cards を作ってください。\n\n" + "\n\n".join(body)
+        body.append(f"## s{i}: {sec.heading}\n" + "\n".join(f"{k}: {t}" for k, t in enumerate(sents)))
+    user = ("次の台本の各ブロック（hook / proof / promise / s0.. / closing）に cards を作ってください。"
+            "sections の並びと数は入力と同じにし、heading にブロック名（hook, s0 など）を入れてください。\n\n"
+            + "\n\n".join(body))
     data = llm.complete_json(_CARDS_SYSTEM, user, _CARDS_SCHEMA,
                              model=cfg.get("script.model", llm.DEFAULT_MODEL), effort="medium")
     got = data.get("sections") or []
-    for sec, item in zip(script.sections, got):
-        sec.cards = [Card(text=plain_heading(c.get("text", ""))[:40], source=(c.get("source") or "")[:30],
-                          after_sentence=int(c.get("after_sentence", 0) or 0))
-                     for c in (item.get("cards") or []) if c.get("text")]
-    log.info("文字カードを後付け: %d 枚", sum(len(s.cards) for s in script.sections))
+
+    def to_cards(items):
+        return [Card(text=plain_heading(c.get("text", ""))[:40], source=(c.get("source") or "")[:30],
+                     after_sentence=int(c.get("after_sentence", 0) or 0))
+                for c in (items or []) if c.get("text")]
+
+    by_name = {str(item.get("heading", "")).strip().split(":")[0]: item for item in got}
+    keys = [k for k, _, t in blocks if split_sentences(strip_tags(t))] + [f"s{i}" for i in range(len(script.sections))]
+    for pos, key in enumerate(keys):
+        item = by_name.get(key) or (got[pos] if pos < len(got) else None)
+        if not item:
+            continue
+        cards = to_cards(item.get("cards"))
+        if key.startswith("s") and key[1:].isdigit():
+            script.sections[int(key[1:])].cards = cards
+        else:
+            script.block_cards[key] = cards
+    log.info("文字カードを後付け: 本編 %d 枚 / 導入・締め %d 枚",
+             sum(len(s.cards) for s in script.sections), sum(len(v) for v in script.block_cards.values()))
     return script
 
 
@@ -1066,6 +1095,9 @@ def _sanitize(script: VideoScript) -> None:
         for cap in sec.captions:
             cap.text = plain_heading(cap.text)[:16]
         for card in sec.cards:
+            card.text = plain_heading(card.text)[:40]
+    for cards in script.block_cards.values():
+        for card in cards:
             card.text = plain_heading(card.text)[:40]
     for term in script.terms:
         term.term = plain_heading(term.term)

@@ -261,18 +261,27 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     def lines_of(block: str) -> list[Line]:
         return [ln for ln in track.lines if ln.block_id == block]
 
-    # --- hook: タイトル → キーワード ---
+    def block_card(block: str, j: int, ch: list[Line]):
+        """導入・締めの j 番目の枠に出すカード。台本の block_cards → 無ければ体言止めに寄せた一文."""
+        cards = script.block_cards.get(block) or []
+        if cards:
+            c = cards[j % len(cards)]
+            return painter.quote(c.text, _span(ch)[0], _span(ch)[1], source=c.source)
+        return painter.quote(nominalize(_key_sentence(ch)), *_span(ch))
+
+    # --- hook: タイトル → キーワード → カード ---
     hook = chunk_lines(lines_of("hook"), target, lo, hi, pivots)
     for j, ch in enumerate(hook):
         s, e = _span(ch)
         if j == 0:
             scenes.append(painter.title(script.topic_title, s, e))
-        else:
+        elif j == 1:
             main = (script.thumbnail_copy or {}).get("main") or script.topic_title
-            scenes.append(painter.keyword(main, "", s, e) if j == 1
-                          else painter.quote(_key_sentence(ch), s, e))
+            scenes.append(painter.keyword(main, "", s, e))
+        else:
+            scenes.append(block_card("hook", j - 2, ch))
 
-    # --- proof: 数字があれば数字カード ---
+    # --- proof: 数字があれば数字カード → カード ---
     for j, ch in enumerate(chunk_lines(lines_of("proof"), target, lo, hi, pivots)):
         s, e = _span(ch)
         nums = _numbers(script.proof)
@@ -280,17 +289,18 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             value = " → ".join(nums[:2]) if len(nums) >= 2 else nums[0]
             scenes.append(painter.number(value, "数字で見る", "", s, e))
         else:
-            scenes.append(painter.quote(_key_sentence(ch), s, e))
+            scenes.append(block_card("proof", j, ch))
 
-    # --- promise: この動画で分かること ---
+    # --- promise: この動画で分かること → カード ---
     for j, ch in enumerate(chunk_lines(lines_of("promise"), target, lo, hi, pivots)):
         s, e = _span(ch)
         if j == 0:
-            sents = [plain_heading(x.rstrip("。")) for x in split_sentences(script.promise)]
-            items = sents[1:4] or sents[:3]
+            cards = script.block_cards.get("promise") or []
+            items = [c.text for c in cards][:3] or \
+                    ([plain_heading(x.rstrip("。")) for x in split_sentences(script.promise)][1:4])
             scenes.append(painter.bullets("この動画で分かること", items, s, e))
         else:
-            scenes.append(painter.quote(_key_sentence(ch), s, e))
+            scenes.append(block_card("promise", j - 1, ch))
 
     # --- 本編 ---
     for i, sec in enumerate(script.sections):
@@ -305,7 +315,11 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             if j < len(pool):
                 scenes.append(pool[j](s, e))
             elif (j - len(pool)) % 2 == 0:
-                scenes.append(painter.quote(nominalize(_key_sentence(ch)), s, e))
+                if sec.cards:
+                    c = sec.cards[(j - len(pool)) // 2 % len(sec.cards)]
+                    scenes.append(painter.quote(c.text, s, e, source=c.source))
+                else:
+                    scenes.append(painter.quote(nominalize(_key_sentence(ch)), s, e))
             else:
                 scenes.append(main_again(s, e))
 
@@ -314,12 +328,14 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     for j, ch in enumerate(closing):
         s, e = _span(ch)
         if j == 0:
-            items = [plain_heading(x.rstrip("。")) for x in split_sentences(script.closing)][1:4]
+            cards = script.block_cards.get("closing") or []
+            items = [c.text for c in cards][:3] or \
+                    [plain_heading(x.rstrip("。")) for x in split_sentences(script.closing)][1:4]
             scenes.append(painter.bullets("今日のまとめ", items, s, e))
         elif j == len(closing) - 1:
             scenes.append(painter.outro(s, e))
         else:
-            scenes.append(painter.quote(_key_sentence(ch), s, e))
+            scenes.append(block_card("closing", j - 1, ch))
 
     scenes.sort(key=lambda x: x.start)
     # 隣接シーンの隙間を埋める（無音区間で画が消えないように）
