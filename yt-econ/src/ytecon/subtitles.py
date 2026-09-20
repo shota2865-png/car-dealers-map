@@ -128,7 +128,7 @@ def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
     w, _h = cfg.get("video.resolution", [1920, 1080])
     size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "body_l", 58) + 4)
     margin_r = max(120, int(reserve_right))
-    usable = w - 120 - margin_r
+    usable = w - margin_r * 2          # 左右対称の余白（中央揃え）
     by_width = max(8, int(usable / (size * 1.02)))
     limit = int(cfg.get("visuals.subtitle.max_chars_per_line", 20))
     return min(by_width, limit)
@@ -245,11 +245,15 @@ def font_family(cfg: Config) -> str:
 
 def _style_line(name: str, family: str, size: int, primary: str,
                 outline_color: str, outline: int, alignment: int,
-                margin_v: int, bold: int = -1, margin_r: int = 120) -> str:
+                margin_v: int, bold: int = -1, margin_r: int = 120,
+                margin_l: int | None = None) -> str:
+    # 左右の余白を同じにして、字幕を**画面の中央**に置く。キャラのぶん右を空ける
+    # 必要があるときは、左も同じだけ空けて中央を保つ（左に寄って見えるのを防ぐ）
+    margin_l = margin_r if margin_l is None else margin_l
     return (
         f"Style: {name},{family},{size},{_ass_color(primary)},&H000000FF,"
         f"{_ass_color(outline_color)},&H64000000,{bold},0,0,0,100,100,1,0,1,"
-        f"{outline},2,{alignment},120,{margin_r},{margin_v},1"
+        f"{outline},2,{alignment},{margin_l},{margin_r},{margin_v},1"
     )
 
 
@@ -275,7 +279,7 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
     family = font_family(cfg)
     stroke = "#0B1120"
 
-    # 右下にキャラクターがいるぶん、文字は左寄りの領域に収める
+    # 右下にキャラクターがいるぶん右を空けるが、左も同じだけ空けて字幕は画面中央に置く
     margin_r = max(120, int(reserve_right))
     styles = [
         # 字幕。画面下（alignment 2 = 下中央）
@@ -290,12 +294,12 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
         color = colors.get(spec.get("color", "text"), colors["text"])
         size = int(base_size * float(spec.get("size_scale", 1.0)))
         if name == "EDITORIAL":
-            # 編集者の声は隅に小さく。本人より目立たせない
-            alignment, margin = 7, 150
+            # 編集者の声は左上の隅に小さく。本人より目立たせない
+            alignment, margin, ml = 7, 150, 120
         else:
-            alignment, margin = 2, telop_margin
+            alignment, margin, ml = 2, telop_margin, None
         styles.append(_style_line(f"T_{name}", family, size, color, stroke,
-                                  outline + 1, alignment, margin, margin_r=margin_r))
+                                  outline + 1, alignment, margin, margin_r=margin_r, margin_l=ml))
 
     header = f"""[Script Info]
 ScriptType: v4.00+
