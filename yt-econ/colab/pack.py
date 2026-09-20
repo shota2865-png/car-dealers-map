@@ -22,8 +22,9 @@ def build(script_json: Path, out: Path | None = None, mac: bool = False) -> Path
     prefix = "ytecon_mac/" if mac else ""
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         if mac:
-            z.write(ROOT / "mac" / "make_video.py", "ytecon_mac/make_video.py")
-            z.write(ROOT / "mac" / "動画をつくる.command", "ytecon_mac/動画をつくる.command")
+            for name in ("make_video.py", "動画をつくる.command", "import_assets.py",
+                         "artlist_fetch.py", "素材をそろえる.command"):
+                z.write(ROOT / "mac" / name, f"ytecon_mac/{name}")
         for py in (ROOT / "src" / "ytecon").glob("*.py"):
             z.write(py, f"{prefix}src/ytecon/{py.name}")
         for cfg in (ROOT / "config").iterdir():

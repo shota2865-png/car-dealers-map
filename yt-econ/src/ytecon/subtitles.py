@@ -1,7 +1,8 @@
 """字幕生成.
 
 TTS が返した文ごとのタイムコードをそのまま使うので、音ズレが構造的に起きない。
-長い文は文字数比で分割して複数キューにする（画面に出るのは常に最大2行）。
+長い文は文節で分割して複数キューにする（画面に出るのは**常に1行**。
+2〜3行に折り返すと不自然になるので、行に収まる文節ごとに送る）。
 
 出力は ASS（焼き込み用）と SRT（YouTube に字幕として渡す用）の2つ。
 """
@@ -50,50 +51,129 @@ class TelopCue:
 
 _NO_LINE_START = "。、」』）｝】〕〉》・ーぁぃぅぇぉっゃゅょゎ々！？!?"
 
+# 文節の切れ目とみなす助詞・接続助詞（この直後で切ってよい）
+_PARTICLES = ("ので", "けど", "けれど", "から", "まで", "って", "とか", "たら", "ながら",
+              "ように", "は", "が", "を", "に", "で", "と", "も", "へ", "や", "て", "し")
+_PUNCT = "、。，！？!?…"
 
-def _balance(text: str, per_line: int) -> list[str]:
-    """1キュー分の文字列を、行の長さが揃うように割る（禁則つき）.
 
-    単純に per_line ごとに切ると「円安なのだ」+「。」のように句点だけが
-    次の行に落ちる。行数を先に決めて均等に割り、行頭に来てはいけない字は
-    前の行に送る。
+# 切った直後にこれが来る位置では切らない（「と｜いう」「し｜て」のような不自然な割れを防ぐ）
+_NO_CUT_BEFORE = ("いう", "いえ", "して", "した", "なる", "なっ", "いる", "いた", "ある", "あっ",
+                  "おく", "みる", "くる", "しまう", "ください", "ほしい", "のだ", "なのだ",
+                  "です", "ます", "だっ", "だ", "か", "ね", "よ")
+# 節の終わりになりやすい助詞（ここで切ると自然）
+_CLAUSE_END = ("ので", "けど", "けれど", "から", "たら", "ながら", "ように", "て", "と", "し", "ば")
+
+
+def _best_cut(seg: str, max_chars: int) -> int:
+    """seg を max_chars 以内で切る位置を選ぶ。自然さを点数にして一番よい所."""
+    best_i, best_score = -1, -1e9
+    for i in range(3, min(len(seg) - 1, max_chars) + 1):
+        head, tail = seg[:i], seg[i:]
+        if tail[0] in _NO_LINE_START or tail.startswith(_NO_CUT_BEFORE):
+            continue
+        hit = next((pt for pt in _PARTICLES if head.endswith(pt)), None)
+        if head[-1] in "、，":
+            score = i + 10                         # 読点の直後が最良
+        elif hit is None:
+            continue
+        else:
+            score = i + (6 if hit in _CLAUSE_END else 0)
+        if len(tail) < 5:
+            score -= 8                             # 次の行が短すぎる
+        if len(head) < 6:
+            score -= 6                             # この行が短すぎる
+        if score > best_score:
+            best_i, best_score = i, score
+    if best_i > 0:
+        return best_i
+    i = min(max_chars, len(seg) - 1)
+    while i > 1 and seg[i] in _NO_LINE_START:
+        i -= 1
+    return i
+
+
+def phrase_split(text: str, max_chars: int) -> list[str]:
+    """1文を『1行に収まる文節のかたまり』に割る（常に1行で出すための分割）.
+
+    読点の直後 → 節の終わりの助詞 → 格助詞 → 機械的、の順に自然な所で切る。
+    「話していることは1行で。分かりやすい文節で区切る」がここの仕事。
     """
-    text = text.strip()
-    if not text:
-        return [""]
-    n_lines = max(1, -(-len(text) // per_line))          # ceil
-    width = -(-len(text) // n_lines)
-    rows = [text[i:i + width] for i in range(0, len(text), width)]
-    # 禁則: 行頭の句読点などを前の行の末尾へ
-    for i in range(1, len(rows)):
-        while rows[i] and rows[i][0] in _NO_LINE_START and rows[i - 1]:
-            rows[i - 1] += rows[i][0]
-            rows[i] = rows[i][1:]
-    return [r for r in rows if r]
-
-
-def _chunk(text: str, per_line: int, max_lines: int = 2) -> list[list[str]]:
-    """テキストを『最大 max_lines 行』の塊の列に割る."""
-    # 表示上は文末の句点を落とす（日本語字幕の慣習。行末の「。」だけの行も防げる）
     text = text.strip().rstrip("。")
-    rows = _balance(text, per_line)
-    return [rows[i:i + max_lines] for i in range(0, len(rows), max_lines)] or [[""]]
+    if not text:
+        return []
+    pieces: list[str] = []
+    seg = text
+    while len(seg) > max_chars:
+        i = _best_cut(seg, max_chars)
+        pieces.append(seg[:i])
+        seg = seg[i:]
+    if seg:
+        pieces.append(seg)
+    # 短すぎる断片は隣と結合（1行に収まる範囲で）
+    merged: list[str] = []
+    for pc in pieces:
+        if merged and len(merged[-1]) + len(pc) <= max_chars and (len(pc) <= 4 or len(merged[-1]) <= 4):
+            merged[-1] += pc
+        else:
+            merged.append(pc)
+    # 行末の読点は落とす（行の中の読点は残す）
+    return [m.rstrip("、，") or m for m in merged]
 
 
-def build_cues(cfg: Config, track: VoiceTrack) -> list[Cue]:
-    per_line = int(cfg.get("visuals.subtitle.max_chars_per_line", 20))
+def chars_per_line(cfg: Config, reserve_right: int = 0) -> int:
+    """1行に入れてよい文字数。フォントサイズとキャラの占有幅から決め、設定値を上限にする."""
+    from . import design
+
+    w, _h = cfg.get("video.resolution", [1920, 1080])
+    size = int(cfg.get("visuals.subtitle.font_size", 0) or design.type_size(cfg, "body_l", 58) + 4)
+    margin_r = max(120, int(reserve_right))
+    usable = w - 120 - margin_r
+    by_width = max(8, int(usable / (size * 1.02)))
+    limit = int(cfg.get("visuals.subtitle.max_chars_per_line", 20))
+    return min(by_width, limit)
+
+
+def build_cues(cfg: Config, track: VoiceTrack, reserve_right: int = 0) -> list[Cue]:
+    """文ごとの実測時刻を、1行ずつの文節に配る。表示は常に1行."""
+    per_line = chars_per_line(cfg, reserve_right)
+    min_show = float(cfg.get("visuals.subtitle.min_seconds", 0.7))
     cues: list[Cue] = []
     for line in track.lines:
-        groups = _chunk(line.text, per_line)
-        total_chars = sum(len("".join(g)) for g in groups) or 1
+        pieces = phrase_split(line.text, per_line)
+        if not pieces:
+            continue
+        total_chars = sum(len(p) for p in pieces) or 1
         t = line.start
-        for group in groups:
-            share = len("".join(group)) / total_chars
-            dur = max(line.duration * share, 0.6)
-            end = min(t + dur, line.end) if len(groups) > 1 else line.end
-            cues.append(Cue(start=t, end=max(end, t + 0.4), lines=group))
+        for k, piece in enumerate(pieces):
+            if k == len(pieces) - 1:
+                end = line.end
+            else:
+                end = t + max(line.duration * len(piece) / total_chars, min_show)
+                end = min(end, line.end)
+            cues.append(Cue(start=t, end=max(end, t + 0.3), lines=[piece]))
             t = end
-    return cues
+    # 表示が短すぎる断片は次と結合して読める長さにする（1行に収まるときだけ）
+    out: list[Cue] = []
+    for c in cues:
+        if out and (c.end - c.start) < min_show * 0.6 and \
+                len(out[-1].lines[0]) + len(c.lines[0]) <= per_line:
+            out[-1].lines[0] += c.lines[0]
+            out[-1].end = c.end
+        else:
+            out.append(c)
+    return out
+
+
+def _balance(text: str, per_line: int) -> list[str]:
+    """（互換用）1行に収める。長ければ文節で割った先頭だけ返す."""
+    pieces = phrase_split(text, per_line)
+    return pieces[:1] or [""]
+
+
+def _chunk(text: str, per_line: int, max_lines: int = 1) -> list[list[str]]:
+    """（互換用）常に1行ずつ."""
+    return [[p] for p in phrase_split(text, per_line)] or [[""]]
 
 
 def build_telops(cfg: Config, script: VideoScript,
@@ -269,7 +349,7 @@ def write_srt(cues: list[Cue], out: str | Path) -> Path:
 def build(cfg: Config, track: VoiceTrack, outdir: str | Path,
           script: VideoScript | None = None, reserve_right: int = 0) -> dict[str, Path]:
     outdir = Path(outdir)
-    cues = build_cues(cfg, track)
+    cues = build_cues(cfg, track, reserve_right=reserve_right)
     telops = build_telops(cfg, script, track) if script else []
     return {
         "ass": write_ass(cfg, cues, outdir / "subtitles.ass", telops=telops,

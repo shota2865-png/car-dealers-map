@@ -1,9 +1,9 @@
 """BGM の用意.
 
-assets/bgm/ に音源があればそれを使う。無ければ、リラックス系のパッド音を
-その場で合成する（権利関係がゼロで、とりあえず鳴る）。合成音は控えめな
-「仮の BGM」なので、本番はフリー音源に差し替えることを勧める
-（入手先は docs/BGMの用意.md）。
+assets/bgm/ に置いた曲（Artlist など）だけを使う。気分名（ambient / curiosity /
+tension / reflective）のファイルがあればブロックごとに切り替え、無ければ置いてある
+曲を順繰りに割り当てる。曲が無ければ BGM なし。
+合成のパッド音（generate_pad）はテスト用に残してあるが、本番では使わない。
 """
 
 from __future__ import annotations
@@ -188,18 +188,33 @@ def _read_mono(path: Path):
     return data
 
 
-def _mood_source(cfg: Config, mood: str) -> Path:
-    """気分ごとの音源。assets/bgm/<mood>.* があればそれ、無ければ合成."""
+def available_files(cfg: Config) -> list[Path]:
     bgm_dir = cfg.root / "assets" / "bgm"
-    for ext in (".mp3", ".wav", ".m4a", ".ogg"):
-        p = bgm_dir / f"{mood}{ext}"
-        if p.exists():
+    out: list[Path] = []
+    for ext in ("*.mp3", "*.wav", "*.m4a", "*.ogg", "*.aac", "*.flac"):
+        out += sorted(bgm_dir.glob(ext))
+    return [p for p in out if not p.name.startswith(".")]
+
+
+def _mood_source(cfg: Config, mood: str, files: list[Path] | None = None) -> Path | None:
+    """気分ごとの音源。assets/bgm/<mood>.* → 名前に気分を含むもの → 他の曲を順繰り.
+
+    合成音は使わない（電子音は不評）。曲が1つも無ければ None（＝BGM なし）。
+    """
+    files = available_files(cfg) if files is None else files
+    if not files:
+        return None
+    for p in files:
+        if p.stem.lower() == mood:
             return p
-    generated = cfg.workdir / f"bgm_{mood}_v1.wav"
-    if not generated.exists():
-        log.info("BGM(%s) が無いので合成します（仮）", mood)
-        generate_pad(generated, seconds=96.0, seed=3 + len(mood), mood=mood)
-    return generated
+    for p in files:
+        if mood in p.stem.lower():
+            return p
+    # 気分名のファイルが無い: 置いてある曲を気分の順番で割り当てる（曲数が足りなければ循環）
+    order = list((__import__("ytecon.bible", fromlist=["x"]).load(cfg).get("audio") or {}).get("bgm_moods") or
+                 {"ambient": 0, "curiosity": 0, "tension": 0, "reflective": 0})
+    idx = order.index(mood) if mood in order else 0
+    return files[idx % len(files)]
 
 
 def build_timeline(cfg: Config, script, track, outdir: Path) -> Path:
@@ -236,9 +251,13 @@ def build_timeline(cfg: Config, script, track, outdir: Path) -> Path:
     total = int(total_sec * RATE) + 1
     mix = np.zeros(total)
     cache: dict[str, object] = {}
+    files = available_files(cfg)
+    if not files:
+        raise FileNotFoundError("assets/bgm に曲がありません")
     for mood, s0, s1 in spans:
         if mood not in cache:
-            cache[mood] = _read_mono(_mood_source(cfg, mood))
+            src_path = _mood_source(cfg, mood, files)
+            cache[mood] = _read_mono(src_path)
         src = cache[mood]
         a = max(int((s0 - xf / 2) * RATE), 0)
         b = min(int((s1 + xf / 2) * RATE), total)
@@ -259,14 +278,14 @@ def build_timeline(cfg: Config, script, track, outdir: Path) -> Path:
 
 
 def resolve(cfg: Config, script=None, track=None, outdir: Path | None = None) -> Path | None:
-    """使う BGM のパスを返す。無効なら None.
+    """使う BGM のパスを返す。無効・曲なしなら None（BGM なしで作る）.
 
     優先順位:
       1. render.bgm.file で指定された 1 曲（全編それ）
       2. script/track が渡され mood_timeline が有効なら、ブロックごとに気分を
-         切り替えたタイムライン（assets/bgm/<mood>.* があればそれ、無ければ合成）
-      3. assets/bgm/ にある最初の音源
-      4. 合成パッド 1 曲
+         切り替えたタイムライン（assets/bgm/<mood>.* があればそれ、無ければ置いてある曲を順繰り）
+      3. assets/bgm/ にある最初の曲
+    合成音（パッド）は使わない。曲が無いときは警告して BGM なしにする。
     """
     if not cfg.get("render.bgm.enabled", False):
         return None
@@ -275,21 +294,16 @@ def resolve(cfg: Config, script=None, track=None, outdir: Path | None = None) ->
         p = cfg.root / "assets" / "bgm" / name
         if p.exists():
             return p
-        log.warning("BGM が見つかりません: %s（合成音に切り替えます）", p)
+        log.warning("BGM が見つかりません: %s", p)
+    files = available_files(cfg)
+    if not files:
+        log.warning("assets/bgm に曲が無いので BGM なしで作ります（Artlist などの曲を置いてください。"
+                    "docs/Artlistの使い方.md）")
+        return None
     if script is not None and track is not None and outdir is not None \
             and cfg.get("render.bgm.mood_timeline", True):
         try:
             return build_timeline(cfg, script, track, Path(outdir))
         except Exception as exc:
             log.warning("気分つき BGM を作れなかったので 1 曲で通します: %s", exc)
-    # ディレクトリに何か置いてあればそれを使う
-    bgm_dir = cfg.root / "assets" / "bgm"
-    for ext in ("*.mp3", "*.wav", "*.m4a", "*.ogg"):
-        found = sorted(bgm_dir.glob(ext))
-        if found:
-            return found[0]
-    generated = cfg.workdir / "bgm_pad_v2.wav"   # 生成ロジックを変えたら版を上げる
-    if not generated.exists():
-        log.info("BGM が無いので、リラックス系のパッド音を合成します（仮）")
-        generate_pad(generated)
-    return generated
+    return files[0]

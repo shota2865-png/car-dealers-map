@@ -124,13 +124,22 @@ def test_block_span():
     assert t.duration == 24.0
 
 
-def test_chunk_two_lines_max():
-    """45字は均等に3行（15字×3）に割れ、1キューは最大2行."""
+def test_chunk_is_always_one_line():
+    """長い文は文節ごとの 1 行キューに割れる（2行以上にはしない）."""
     groups = _chunk("あ" * 45, per_line=20)
-    assert all(len(g) <= 2 for g in groups)
+    assert all(len(g) == 1 for g in groups)
     lines = [ln for g in groups for ln in g]
     assert len(lines) == 3 and all(len(ln) <= 20 for ln in lines)
-    assert max(map(len, lines)) - min(map(len, lines)) <= 1
+
+
+def test_phrase_split_cuts_at_natural_boundaries():
+    from ytecon.subtitles import phrase_split
+    got = phrase_split("実際、日本銀行が公表する為替相場のデータによると、1ドルの年平均はおよそ110円だったのだ。", 20)
+    assert all(len(p) <= 20 for p in got)
+    assert "".join(got).replace("、", "") == "実際日本銀行が公表する為替相場のデータによると1ドルの年平均はおよそ110円だったのだ"
+    # 「と｜いう」「に｜よると」のような割れ方をしない
+    assert not any(p.startswith(("いう", "よると")) for p in got)
+    assert phrase_split("ここが今日いちばん大事なところなのだ。", 20) == ["ここが今日いちばん大事なところなのだ"]
 
 
 def test_cues_stay_inside_their_line(cfg: Config):
@@ -305,4 +314,4 @@ def test_subtitle_lines_never_start_with_punctuation():
             for line in group:
                 assert line and line[0] not in "。、」）", (text, group)
     rows = _balance("あ" * 30, 20)
-    assert len(rows) == 2 and abs(len(rows[0]) - len(rows[1])) <= 1   # 均等に割れる
+    assert len(rows) == 1 and len(rows[0]) <= 20                        # 常に1行

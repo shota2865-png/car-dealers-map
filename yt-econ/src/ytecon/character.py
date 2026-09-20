@@ -359,3 +359,29 @@ def build_track(cfg: Config, wav_path: Path, total_seconds: float, outdir: Path)
         return None
     log.info("キャラクターレイヤー: %d 状態区間 / %.1f秒", len(lines) // 2, total_seconds)
     return out
+
+
+def detect_credit(cfg: Config) -> str:
+    """立ち絵フォルダの readme から配布元を推定してクレジット文を作る（config に無いとき用）.
+
+    坂本アヒル様のずんだもん立ち絵は「立ち絵：坂本アヒル 様」の表記が慣例。
+    readme に名前が見つからなければフォルダ名だけを書く。
+    """
+    explicit = str(cfg.get("character.credit", "") or "").strip()
+    if explicit:
+        return explicit
+    ymm = find_ymm_dir(cfg)
+    if ymm is None:
+        return ""
+    text = ""
+    for p in list(ymm.glob("*.txt")) + list(ymm.parent.glob("*.txt")):
+        try:
+            text += p.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            try:
+                text += p.read_text(encoding="cp932", errors="ignore")
+            except Exception:
+                pass
+    if "坂本アヒル" in text or "坂本アヒル" in ymm.name or "坂本アヒル" in ymm.parent.name:
+        return "立ち絵：坂本アヒル 様"
+    return f"立ち絵：{ymm.name}"

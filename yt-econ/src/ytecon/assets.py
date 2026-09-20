@@ -204,7 +204,7 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
-          max_width: int) -> list[str]:
+          max_width: int, _balance_ok: bool = True) -> list[str]:
     """日本語は単語境界がないので1文字ずつ詰めて折り返す."""
     text = _safe_for_font(font, text)
     lines: list[str] = []
@@ -225,11 +225,68 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
             current = trial
     if current:
         lines.append(current)
-    return [ln for ln in lines if ln]
+    lines = [ln for ln in lines if ln]
+    # 2 行に収まる長さなら、割る位置を総当たりで選ぶ（「価値／が下がる」「逆算す／る」を避ける）
+    if _balance_ok and len(lines) == 2:
+        best = _best_two_line_split(draw, text, font, max_width)
+        if best:
+            return best
+    return lines
+
+
+_PARTICLE_CHARS = set("がをにはでともへやのか")
+_BREAK_BONUS = set(" 　、。，・／→はがをにでともへのか")
+
+
+def _best_two_line_split(draw, text: str, font, max_width: int) -> list[str] | None:
+    """2 行の割り位置を点数で選ぶ: 幅に収まる／行頭に助詞・句読点を置かない／長さが釣り合う."""
+    n = len(text)
+    best, best_score = None, -1e9
+    for i in range(2, n - 1):
+        a, b = text[:i].rstrip(" 　"), text[i:].lstrip(" 　")
+        if not a or not b:
+            continue
+        if draw.textlength(a, font=font) > max_width or draw.textlength(b, font=font) > max_width:
+            continue
+        if b[0] in _NO_LINE_START or b[0] in _PARTICLE_CHARS:
+            continue
+        score = -abs(len(a) - len(b)) * 2.0
+        prev, nxt = text[i - 1], text[i]
+        # 助詞の直後は切りやすい。ただし次がひらがな（「上が｜らない」）なら語の途中の可能性が高い
+        if prev in _PARTICLE_CHARS and not ("ぁ" <= nxt <= "ん"):
+            score += 5
+        if prev in " 　、。，・／→":
+            score += 9
+        if score > best_score:
+            best, best_score = [a, b], score
+    return best
 
 
 _NO_LINE_START = set("、。，．・：；？！?!」』）〕］｝〉》〟ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶー～")
 _BREAK_AFTER = (" ", "　", "、", "。", "，", "・", "／", "→")
+
+
+def fit_text(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, max_width: int,
+             max_lines: int, weight: str = "black", min_size: int = 28
+             ) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    """文字が枠に収まるまでフォントを小さくして、(フォント, 行) を返す.
+
+    まず役割サイズで折り返し、行数が上限を超えたら 8% ずつ縮める。
+    それでも入らなければ最終行を「…」で切る（枠からはみ出させない）。
+    """
+    size = ts(cfg, role)
+    while True:
+        font = load_font(cfg, size, weight)
+        lines = _wrap(d, text, font, max_width)
+        if len(lines) <= max_lines or size <= min_size:
+            break
+        size = max(min_size, int(size * 0.92))
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        while lines[-1] and d.textlength(lines[-1] + "…", font=font) > max_width:
+            lines[-1] = lines[-1][:-1]
+        lines[-1] += "…"
+    return font, lines
 
 
 # ----------------------------------------------------------------------
@@ -241,22 +298,27 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
     w = img.width
 
     # 見出し
-    f_head = load_font(cfg, ts(cfg, "headline_l", 76), "black")
-    head_lines = _wrap(d, heading, f_head, w - 320)[:2]
-    y = 230
-    d.rectangle([150, y - 24, 150 + 10, y + 96 * len(head_lines) - 24], fill=pal["accent"])
+    cw = _cw
+    f_head, head_lines = fit_text(cfg, d, heading, "headline_l", cw - 320, 2)
+    y = 200
+    lh = int(f_head.size * 1.28)
+    d.rectangle([150, y - 24, 150 + 10, y + lh * len(head_lines) - 24], fill=pal["accent"])
     for line in head_lines:
         d.text((196, y), line, font=f_head, fill=pal["text"])
-        y += 96
+        y += lh
 
-    # 箇条書き
-    f_body = load_font(cfg, ts(cfg, "body_l", 54))
-    y = max(y + 70, 480)
+    # 箇条書き（4項目 × 最大2行が枠に収まるよう、本文は少し小さくしてもよい）
+    y = max(y + 60, 440)
+    bottom = h - 120
     for bullet in bullets[:4]:
+        f_body, blines = fit_text(cfg, d, bullet, "body_l", cw - 480, 2)
+        bh = int(f_body.size * 1.3)
+        if y + bh * len(blines) > bottom:
+            break
         d.ellipse([200, y + 20, 222, y + 42], fill=pal["accent2"])
-        for i, line in enumerate(_wrap(d, bullet, f_body, w - 480)[:2]):
+        for line in blines:
             d.text((256, y), line, font=f_body, fill=pal["text"])
-            y += 68
+            y += bh
         y += 26
 
     return _save(img, out)
@@ -496,12 +558,11 @@ def build_section_image(cfg: Config, section: Section, index: int,
 def build_title_card(cfg: Config, title: str, out: Path) -> Path:
     """冒頭のタイトルカード."""
     img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "title"))
-    f = load_font(cfg, ts(cfg, "display_m", 92), "black")
-    lines = _wrap(d, title, f, cw - 240)[:3]
-    total = len(lines) * 120
+    f, lines = fit_text(cfg, d, title, "display_m", cw - 240, 2, min_size=64)
+    total = len(lines) * int(f.size * 1.3)
     y = (h - total) // 2
     for line in lines:
-        y = _center_text(d, line, f, y, cw, pal["text"]) + (120 - f.size - 18)
+        y = _center_text(d, line, f, y, cw, pal["text"]) + (int(f.size * 1.3) - f.size - 18)
     f_small = load_font(cfg, ts(cfg, "label", 40))
     _center_text(d, cfg.get("channel.name", ""), f_small, y + 40, cw, pal["accent"])
     return _save(img, out)
@@ -611,11 +672,7 @@ def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont
 def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     """キーワード1語をドンと置くカード。話題の切り替わりに使う."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "keyword"))
-    f = load_font(cfg, ts(cfg, "display_xl", 150))
-    lines = _wrap(d, keyword, f, w - 300)[:2]
-    if len(lines) > 1:
-        f = load_font(cfg, ts(cfg, "display_l", 120))
-        lines = _wrap(d, keyword, f, w - 300)[:2]
+    f, lines = fit_text(cfg, d, keyword, "display_xl", w - 300, 2, min_size=80)
     total = len(lines) * (f.size + 18)
     y = (h - total) // 2 - (50 if sub else 0)
     # 左右のアクセント線
@@ -623,35 +680,29 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     for line in lines:
         y = _center_text(d, line, f, y, w, pal["text"])
     if sub:
-        f2 = load_font(cfg, ts(cfg, "body_l", 52))
-        _center_text(d, sub[:30], f2, y + 30, w, pal["accent2"])
+        f2, sl = fit_text(cfg, d, sub, "body_l", w - 300, 1, min_size=36)
+        _center_text(d, sl[0], f2, y + 30, w, pal["accent2"])
     return _save(img, out)
 
 
 def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path) -> Path:
     """数字を主役にするカード。DATA テロップの内容を大きく見せる."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "number"))
-    f_val = load_font(cfg, ts(cfg, "numeral_xl", 210))
-    if d.textlength(value, font=f_val) > w - 240:
-        f_val = load_font(cfg, ts(cfg, "display_xl", 150))
-    f_lab = load_font(cfg, ts(cfg, "title", 60))
-    f_note = load_font(cfg, ts(cfg, "label", 36), "bold")
+    f_val, vl = fit_text(cfg, d, value, "numeral_xl", w - 240, 1, min_size=96)
+    f_lab, ll = fit_text(cfg, d, label, "title", w - 300, 1, min_size=36)
+    f_note, nl = fit_text(cfg, d, note, "label", w - 300, 1, weight="bold", min_size=26) if note else (None, [])
     y = h // 2 - 200
-    y = _center_text(d, label[:22], f_lab, y, w, pal["accent"])
-    y = _center_text(d, value, f_val, y + 10, w, pal["positive"])
+    y = _center_text(d, ll[0], f_lab, y, w, pal["accent"])
+    y = _center_text(d, vl[0], f_val, y + 10, w, pal["positive"])
     if note:
-        _center_text(d, note[:40], f_note, y + 20, w, "#9AA7BE")
+        _center_text(d, nl[0], f_note, y + 20, w, "#9AA7BE")
     return _save(img, out)
 
 
 def render_quote_card(cfg: Config, sentence: str, out: Path) -> Path:
     """いま読み上げている一文をそのまま大きく出す。「文字で分かりやすく」の主力."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "quote"))
-    f = load_font(cfg, ts(cfg, "headline_l", 84))
-    lines = _wrap(d, sentence, f, w - 360)[:3]
-    if len(lines) == 3:
-        f = load_font(cfg, ts(cfg, "headline_m", 70))
-        lines = _wrap(d, sentence, f, w - 360)[:3]
+    f, lines = fit_text(cfg, d, sentence, "headline_l", w - 360, 3, min_size=56)
     total = len(lines) * (f.size + 24)
     y = (h - total) // 2
     # 引用符
@@ -671,23 +722,23 @@ def render_term_card(cfg: Config, term: str, meaning: str, example: str, out: Pa
     d.rectangle([150, 150, 150 + 330, 150 + 64], fill=pal["accent2"])
     d.text((174, 158), "ビジネス用語", font=f_tag, fill="#101010")
 
-    f_term = load_font(cfg, ts(cfg, "display_l", 118))
-    lines = _wrap(d, term, f_term, w - 300)[:1]
-    d.text((150, 240), lines[0] if lines else _safe_for_font(f_term, term), font=f_term, fill=pal["text"])
+    f_term, tl = fit_text(cfg, d, term, "display_l", w - 300, 1, min_size=64)
+    d.text((150, 240), tl[0], font=f_term, fill=pal["text"])
 
-    f_mean = load_font(cfg, ts(cfg, "body_l", 56))
-    y = 420
-    for line in _wrap(d, meaning, f_mean, w - 340)[:2]:
+    f_mean, ml = fit_text(cfg, d, meaning, "body_l", w - 340, 2)
+    y = 250 + int(f_term.size * 1.35)
+    for line in ml:
         d.text((170, y), line, font=f_mean, fill=pal["text"])
-        y += 76
+        y += int(f_mean.size * 1.36)
 
     if example:
         y += 30
-        d.rectangle([170, y, 182, y + 150], fill=pal["positive"])
-        f_ex = load_font(cfg, ts(cfg, "body_m", 48), "bold")
-        for line in _wrap(d, example, f_ex, w - 420)[:3]:
+        f_ex, el = fit_text(cfg, d, example, "body_m", w - 420, 3, weight="bold")
+        eh = int(f_ex.size * 1.34)
+        d.rectangle([170, y, 182, y + eh * len(el) - 10], fill=pal["positive"])
+        for line in el:
             d.text((214, y), line, font=f_ex, fill="#CFE3D8")
-            y += 64
+            y += eh
     return _save(img, out)
 
 
@@ -818,8 +869,7 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
 
     img, d, pal, cw, h = _card_base(cfg, "clear")
     m = design.safe_margin(cfg)
-    f_head = load_font(cfg, ts(cfg, "headline_m", 68), "black")
-    lines = _wrap(d, heading, f_head, cw - m * 2)[:2] if heading else []
+    f_head, lines = fit_text(cfg, d, heading, "headline_m", cw - m * 2, 2) if heading else (load_font(cfg, 68), [])
     y = h - 300 - 96 * len(lines) - (len(bullets[:2]) * 64 if bullets else 0)
     y = max(y, 120)
     if lines:
