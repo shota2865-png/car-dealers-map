@@ -949,6 +949,9 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
 # 図解（flow / compare / steps / balance / table）
 # 「タイトルだけ出て言葉で説明される」を無くすための絵。すりガラスの面に描く
 # ----------------------------------------------------------------------
+SUB_BAND = 190   # 画面下の字幕帯の高さ（ここには図解の中身も出典も置かない）
+
+
 def _diagram_base(cfg: Config, title: str, note: str):
     from . import design
 
@@ -962,8 +965,13 @@ def _diagram_base(cfg: Config, title: str, note: str):
         y += int(f_t.size * 1.6)
     if note:
         f_n = load_font(cfg, ts(cfg, "label_s", 30), "bold")
-        d.text((m + 30, h - 128), "— " + _safe_for_font(f_n, note), font=f_n, fill=pal["text_secondary"])
-    return img, d, pal, cw, h, m, y
+        note_txt = "— " + _safe_for_font(f_n, note)
+        while len(note_txt) > 4 and d.textlength(note_txt + "…", font=f_n) > cw - m * 2 - 60:
+            note_txt = note_txt[:-1]
+        d.text((m + 30, h - SUB_BAND - 44), note_txt + ("…" if len(note_txt) < len(note) + 2 else ""),
+               font=f_n, fill=pal["text_secondary"])
+    # 中身は字幕の帯（下 SUB_BAND px）と出典行より上に収める → 呼び出し側は h - SUB_BAND - 60 を下限に使う
+    return img, d, pal, cw, h - SUB_BAND + 128 - 60, m, y
 
 
 def _rounded(d, box, fill, outline=None, r=16, width=3):
