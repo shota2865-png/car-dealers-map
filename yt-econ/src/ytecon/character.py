@@ -249,7 +249,7 @@ def reserved_width(cfg: Config) -> int:
     w, h = Image.open(assets["base"]).size
     _rw, rh = cfg.get("video.resolution", [1920, 1080])
     ch_h = rh * float(cfg.get("character.height_ratio", 0.42))
-    return int(w * ch_h / h) + int(cfg.get("character.margin_right", 24)) + 30
+    return int(w * ch_h / h) + int(cfg.get("character.margin_right", 24)) + 12
 
 
 # ----------------------------------------------------------------------
