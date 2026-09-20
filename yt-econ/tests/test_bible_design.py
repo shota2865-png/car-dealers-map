@@ -323,4 +323,4 @@ def test_subtitles_never_start_with_particles_or_orphans():
         got = phrase_split(t, 15)
         assert all(not p.startswith(tuple("はがをにでともへやのか")) for p in got), got
         assert all(len(p.rstrip("、")) >= 4 for p in got), got
-        assert all(len(p) <= 17 for p in got), got
+        assert all(len(p.replace('、', '')) <= 17 for p in got), got   # 読点は幅が狭いので数えない
