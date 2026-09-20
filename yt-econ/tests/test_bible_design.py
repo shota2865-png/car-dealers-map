@@ -1,4 +1,5 @@
 """スタイルバイブル・デザイントークン・立ち絵合成のテスト."""
+import copy
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,8 @@ from ytecon.tts import Line
 
 @pytest.fixture
 def cfg():
-    return load_config()
+    # load_config() は共有インスタンスを返すので、テストで書き換える前に複製する
+    return copy.deepcopy(load_config())
 
 
 # --- スタイルバイブル -------------------------------------------------
@@ -72,7 +74,7 @@ def test_chunk_lines_cuts_before_pivot_words(cfg):
 # --- デザイントークン -------------------------------------------------
 @pytest.mark.parametrize("preset", ["hybrid", "digital_agency", "apple", "material3"])
 def test_design_presets_are_complete(preset):
-    cfg = load_config()
+    cfg = copy.deepcopy(load_config())
     cfg.raw.setdefault("video", {})["design"] = preset
     design._load_file.cache_clear()
     t = design.tokens(cfg)
@@ -88,7 +90,7 @@ def test_design_presets_are_complete(preset):
 
 def test_palette_merges_tokens_then_overrides():
     from ytecon.assets import palette
-    cfg = load_config()
+    cfg = copy.deepcopy(load_config())
     cfg.raw.setdefault("video", {})["design"] = "apple"
     cfg.raw.setdefault("visuals", {})["palette"] = {"accent": "#123456"}
     design._load_file.cache_clear()
@@ -98,7 +100,7 @@ def test_palette_merges_tokens_then_overrides():
 
 
 def test_unknown_preset_falls_back_to_default():
-    cfg = load_config()
+    cfg = copy.deepcopy(load_config())
     cfg.raw.setdefault("video", {})["design"] = "nope"
     design._load_file.cache_clear()
     assert design.tokens(cfg)["name"] == design.DEFAULT_PRESET
