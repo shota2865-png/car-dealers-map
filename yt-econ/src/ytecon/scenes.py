@@ -139,7 +139,7 @@ class _Painter:
                 lines: list[Line] | None = None) -> list[Scene]:
         """箇条書き。話が進むにつれて、いま話している項目を順にハイライトする（段階ごとに 1 枚）."""
         items = [x for x in items if x]
-        stages = _stages(start, end, [[x] for x in items], lines,
+        stages = _stages(start, end, [assets.row_fragments([x]) for x in items], lines,
                          min_seconds=float(self.cfg.get("visuals.highlight_min_seconds", 1.6)))
         scenes: list[Scene] = []
         for k, (active, s, e) in enumerate(stages):
@@ -402,11 +402,9 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         s, e = _span(ch)
         if j == 0:
             scenes.append(painter.title(script.topic_title, s, e))
-        elif j == 1:
-            main = (script.thumbnail_copy or {}).get("main") or script.topic_title
-            scenes.append(painter.keyword(main, "", s, e))
         else:
-            _extend(scenes, block_card("hook", j - 2, ch))
+            # サムネ文言だけのキーワードカード（「痛みは毎週」のような短句）は文脈が無いと謎になるので出さない
+            _extend(scenes, block_card("hook", j - 1, ch))
 
     # --- proof: 数字があれば数字カード → カード ---
     for j, ch in enumerate(chunk_lines(lines_of("proof"), target, lo, hi, pivots)):
@@ -414,7 +412,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
         nums = _numbers(script.proof)
         if j == 0 and nums:
             value = " → ".join(nums[:2]) if len(nums) >= 2 else nums[0]
-            scenes.append(painter.number(value, "数字で見る", "", s, e))
+            scenes.append(painter.number(value, "", "", s, e))
         else:
             _extend(scenes, block_card("proof", j, ch))
 

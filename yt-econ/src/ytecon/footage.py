@@ -44,6 +44,7 @@ class Clip:
     kind: str = "broll"
     tags: set[str] = field(default_factory=set)
     duration: float = 0.0
+    height: int = 0          # 縦の画素数（1080 以上を優先する）
 
     @property
     def name(self) -> str:
@@ -61,6 +62,22 @@ def footage_dir(cfg: Config) -> Path:
 def _tokens(text: str) -> set[str]:
     words = re.split(r"[^a-z0-9ぁ-んァ-ン一-龥]+", text.lower())
     return {w for w in words if len(w) >= 2 and w not in _STOP and not w.isdigit()}
+
+
+def _probe(path: Path) -> tuple[float, int]:
+    """(秒数, 高さ px)."""
+    from .render import ensure_ffmpeg
+    try:
+        out = subprocess.run([ensure_ffmpeg(), "-i", str(path)], capture_output=True, text=True).stderr
+    except Exception:
+        return 0.0, 0
+    m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", out)
+    dur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
+    m2 = re.search(r"Video:.*?\s(\d{2,5})x(\d{2,5})", out)
+    h = int(m2.group(2)) if m2 else 0
+    if m2 and int(m2.group(1)) < int(m2.group(2)):   # 縦動画は幅を「高さ」とみなす（横に敷くと幅が足りない）
+        h = int(m2.group(1))
+    return dur, h
 
 
 def _probe_duration(path: Path) -> float:
@@ -106,11 +123,13 @@ def library(cfg: Config) -> list[Clip]:
         tags |= {str(t).lower() for t in (spec.get("tags") or [])}
         kind = str(spec.get("kind") or kind)
         key = f"{rel}:{p.stat().st_mtime_ns}"
-        dur = float(cache.get(key) or 0.0)
-        if not dur:
-            dur = _probe_duration(p)
-            cache[key] = dur
-        clips.append(Clip(p, kind, tags, dur))
+        meta = cache.get(key)
+        if isinstance(meta, dict) and meta.get("dur"):
+            dur, height = float(meta["dur"]), int(meta.get("h", 0))
+        else:
+            dur, height = _probe(p)
+            cache[key] = {"dur": dur, "h": height}
+        clips.append(Clip(p, kind, tags, dur, height))
     try:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(json.dumps(cache))
@@ -137,6 +156,10 @@ def pick(clips: list[Clip], words: str | set[str], kind: str | None, used: Count
     best, best_score = None, -1e9
     for c in cands:
         score = 3.0 * len(want & c.tags) - reuse_penalty * used[c.name] + rnd.random() * 2.0
+        if c.height >= 1080:
+            score += 2.5                      # 画質のよい素材を優先
+        elif 0 < c.height < 720:
+            score -= 3.0
         if score > best_score:
             best, best_score = c, score
     return best
@@ -318,11 +341,14 @@ class Picker:
         if not self.enabled:
             return None
         self.n += 1
-        # 実写は場面の語に合うものだけ（関係ない絵を映さない）。抽象・質感・合成ループはいつでも候補
+        # 実写を優先する（抽象・合成ループは「無難だがつまらない」ので、実写が無いときだけ）。
+        # 場面の語に合う実写があればそれ、無ければ会社員・街・買い物などの汎用の実写
         want = _tokens(words)
-        pool = [c for c in self.lib if c.kind != "broll" or (want & c.tags)] + list(self.loops)
+        broll = [c for c in self.lib if c.kind == "broll"]
+        matched = [c for c in broll if want & c.tags]
+        pool = matched if len(matched) >= 3 else broll
         if not pool:
-            pool = list(self.lib) or self.loops
+            pool = [c for c in self.lib if c.kind != "broll"] + list(self.loops)
         if not pool:
             return None
         exclude = set(self.recent[-3:])

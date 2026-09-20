@@ -369,7 +369,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
 
     # 見出し
     cw = _cw
-    f_head, head_lines = fit_text(cfg, d, heading, "headline_l", cw - 320, 2)
+    f_head, head_lines = fit_text(cfg, d, heading, "headline_l", min(cw - 320, span_width(cfg) - 60), 2)
     y = 200
     lh = int(f_head.size * 1.28)
     _accent_bar(d, 150, y, head_lines[0], f_head, pal["accent"], lines=len(head_lines), lh=lh) if head_lines else None
@@ -381,7 +381,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
     y = max(y + 60, 440)
     bottom = h - SUB_BAND - 20
     for i, bullet in enumerate(bullets[:4]):
-        f_body, blines = fit_text(cfg, d, bullet, "body_l", cw - 480, 2)
+        f_body, blines = fit_text(cfg, d, bullet, "body_l", min(cw - 480, span_width(cfg) - 120), 2)
         bh = int(f_body.size * 1.3)
         if y + bh * len(blines) > bottom:
             break
@@ -752,6 +752,18 @@ def content_span(cfg: Config) -> tuple[int, int]:
     return left, w - right
 
 
+def span_width(cfg: Config) -> int:
+    """左右の立ち絵のあいだで、文字を置いてよい幅（両端の余白を引いたもの）."""
+    w, _h = cfg.get("video.resolution", [1920, 1080])
+    try:
+        x0, x1 = content_span(cfg)
+    except Exception:
+        return w - 300
+    if x0 <= 0:
+        return w - 300
+    return max(int(w * 0.45), (x1 - x0) - 2 * (GLASS_PAD[0] + 24))
+
+
 def _fit_h(img: Image.Image, x0: int, x1: int) -> Image.Image:
     """中身を (x0, x1) の間に収める。はみ出すなら縦横同じ比率で縮め、左右はその範囲の中央に."""
     bbox = img.getchannel("A").getbbox()
@@ -880,7 +892,7 @@ def _center_text(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont
 def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
     """キーワード1語をドンと置くカード。話題の切り替わりに使う."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "keyword"))
-    f, lines = fit_text(cfg, d, keyword, "display_xl", w - 300, 2, min_size=80)
+    f, lines = fit_text(cfg, d, keyword, "display_xl", min(w - 300, span_width(cfg)), 2, min_size=80)
     total = len(lines) * (f.size + 18) + (int(ts(cfg, "body_l") * 1.6) if sub else 0)
     # 字幕の帯（下 SUB_BAND px）には掛けない。その上の範囲で中央に
     y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
@@ -897,16 +909,17 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
 def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path) -> Path:
     """数字を主役にするカード。DATA テロップの内容を大きく見せる."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "number"))
-    f_val, vl = fit_text(cfg, d, value, "numeral_xl", w - 240, 1, min_size=96)
-    f_lab, ll = fit_text(cfg, d, label, "title", w - 300, 1, min_size=36)
+    f_val, vl = fit_text(cfg, d, value, "numeral_xl", min(w - 240, span_width(cfg)), 1, min_size=96)
+    f_lab, ll = fit_text(cfg, d, label, "title", w - 300, 1, min_size=36) if label else (None, [])
     f_note, nl = fit_text(cfg, d, note, "label", w - 300, 1, weight="bold", min_size=26) if note else (None, [])
-    lab_h = int(f_lab.size * 1.4)
+    lab_h = int(f_lab.size * 1.4) if label else 0
     val_bb = d.textbbox((0, 0), vl[0], font=f_val)
     val_h = val_bb[3] - val_bb[1] + 24
     note_h = int(f_note.size * 1.6) if note else 0
     total = lab_h + val_h + note_h
     y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
-    _text_block(d, ll[:1], f_lab, (0, y, w, y + lab_h), pal["accent"])
+    if label:
+        _text_block(d, ll[:1], f_lab, (0, y, w, y + lab_h), pal["accent"])
     _text_block(d, vl[:1], f_val, (0, y + lab_h, w, y + lab_h + val_h), pal["positive"])
     if note:
         _text_block(d, nl[:1], f_note, (0, y + lab_h + val_h, w, y + total), "#9AA7BE")
@@ -921,21 +934,22 @@ def render_quote_card(cfg: Config, sentence: str, out: Path, source: str = "") -
     """
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "quote"))
     text = sentence.strip().rstrip("。")
-    # 体言止めの短い句は、まず 1 行に収まる大きさを探す（途中で折らない）。長ければ 2 行
-    f, lines = fit_text(cfg, d, text, "display_s", w - 360, 1, min_size=66)
+    # 体言止めの短い句を、大きく・中央に・堂々と置く（見出しの縦線は付けない）。
+    # まず 1 行に収まる大きさを探し（途中で折らない）、長ければ 2 行
+    avail = min(w - 300, span_width(cfg))
+    f, lines = fit_text(cfg, d, text, "display_l", avail, 1, min_size=96)
     if len(lines) > 1 or lines[-1].endswith("…"):
-        f, lines = fit_text(cfg, d, text, "display_s", w - 360, 2, min_size=56)
-    lh = f.size + 24
-    total = len(lines) * lh + (int(ts(cfg, "label") * 1.8) if source else 0)
+        f, lines = fit_text(cfg, d, text, "display_l", avail, 2, min_size=84)
+    if len(lines) > 2 or lines[-1].endswith("…"):
+        f, lines = fit_text(cfg, d, text, "display_s", avail, 2, min_size=66)
+    lh = int(f.size * 1.25)
+    total = len(lines) * lh + (int(ts(cfg, "label") * 2.0) if source else 0)
     y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
-    # 左のアクセントバー（引用符の代わり。発言者「引用」形式でも邪魔にならない）
-    _accent_bar(d, 150, y, lines[0], f, pal["accent"], lines=len(lines), lh=lh)
     for line in lines:
-        d.text((200, y), line, font=f, fill=pal["text"])
-        y += lh
+        y = _center_text(d, line, f, y, w, pal["text"]) - 18 + (lh - f.size)
     if source:
         f_src = load_font(cfg, ts(cfg, "label", 36), "bold")
-        d.text((200, y + 12), "— " + _safe_for_font(f_src, source), font=f_src, fill=pal["text_secondary"])
+        _center_text(d, "— " + _safe_for_font(f_src, source), f_src, y + 16, w, pal["text_secondary"])
     return _save(img, out)
 
 
@@ -1140,6 +1154,13 @@ def _diagram_base(cfg: Config, title: str, note: str):
 
     img, d, pal, cw, h = _card_base(cfg, card_style(cfg, "chart"))
     m = design.safe_margin(cfg)
+    try:
+        x0, x1 = content_span(cfg)
+        if x0 > 0:                      # 掛け合い: 2 人のあいだに最初から収める
+            m = x0 + GLASS_PAD[0] + 24
+            cw = x1 - GLASS_PAD[0] - 24 + m
+    except Exception:
+        pass
     y = TOP_BAND + 20
     if title:
         f_t, tl = fit_text(cfg, d, title, "headline_m", cw - m * 2 - 60, 1, min_size=44)
@@ -1373,18 +1394,37 @@ def render_diagram(cfg: Config, kind: str, title: str, items: list[str], note: s
     return fn(cfg, title, items, note, out, active=active)
 
 
+def row_fragments(cells: list[str]) -> list[str]:
+    """照合に使う語の候補。セルそのものに加え、「・」「：」「＝」などで区切った断片（3 字以上）も含める.
+
+    「レンズ1・人の感じ方のクセ」→ ["レンズ1・人の感じ方のクセ", "レンズ1", "人の感じ方のクセ"]
+    """
+    out: list[str] = []
+    for c in cells:
+        c = str(c).strip()
+        if not c:
+            continue
+        out.append(c)
+        for frag in re.split(r"[・：:＝=／/（）()「」【】、,]", c):
+            frag = frag.strip()
+            if len(frag) >= 3 and frag not in out:
+                out.append(frag)
+    return out
+
+
 def diagram_row_texts(kind: str, items: list[str]) -> list[list[str]]:
     """行ごとの「言葉」（ナレーションと照合する語の候補）."""
     items = [x for x in items if x]
     if kind == "balance":
         items = (items + ["…", "…", "…"])[:3]
-        return [[c for c in it.rsplit(" ", 1)] for it in items]
+        return [row_fragments(it.rsplit(" ", 1)) for it in items]
     if kind == "compare":
         rows = [[c.strip() for c in it.split("|")] for it in items[:4]]
-        return [r for r in rows if len(r) in (2, 3)] or [[items[0] if items else "…"]]
+        rows = [r for r in rows if len(r) in (2, 3)] or [[items[0] if items else "…"]]
+        return [row_fragments(r) for r in rows]
     if kind == "table":
-        return [[c.strip() for c in it.split("|", 1)] for it in items[:5]] or [["…"]]
-    return [[it] for it in items[:4]] or [["…"]]
+        return [row_fragments([c.strip() for c in it.split("|", 1)]) for it in items[:5]] or [["…"]]
+    return [row_fragments([it]) for it in items[:4]] or [["…"]]
 
 
 def diagram_rows(kind: str, items: list[str]) -> int:

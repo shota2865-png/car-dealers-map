@@ -293,6 +293,32 @@ def reading(text: str) -> str:
     return text
 
 
+def _merge_short(sentences: list[str], tags: dict[str, str]) -> list[str]:
+    """「ええ。」「そうね。」のような 1〜2 語の文は、同じ話者の次の文につなげる.
+
+    合成音声は極端に短い文を息だけのように読むことがある（「ええ。」がスカスカになる）。
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(sentences):
+        cur = sentences[i]
+        who, body = parse_speaker(cur, tags) if tags else ("", cur)
+        _e, plain = parse_expression(body)
+        core = plain.rstrip("。！？!?、").strip()
+        if len(core) <= 3 and i + 1 < len(sentences):
+            nxt = sentences[i + 1]
+            who2, _b2 = parse_speaker(nxt, tags) if tags else ("", nxt)
+            if not who2 or who2 == who:            # 次の文が同じ話者（タグ無し or 同じタグ）
+                _w, nbody = parse_speaker(nxt, tags) if tags else ("", nxt)
+                joined = cur.rstrip("。！？!?").rstrip("、") + "、" + nbody.lstrip()
+                sentences[i + 1] = joined
+                i += 1
+                continue
+        out.append(cur)
+        i += 1
+    return out
+
+
 def synthesize(cfg: Config, script: VideoScript, outdir: str | Path) -> VoiceTrack:
     """台本を音声化し、全文のタイムコード付きトラックを返す."""
     outdir = Path(outdir)
@@ -321,7 +347,7 @@ def synthesize(cfg: Config, script: VideoScript, outdir: str | Path) -> VoiceTra
 
     blocks = script.narration_blocks
     for b_i, (block_id, text) in enumerate(blocks):
-        sentences = split_sentences(text)
+        sentences = _merge_short(split_sentences(text), tags)
         for s_i, sentence in enumerate(sentences):
             if tags:
                 who, sentence = parse_speaker(sentence, tags)

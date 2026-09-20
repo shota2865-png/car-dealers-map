@@ -43,9 +43,9 @@ presets:
       display_l: 118
       display_m: 96
       display_s: 84
-      headline_l: 76
-      headline_m: 66
-      title: 56
+      headline_l: 88
+      headline_m: 76
+      title: 62
       body_l: 50
       body_m: 44
       label: 36

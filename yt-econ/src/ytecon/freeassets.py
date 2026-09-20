@@ -60,6 +60,19 @@ VIDEO_QUERIES: list[tuple[str, str, list[str]]] = [
     ("farm", "broll", ["farmer", "field", "harvest", "food", "agriculture"]),
     ("gas-station", "broll", ["gas", "fuel", "price", "energy"]),
     ("airport", "broll", ["airport", "travel", "tourism"]),
+    # 会社員・日常（掛け合いの後ろに敷く、無難な実写）
+    ("business-people", "broll", ["business", "people", "office", "workers", "walking", "salary"]),
+    ("walking", "broll", ["people", "walking", "street", "commuters", "crowd"]),
+    ("businessman", "broll", ["businessman", "suit", "office", "work", "salary"]),
+    ("meeting", "broll", ["meeting", "office", "business", "team"]),
+    ("typing", "broll", ["laptop", "typing", "office", "work", "desk"]),
+    ("train", "broll", ["train", "commuters", "station", "morning"]),
+    ("cafe", "broll", ["cafe", "coffee", "price", "shop", "morning"]),
+    ("receipt", "broll", ["receipt", "cash", "register", "shopping", "price"]),
+    ("wallet", "broll", ["wallet", "cash", "money", "budget"]),
+    ("convenience-store", "broll", ["convenience", "store", "shopping", "price"]),
+    ("paycheck", "broll", ["salary", "pay", "money", "budget", "calculator"]),
+    ("skyscraper", "broll", ["city", "office", "skyline", "business"]),
     ("electric-car", "broll", ["electric", "car", "ev", "charging", "auto"]),
 ]
 
@@ -121,7 +134,8 @@ def video_ids(slug: str, limit: int) -> list[str]:
     return ids[:limit]
 
 
-def fetch_videos(cfg: Config, per_query: int = 1, queries=None) -> list[Path]:
+def fetch_videos(cfg: Config, per_query: int = 1, queries=None, min_height: int = 720) -> list[Path]:
+    """Mixkit の動画を取り込む。min_height=1080 なら 1080p 版がある素材だけ（画質優先）."""
     from . import footage
 
     got: list[Path] = []
@@ -138,9 +152,13 @@ def fetch_videos(cfg: Config, per_query: int = 1, queries=None) -> list[Path]:
             if n >= per_query:
                 break
             dest = root / kind / f"mixkit_{slug}_{vid}.mp4"
-            # 720p を優先、無ければ 360p
-            p = _download(f"https://assets.mixkit.co/videos/{vid}/{vid}-720.mp4", dest) or \
-                _download(f"https://assets.mixkit.co/videos/{vid}/{vid}-360.mp4", dest)
+            # 1080p → 720p → 360p の順（min_height より低いものは取らない）
+            heights = [hh for hh in (1080, 720, 360) if hh >= min_height]
+            p = None
+            for hh in heights:
+                p = _download(f"https://assets.mixkit.co/videos/{vid}/{vid}-{hh}.mp4", dest, min_bytes=200_000)
+                if p is not None:
+                    break
             if p is None:
                 continue
             tags[f"{kind}/{p.name}"] = {"kind": kind, "tags": sorted(set(words + slug.split("-")))}
@@ -213,5 +231,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser()
     ap.add_argument("--videos", type=int, default=1, help="検索語ごとの本数")
+    ap.add_argument("--min-height", type=int, default=720, help="この高さ未満の動画は取らない（1080 で画質優先）")
+    ap.add_argument("--broll-only", action="store_true", help="実写だけ取る（抽象・質感は取らない）")
     a = ap.parse_args()
-    print(fetch_all(load_config(), a.videos))
+    if a.broll_only or a.min_height != 720:
+        qs = [q for q in VIDEO_QUERIES if q[1] == "broll"] if a.broll_only else None
+        got = fetch_videos(load_config(), a.videos, queries=qs, min_height=a.min_height)
+        print(f"動画 {len(got)} 本")
+    else:
+        print(fetch_all(load_config(), a.videos))
