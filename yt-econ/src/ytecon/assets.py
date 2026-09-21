@@ -237,6 +237,10 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
             if cut >= int(len(current) * 0.6):
                 lines.append(current[:cut + 1].rstrip())
                 current = current[cut + 1:] + ch
+            elif current[-1] in _NO_LINE_END and len(current) > 1:
+                # 開き括弧を行末に残さない（「経験」の「 で改行しない）
+                lines.append(current[:-1])
+                current = current[-1] + ch
             else:
                 lines.append(current)
                 current = ch
@@ -258,6 +262,7 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
 
 
 _NO_LINE_START = set("、。，．・：；？！?!」』）〕］｝〉》〟ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶー～")
+_NO_LINE_END = set("「『（(〔［［｛〈《〝“‘【")     # 行末に置かない（開き括弧）
 _BREAK_AFTER = (" ", "　", "、", "。", "，", "・", "／", "→")
 _PARTICLE_CHARS = set("がをにはでともへやのか")
 
@@ -304,6 +309,8 @@ def _cut_score(text: str, i: int) -> float | None:
     if not b or b[0] in _NO_LINE_START or b[0] in _PARTICLE_CHARS:
         return None
     prev, nxt = text[i - 1], b[0]
+    if prev in _NO_LINE_END:
+        return None                         # 開き括弧の直後では切らない
     score = 0.0
     kata = lambda c: ("ァ" <= c <= "ヶ") or c == "ー"
     kanji = lambda c: "一" <= c <= "龥"
@@ -927,18 +934,21 @@ def render_keyword_card(cfg: Config, keyword: str, sub: str, out: Path) -> Path:
 def render_number_card(cfg: Config, value: str, label: str, note: str, out: Path) -> Path:
     """数字を主役にするカード。DATA テロップの内容を大きく見せる."""
     img, d, pal, w, h = _card_base(cfg, card_style(cfg, "number"))
-    f_val, vl = fit_text(cfg, d, value, "numeral_xl", min(w - 240, span_width(cfg)), 1, min_size=96)
+    avail = min(w - 240, span_width(cfg))
+    f_val, vl = fit_text(cfg, d, value, "numeral_xl", avail, 1, min_size=72)
+    if vl[-1].endswith("…"):
+        f_val, vl = fit_text(cfg, d, value, "display_l", avail, 2, min_size=64)
     f_lab, ll = fit_text(cfg, d, label, "title", w - 300, 1, min_size=36) if label else (None, [])
     f_note, nl = fit_text(cfg, d, note, "label", w - 300, 1, weight="bold", min_size=26) if note else (None, [])
     lab_h = int(f_lab.size * 1.4) if label else 0
     val_bb = d.textbbox((0, 0), vl[0], font=f_val)
-    val_h = val_bb[3] - val_bb[1] + 24
+    val_h = (val_bb[3] - val_bb[1] + 24) * len(vl)
     note_h = int(f_note.size * 1.6) if note else 0
     total = lab_h + val_h + note_h
     y = TOP_BAND + (h - SUB_BAND - TOP_BAND - total) // 2
     if label:
         _text_block(d, ll[:1], f_lab, (0, y, w, y + lab_h), pal["accent"])
-    _text_block(d, vl[:1], f_val, (0, y + lab_h, w, y + lab_h + val_h), pal["positive"])
+    _text_block(d, vl[:2], f_val, (0, y + lab_h, w, y + lab_h + val_h), pal["positive"], spacing=1.1)
     if note:
         _text_block(d, nl[:1], f_note, (0, y + lab_h + val_h, w, y + total), "#9AA7BE")
     return _save(img, out)
@@ -1021,11 +1031,11 @@ def render_reference_card(cfg: Config, name: str, url: str, note: str, out: Path
 
     f_tag = load_font(cfg, ts(cfg, "label", 36))
     d.text((x0 + 60, y0 + 110), "参考・出典", font=f_tag, fill=pal["accent"])
-    f_name = load_font(cfg, ts(cfg, "display_s", 92))
+    f_name, name_lines = fit_text(cfg, d, name, "display_s", x1 - x0 - 120, 2, min_size=56)
     y = y0 + 170
-    for line in _wrap(d, name, f_name, x1 - x0 - 120)[:2]:
+    for line in name_lines:
         d.text((x0 + 60, y), line, font=f_name, fill=pal["text"])
-        y += 112
+        y += int(f_name.size * 1.22)
     if note:
         f_note = load_font(cfg, ts(cfg, "body_m", 50), "bold")
         y += 20

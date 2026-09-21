@@ -397,3 +397,17 @@ def test_glass_panel_size_does_not_change_with_highlight(cfg, tmp_path):
     b = {a: panel_bbox(assets.render_textcard(cfg, "見出し", ["一つ目", "二つ目", "三つ目"], tmp_path / f"b_{a}.png", active=a))
          for a in (None, 1)}
     assert len(set(b.values())) == 1, b
+
+
+def test_opening_brackets_never_end_a_line(cfg, tmp_path):
+    """「経験」の「 で改行しない（行末禁則）。カードも字幕も."""
+    from ytecon import assets
+    from ytecon.subtitles import phrase_split
+    from PIL import Image, ImageDraw
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    title = "ガクチカが無い夜に。「経験」の値段を経済学で考える"
+    f, lines = assets.fit_text(cfg, d, title, "display_m", 1100, 2, min_size=64)
+    assert len(lines) == 2 and not any(ln[-1] in assets._NO_LINE_END for ln in lines), lines
+    for n in (8, 10, 12):
+        for ln in phrase_split("ガクチカが無い夜に「経験」の値段を経済学で考えるのだ。", n):
+            assert ln[-1] not in "「『（(", ln

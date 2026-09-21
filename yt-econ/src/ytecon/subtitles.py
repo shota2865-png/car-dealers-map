@@ -51,6 +51,7 @@ class TelopCue:
 
 
 _NO_LINE_START = "。、」』）｝】〕〉》・ーぁぃぅぇぉっゃゅょゎ々ん！？!?"
+_NO_LINE_END = "「『（(〔［｛〈《【"     # 行末に置かない（開き括弧）
 
 # 文節の切れ目とみなす助詞・接続助詞（この直後で切ってよい）
 _PARTICLES = ("ので", "けど", "けれど", "から", "まで", "って", "とか", "たら", "ながら", "なら",
@@ -117,7 +118,7 @@ def _cut(seg: str, max_chars: int, min_head: int = 3) -> tuple[int, bool]:
             i += 1                                 # 読点は前の行にくっつける（幅は数えない）
         head, tail = seg[:i], seg[i:]
         over = max(0, i0 - max_chars)
-        if _bad_head(tail) or len(head.rstrip("、，")) < min_head:
+        if _bad_head(tail) or len(head.rstrip("、，")) < min_head or head[-1] in _NO_LINE_END:
             continue
         hit = next((pt for pt in _PARTICLES if head.endswith(pt)), None)
         if hit is not None and len(hit) == 1 and (head[-1] + tail).startswith(_FALSE_PARTICLE):
@@ -148,7 +149,7 @@ def _cut(seg: str, max_chars: int, min_head: int = 3) -> tuple[int, bool]:
     best_i, best_score = -1, -1e9
     for i in range(3, min(len(seg) - 1, max_chars + OVERFLOW) + 1):
         prev, nxt = seg[i - 1], seg[i]
-        if nxt in _NO_LINE_START or seg[i:].startswith(_NO_CUT_BEFORE):
+        if nxt in _NO_LINE_START or seg[i:].startswith(_NO_CUT_BEFORE) or prev in _NO_LINE_END:
             continue
         score = i * 0.5 - max(0, i - max_chars) * 4   # 長い行のほうがよい（行数が減る）。はみ出しは最後の手段
         if _bad_head(seg[i:]):
