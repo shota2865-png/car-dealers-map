@@ -142,6 +142,7 @@ def _isolated_cfg(tmp_path):
 def test_measured_speed_overrides_the_guessed_config(tmp_path, monkeypatch):
     """learn 後は、当て推量の chars_per_minute ではなく実測値で尺を決める."""
     cfg = _isolated_cfg(tmp_path)
+    cfg.raw["video"]["own_chars_per_minute"] = 0     # 自分の声の実測は無い前提で、参照動画の実測を見る
     cpm = cfg.get("video.chars_per_minute")
     lo_min = cfg.get("video.target_minutes_min")
     hi_min = cfg.get("video.target_minutes_max")
@@ -162,8 +163,18 @@ def test_measured_speed_overrides_the_guessed_config(tmp_path, monkeypatch):
 
 def test_no_style_file_is_fine(tmp_path):
     cfg = _isolated_cfg(tmp_path)
+    cfg.raw["video"]["own_chars_per_minute"] = 0
     assert load_style(cfg) is None
     assert target_chars(cfg) == cfg.target_chars
+
+
+def test_own_measured_speed_wins(tmp_path):
+    """自分の声で実測した話速（own_chars_per_minute）が、参照動画の実測より優先される."""
+    cfg = _isolated_cfg(tmp_path)
+    cfg.raw["video"]["own_chars_per_minute"] = 330
+    lo_min = cfg.get("video.target_minutes_min")
+    hi_min = cfg.get("video.target_minutes_max")
+    assert target_chars(cfg) == (int(330 * lo_min), int(330 * hi_min))
 
 
 def test_render_for_prompt_is_instructional():
