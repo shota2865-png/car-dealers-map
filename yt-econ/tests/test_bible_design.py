@@ -248,6 +248,7 @@ def test_sfx_plan_respects_gaps_and_missing_files(tmp_path, cfg):
     (d / "POP.mp3").write_bytes(b"x")
     (d / "impact_soft.wav").write_bytes(b"x")
     cfg.root = tmp_path                                  # assets/sfx をここに向ける
+    cfg.raw.setdefault("render", {}).setdefault("sfx", {})["enabled"] = True   # 既定はオフ（寝る前の動画）
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "sfx").symlink_to(d)
     (tmp_path / "config").mkdir()

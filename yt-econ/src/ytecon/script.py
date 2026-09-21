@@ -415,6 +415,8 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 
 {tone}
 
+{listening}
+
 {style_block}
 
 # この回の型
@@ -874,6 +876,27 @@ def _style_block(cfg: Config) -> str:
     return render_for_prompt(style) if style else ""
 
 
+_SLEEP_BLOCK = """# 聴かれ方: 寝る前に、布団の中で流し聴きされる
+この動画は「眠れない夜に開いて、聴きながら眠る」ために作る。視聴者は画面をほとんど見ない。
+守ること:
+- 驚かせない。冒頭の問いは静かな違和感で始める（「実は〜だった！」の煽りにしない）。効果音や叫びは無い前提で書く
+- 急がせない。1 つの因果を説明したら、その要点をもう一度ゆっくり言い直す（聞き逃しても戻れるように）
+- 責めない。ガクチカが無い・貯金が無い・三日坊主、を欠点として扱わない。「多くの人がそう」と統計で示す
+- 理想と現実の差を「埋めろ」と言わない。差があっても眠れるように、小さな既定値（明日やる一つのこと）と順番を渡す
+- クリフハンガーで次に引っぱらない。各セクションの終わりは、その節だけで安心して眠れる形にする
+- closing は音量が下がっていくように書く。まとめ → 「今夜決めなくていいこと」→ 「朝にやる一つのこと」→
+  「今夜はここまでで十分」で終える。登録のお願いは一言だけ、静かに
+- 数字は少なめに、ただし出典は必ず言う。並べるより「一つの数字をゆっくり」
+- ずんだもん（聞き役）は視聴者の焦り・言い訳・自己否定をそのまま口にしてよい。めたんはそれを否定せず、
+  事実と順番で受け止める。ここがこの動画の価値になる
+"""
+
+
+def listening_block(cfg: Config) -> str:
+    mode = str(cfg.get("channel.listening_mode", "") or "").strip()
+    return _SLEEP_BLOCK if mode == "sleep" else ""
+
+
 def cast_tags(cfg: Config) -> dict[str, str]:
     """{話者タグ名: 話者キー}。掛け合いモードでなければ空."""
     cast = cfg.get("cast", {}) or {}
@@ -920,6 +943,7 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
         bible=bible.render_for_prompt(cfg, n_sections),
         style_block=_style_block(cfg),
         speech_style=speech_style(cfg),
+        listening=listening_block(cfg),
         horizon_guide=_HORIZON_GUIDE.get(topic.horizon, _HORIZON_GUIDE["flow"]),
         audience=cfg.get("channel.audience", ""),
         tone=cfg.get("channel.tone", ""),
