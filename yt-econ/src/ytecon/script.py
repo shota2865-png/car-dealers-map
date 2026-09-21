@@ -860,8 +860,10 @@ def target_chars(cfg: Config) -> tuple[int, int]:
     """
     from .learn import load_style
 
+    # 自分の声（VOICEVOX の速さ・間）で実測した話速があれば最優先。次に参照動画の実測、最後に config の初期値
+    own = float(cfg.get("video.own_chars_per_minute", 0) or 0)
     style = load_style(cfg)
-    measured = ((style or {}).get("measured") or {}).get("chars_per_minute")
+    measured = own or ((style or {}).get("measured") or {}).get("chars_per_minute")
     if not measured:
         return cfg.target_chars
     lo_min = float(cfg.get("video.target_minutes_min", 8.0))
