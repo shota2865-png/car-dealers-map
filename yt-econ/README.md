@@ -315,6 +315,13 @@ YTECON_LLM_PROVIDER=api           # ANTHROPIC_API_KEY を使う（従量課金�
 出られないため未検証です。動かなかったら教えてください。
 
 
+### 週間スケジュール（手動の企画キュー）
+
+`config/schedule.yaml` に日付つきで企画を書いておくと、その日の `ytecon run` は自動選定より先にそれを使います。
+使い終わった企画は投稿履歴との重複判定で自動的に飛ばされ、書いた本数が足りない日は従来どおり
+ニュースと常設テーマから自動で選びます。企画には title / angle のほか、why_now・audience_hook・
+key_questions・sources を書けるので、扱ってほしい企業の具体例や統計はここに書いておくと台本に反映されます。
+
 ### 掛け合いモード（四国めたん × ずんだもん）
 
 `config/channel.yaml` の `cast.mode: dialogue` で、左に四国めたん（解説役の先輩）、右にずんだもん

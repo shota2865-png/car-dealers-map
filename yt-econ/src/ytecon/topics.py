@@ -10,6 +10,7 @@ RSS から経済ニュースを集め、過去に扱ったテーマと重複す�
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 import logging
 import re
 import unicodedata
@@ -280,8 +281,65 @@ def plan_portfolio(cfg: Config, store: Store, count: int, *,
     return plan
 
 
+def schedule_path(cfg: Config) -> Path:
+    p = str(cfg.get("topics.schedule_file", "") or "").strip()
+    q = Path(p) if p else cfg.root / "config" / "schedule.yaml"
+    return q if q.is_absolute() else cfg.root / q
+
+
+def queued_topics(cfg: Config, store: Store, count: int, today: dt.date | None = None) -> list[Topic]:
+    """config/schedule.yaml に手で書いた企画のうち、今日ぶん（date が今日、または date 無し）を返す.
+
+    使い終わった企画は投稿履歴との重複判定で自動的に飛ばす。DB にも登録する。
+    """
+    path = schedule_path(cfg)
+    if not path.exists():
+        return []
+    import yaml
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    queue = data.get("queue") or []
+    today = today or dt.date.today()
+    history = store.recent_topic_titles(int(cfg.get("topics.dedupe_window_days", 120)))
+    threshold = float(cfg.get("topics.dedupe_threshold", 0.72))
+    out: list[Topic] = []
+    for item in queue:
+        title = str(item.get("title", "")).strip()
+        if not title or is_duplicate(title, history, threshold):
+            continue
+        when = item.get("date")
+        if when is not None:
+            when = when if isinstance(when, dt.date) else dt.date.fromisoformat(str(when))
+            if when != today:
+                continue
+        topic = Topic(
+            title=title,
+            angle=str(item.get("angle", "")).strip(),
+            kind=str(item.get("kind", "evergreen")),
+            why_now=str(item.get("why_now", "")),
+            audience_hook=str(item.get("audience_hook", "")),
+            key_questions=[str(q) for q in (item.get("key_questions") or [])],
+            sources=[dict(s) for s in (item.get("sources") or [])],
+            score=float(item.get("score", 100) or 100),
+            horizon=str(item.get("horizon", "flow")),
+            japan_bridge=str(item.get("japan_bridge", "")),
+        )
+        topic.id = store.add_topic(topic.title, topic.angle, topic.kind, topic.sources, topic.score,
+                                   horizon=topic.horizon)
+        history.append(title)
+        out.append(topic)
+        if len(out) >= count:
+            break
+    if out:
+        log.info("週間スケジュール（%s）から %d 本: %s", path.name, len(out), " / ".join(t.title for t in out))
+    return out
+
+
 def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
-    """当日分の話題を選んで DB に登録して返す."""
+    """当日分の話題を選んで DB に登録して返す。手動スケジュールがあればそちらを先に使う."""
+    queued = queued_topics(cfg, store, count)
+    if len(queued) >= count:
+        return queued
+    count -= len(queued)
     history = store.recent_topic_titles(int(cfg.get("topics.dedupe_window_days", 120)))
     threshold = float(cfg.get("topics.dedupe_threshold", 0.72))
 
@@ -384,6 +442,7 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
         if len(chosen) >= count:
             break
 
+    chosen = queued + chosen
     if not chosen:
         raise RuntimeError(
             "採用できる話題がありませんでした。"

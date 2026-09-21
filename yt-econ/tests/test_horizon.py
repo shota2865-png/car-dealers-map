@@ -235,3 +235,35 @@ def test_scan_survives_losing_the_news_feed(cfg, store, monkeypatch):
     _stocked(store, "週4日勤務の話", ["週4日勤務"])
     monkeypatch.setattr(revive, "fetch_rss", lambda _cfg: [])
     assert revive.scan(cfg, store) == []
+
+
+def test_manual_schedule_is_used_before_automatic_selection(tmp_path, monkeypatch):
+    """config/schedule.yaml の当日分が、自動選定より先に採用される（使った企画は履歴で飛ばす）."""
+    import datetime as dt
+    import copy
+    from ytecon.config import load_config
+    from ytecon.state import Store
+    from ytecon import topics
+
+    cfg = copy.deepcopy(load_config())
+    sched = tmp_path / "schedule.yaml"
+    sched.write_text(
+        "queue:\n"
+        "  - date: 2026-09-21\n    title: 初任給30万円は得なのか\n    angle: 手取りと昇給カーブ\n    horizon: flow\n"
+        "  - date: 2026-09-22\n    title: 値上げできる会社を選べ\n    angle: 価格決定力\n"
+        "  - title: 日付なしの予備\n    angle: 予備\n",
+        encoding="utf-8")
+    cfg.raw.setdefault("topics", {})["schedule_file"] = str(sched)
+    store = Store(tmp_path / "s.sqlite3")
+    got = topics.queued_topics(cfg, store, 2, today=dt.date(2026, 9, 21))
+    assert [t.title for t in got] == ["初任給30万円は得なのか", "日付なしの予備"]
+    assert got[0].horizon == "flow" and got[0].id
+    # 翌日は 22 日ぶんが先頭。21 日ぶんは日付が違うので出ない
+    got2 = topics.queued_topics(cfg, store, 1, today=dt.date(2026, 9, 22))
+    assert [t.title for t in got2] == ["値上げできる会社を選べ"]
+    # 自動選定は、キューで足りていれば呼ばれない
+    monkeypatch.setattr(topics.llm, "complete_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError("LLM が呼ばれた")))
+    monkeypatch.setattr(topics, "fetch_rss", lambda cfg: [])
+    monkeypatch.setattr(topics.dt, "date", type("D", (dt.date,), {"today": classmethod(lambda cls: dt.date(2026, 9, 23))}))
+    # 23 日は date 付きの企画が無く、日付なしの予備も使用済み → キューは空。ここでは queued_topics だけ確認
+    assert topics.queued_topics(cfg, store, 1, today=dt.date(2026, 9, 23)) == []

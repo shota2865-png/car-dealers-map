@@ -64,6 +64,8 @@ script:
   max_length_repairs: 2
 
 topics:
+  # 手動の週間スケジュール（日付つきの企画キュー）。空欄なら config/schedule.yaml
+  schedule_file: ""
   model: "claude-opus-5"
   effort: "medium"
   # 1回の収集で何件の候補を評価するか
