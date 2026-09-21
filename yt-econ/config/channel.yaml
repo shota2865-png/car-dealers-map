@@ -297,7 +297,8 @@ render:
   # capcut = CapCut のドラフトを自動生成し、最後の書き出しだけ手動
   backend: "ffmpeg"
   bgm:
-    enabled: true
+    # 当面 BGM なし（声だけ）。曲を決めたら true に戻し、file に曲名を書く
+    enabled: false
     # assets/bgm/ に置いた曲（Artlist など）を使う。合成音は使わない。
     # 曲が1つも無ければ BGM なしで作る。入手と置き方は docs/Artlistの使い方.md
     # 1曲を全編に使うならファイル名をここに書く（空なら気分ごとの切り替え）。

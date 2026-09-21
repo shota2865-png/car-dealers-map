@@ -374,3 +374,26 @@ def test_subtitles_have_a_style_per_speaker(cfg, tmp_path):
     ass = build(cfg, track, tmp_path, reserve_right=400)["ass"].read_text(encoding="utf-8")
     assert "Style: S_metan," in ass and "Style: S_zundamon," in ass
     assert ",S_zundamon,,0,0,0,,先輩" in ass and ",S_metan,,0,0,0,,いいわよ" in ass
+
+
+def test_glass_panel_size_does_not_change_with_highlight(cfg, tmp_path):
+    """ハイライトの有無で、すりガラスの面の大きさ・位置が変わらない（▶ 印のぶんを常に確保）."""
+    import copy
+    from PIL import Image
+    from ytecon import assets
+    cfg = copy.deepcopy(cfg)
+    cfg.raw["visuals"]["motion_backgrounds"] = True
+
+    def panel_bbox(p):
+        a = Image.open(p).getchannel("A").point(lambda v: 255 if 150 < v < 230 else 0)   # 面の半透明だけ
+        return a.getbbox()
+
+    for kind, items in (("steps", ["価格は据え置き", "中身だけ1割減", "実質的な値上げ"]),
+                        ("table", ["調査|毎月勤労統計調査", "公表|厚生労働省", "集計|毎月きちんと"]),
+                        ("compare", ["間隔|毎月|年1回", "時期|随時|4月"])):
+        boxes = {a: panel_bbox(assets.render_diagram(cfg, kind, "t", items, "出典", tmp_path / f"{kind}_{a}.png", active=a))
+                 for a in (None, 0, 1)}
+        assert len(set(boxes.values())) == 1, (kind, boxes)
+    b = {a: panel_bbox(assets.render_textcard(cfg, "見出し", ["一つ目", "二つ目", "三つ目"], tmp_path / f"b_{a}.png", active=a))
+         for a in (None, 1)}
+    assert len(set(b.values())) == 1, b

@@ -402,6 +402,7 @@ def render_textcard(cfg: Config, heading: str, bullets: list[str],
         bh = int(f_body.size * 1.3)
         if y + bh * len(blines) > bottom:
             break
+        _reserve_marker(d, 196, y + 31)
         if active is not None and i == active:
             _marker(d, 196, y + 31, pal["accent"])
         else:
@@ -1222,6 +1223,15 @@ def _marker(d, x: int, cy: int, color: str) -> None:
     d.polygon([(x, cy - 16), (x, cy + 16), (x + 22, cy)], fill=color)
 
 
+def _reserve_marker(d, x: int, cy: int) -> None:
+    """▶ 印のぶんの場所を、印が無い行にも確保する（ほぼ透明な点を打つ）.
+
+    すりガラスの面は中身の外接矩形に合わせて敷くので、これが無いと
+    ハイライトの有無で面の大きさが変わってしまう。
+    """
+    d.rectangle([x, cy - 16, x + 22, cy + 16], fill=(0, 0, 0, 1))
+
+
 def render_flow(cfg: Config, title: str, items: list[str], note: str, out: Path,
                 active: int | None = None) -> Path:
     """A → B → C。因果・順番を箱と矢印で."""
@@ -1291,6 +1301,7 @@ def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Pa
     for i, (label, lval, rval) in enumerate(rows):
         fill, outline, width, color = _row_style(pal, i, active)
         _rounded(d, [m, y, cw - m, y + row_h - 14], fill, outline, r, width)
+        _reserve_marker(d, m - 34, y + (row_h - 14) // 2)
         if i == active:
             _marker(d, m - 34, y + (row_h - 14) // 2, pal["accent"])
         if label:
@@ -1320,6 +1331,7 @@ def render_steps(cfg: Config, title: str, items: list[str], note: str, out: Path
     for i, txt in enumerate(items):
         fill, outline, width, color = _row_style(pal, i, active)
         _rounded(d, [m, y, cw - m, y + row_h - 16], fill, outline, r, width)
+        _reserve_marker(d, m - 34, y + (row_h - 16) // 2)
         if i == active:
             _marker(d, m - 34, y + (row_h - 16) // 2, pal["accent"])
         cx = m + 70
@@ -1393,6 +1405,7 @@ def render_table(cfg: Config, title: str, items: list[str], note: str, out: Path
         base = pal["surface_high"] if i % 2 == 0 else pal["surface"]
         fill, outline, width, color = _row_style(pal, i, active, base)
         _rounded(d, [m, y, cw - m, y + row_h - 10], fill, outline if i == active else None, r, width)
+        _reserve_marker(d, m - 34, y + (row_h - 10) // 2)
         if i == active:
             _marker(d, m - 34, y + (row_h - 10) // 2, pal["accent"])
         fk, kl = fit_text(cfg, d, k, "title", (cw - m * 2) * 0.55, 1, min_size=34)
