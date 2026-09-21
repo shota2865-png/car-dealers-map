@@ -213,20 +213,16 @@ class _Painter:
             p = assets.render_heading_overlay(self.cfg, heading, bullets, self._next("broll"))
             return Scene(p, start, end, True, "broll", f"実写: {clip.name[:18]}",
                          background=clip, bg_offset=(self.seed * 3.1) % 6.0)
-        p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
-                                           self.seed, self._next("photo"), allow_pattern=False)
-        if p is not None:
-            # 写真は Ken Burns で動かす
-            return Scene(p, start, end, False, kind, f"写真: {query[:14]}")
-        # 何も取れない → 動く抽象背景の上に見出しだけ
+        # 語の合う実写が無くても、静止画（Ken Burns）にはしない。汎用の実写を動く背景として敷く
         p = assets.render_heading_overlay(self.cfg, heading, bullets, self._next("motion"))
         scene = Scene(p, start, end, True, "motion", f"動く背景: {heading[:12]}")
         scene = self._bg(scene)
-        if scene.background is None:      # 動く背景も無効なら従来のパターン画
-            p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
-                                               self.seed, self._next("photo"))
-            return Scene(p, start, end, kind != "photo", kind, f"写真: {query[:14]}")
-        return scene
+        if scene.background is not None:
+            return scene
+        # 動く背景そのものが無効（素材ゼロ）のときだけ写真に落ちる
+        p, kind = assets.build_photo_scene(self.cfg, query, prompt, heading, bullets,
+                                           self.seed, self._next("photo"))
+        return Scene(p, start, end, kind != "photo", kind, f"写真: {query[:14]}")
 
 
 def _norm(text: str) -> str:
