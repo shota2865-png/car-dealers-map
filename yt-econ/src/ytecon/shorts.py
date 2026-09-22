@@ -268,6 +268,7 @@ def shorts_config(cfg: Config) -> Config:
         "characters_in_band": True,
         "side_margin": int(sc.get("side_margin", 40)),
         "no_title_outro": True,
+        "type_scale": float(sc.get("type_scale", 1.2)),   # 横幅が半分なので文字を少し大きく
     }
     cast = raw.setdefault("cast", {})
     cast["height_ratio"] = ratio

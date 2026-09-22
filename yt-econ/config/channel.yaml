@@ -369,6 +369,7 @@ shorts:
   top_band: 420                  # ここより上はフック見出しの帯
   hook_top: 150                  # 見出しの上端（Shorts の UI に隠れない位置）
   scene_seconds: 6.0
+  type_scale: 1.2                # 図表・カードの文字の倍率（横幅が本編の半分なので少し大きく）
 
 # 寝かせた動画の掘り起こし（ytecon revive）
 # 企画時に決めた watch_keywords が日本のニュース見出しに出たら、

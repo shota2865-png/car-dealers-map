@@ -55,8 +55,16 @@ def colors(cfg: Config) -> dict[str, str]:
 
 
 def type_size(cfg: Config, role: str, fallback: int = 48) -> int:
-    """文字の役割（display_l / headline_m / body_l / label …）→ px."""
-    return int((tokens(cfg).get("type") or {}).get(role, fallback))
+    """文字の役割（display_l / headline_m / body_l / label …）→ px.
+
+    layout.type_scale（縦画面の Shorts は 1.2）で全体を拡大する。字幕（subtitle）は
+    config の visuals.subtitle.font_size で別に決めるので掛けない。
+    """
+    size = int((tokens(cfg).get("type") or {}).get(role, fallback))
+    scale = float(cfg.get("layout.type_scale", 1.0) or 1.0)
+    if role != "subtitle" and abs(scale - 1.0) > 1e-6:
+        size = int(round(size * scale))
+    return size
 
 
 def radius(cfg: Config, size: str = "m") -> int:
