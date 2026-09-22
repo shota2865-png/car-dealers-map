@@ -1,0 +1,175 @@
+# ============================================================
+#  スタイルバイブル — 「考えすぎる葦」型の映像エッセイを、経済解説に移植した設計図
+#
+#  元の分解（S01〜S09 / V01〜V05 / E01〜E05 / A01〜A05 / R01〜R05）を
+#  そのままデータにしてある。台本生成・シーン割り・BGM・サムネがここを読む。
+#  「感覚で寄せる」のではなく、ここを書き換えれば全工程が追従する。
+#
+#  出典の扱い: 数値（秒数・比率）のうち、参考チャンネルの実測で裏づけが
+#  あるものは reference/実測結果.md に記録がある。ここにある秒数配分は
+#  分解記事の提案値（INFERRED）で、実測で上書きしてよい。
+# ============================================================
+
+identity:
+  genre: "Cinematic Intellectual Video Essay（学術 × 日常 × 映像エッセイ）"
+  # 元は心理学・社会学。このチャンネルでは「経済学のレンズ」に置き換える
+  loop: "日常の違和感 → 自分ごと化 → 経済学のレンズ → 意外な説明 → 別視点 → 生活へ戻す"
+  narration_first: true          # 映像は語りを理解させるために置く（Vlog ではない）
+
+# ------------------------------------------------------------
+# 台本の 9 ブロック。hook/proof/promise/sections/closing への割り当ても書く
+# ------------------------------------------------------------
+beats:
+  - id: PARADOX_HOOK
+    code: S01
+    name: "冒頭の矛盾"
+    slot: hook
+    seconds: [0, 20]
+    rule: "一般論は説明しない。「普通こう思う」→「でも実際は逆」で認知的不協和を作る。答えは出さない"
+  - id: EVIDENCE_TEASER
+    code: S05a
+    name: "違和感の裏づけ"
+    slot: proof
+    seconds: [20, 35]
+    rule: "その違和感が本当にあることを数字1つで示す。出典を口頭で言う"
+  - id: QUESTION_LOCK
+    code: S02
+    name: "疑問の固定"
+    slot: promise
+    seconds: [35, 55]
+    rule: "「では、なぜ〜なのか？」で動画全体の問いを1つに固定し、頭に未完了タスクを作る"
+  - id: FAMILIAR_SCENE
+    code: S03
+    name: "自分ごと化"
+    slot: section
+    seconds: [55, 120]
+    rule: "スーパー・給料・家賃・スマホ・通勤など、視聴者が自分の生活で見た場面を置く。ここではまだ理論を出さない"
+  - id: ACADEMIC_LENS
+    code: S04
+    name: "経済学のレンズ"
+    slot: section
+    seconds: [120, 240]
+    rule: "行動経済学・マクロ・ミクロ・制度などの「レンズ」を1つ投入し、その場で言い換える"
+  - id: EVIDENCE_DROP
+    code: S05
+    name: "研究・統計"
+    slot: section
+    seconds: [240, 330]
+    rule: "実在する統計・調査・研究を数字と出典つきで出す。ここは図表(chart)を使う"
+  - id: MECHANISM_REVEAL
+    code: S06
+    name: "仕組みの解明"
+    slot: section
+    seconds: [330, 420]
+    rule: "「研究によると」で終わらせず、A→B→C→だから生活でDが起きる、の因果の鎖にする"
+  - id: PERSPECTIVE_FLIP
+    code: S07
+    name: "視点の反転"
+    slot: section
+    seconds: [420, 510]
+    rule: "「ただし、ここで面白いのが」で第二の疑問を出し、別のレンズで説明し直す。最初の問いだけで10分持たせない"
+  - id: HUMAN_RETURN
+    code: S08
+    name: "生活へ戻す"
+    slot: section
+    seconds: [510, 570]
+    rule: "研究の紹介ではなく、研究を使って自分の給料・買い物・働き方を解釈し直す"
+  - id: REFLECTIVE_ENDING
+    code: S09
+    name: "余韻"
+    slot: closing
+    seconds: [570, 600]
+    rule: "「だから〜しましょう」で閉じない。3行で要点→「もしかすると〜なのかもしれない」→視聴者への問い1つ→登録の一言"
+
+# ------------------------------------------------------------
+# 映像素材の 5 分類。scenes.py の描き方に対応づける
+# ------------------------------------------------------------
+visual_types:
+  V01: {name: "Human B-roll",        painter: photo,     use: "人物・街・スマホ・オフィス。自分ごと化の場面"}
+  V02: {name: "Concept Visual",      painter: ai_image,  use: "格差・不安・値上げ・借金など抽象概念の視覚化"}
+  V03: {name: "Metaphor Visual",     painter: ai_image,  use: "迷路・天秤・鎖・分岐路・群衆の中の一人など比喩"}
+  V04: {name: "Evidence Visual",     painter: chart,     use: "統計・グラフ・出典・数字カード"}
+  V05: {name: "Keyword Typography",  painter: keyword,   use: "重要単語だけを大きく。字幕ではなく第二の映像素材"}
+# AI 画像のプロンプト式と、画づくりの統一スタイル
+image_prompt_formula: "Subject + Situation + Emotion + Environment + Lighting + Camera + Texture"
+image_style: >-
+  cinematic documentary photography, conceptual, muted color grading,
+  soft directional lighting, shallow depth of field, subtle film grain,
+  no text, no letters, no logos
+image_prompt_examples:
+  - "young Japanese office worker alone in a crowded Tokyo train, everyone around looking at smartphones, feeling isolated, muted lighting, shallow depth of field"
+  - "a supermarket price tag being replaced by a hand, the new number larger, shopper's face out of focus in the background, cold fluorescent light"
+
+# ------------------------------------------------------------
+# 編集
+# ------------------------------------------------------------
+editing:
+  # E01 Semantic Cut: 話題ではなく「意味の単位」が変わったら切る。
+  # 台本側はこれらの接続詞で文を始め、シーン割りはここで切る
+  semantic_cut_words: ["でも", "しかし", "ところが", "一方で", "なぜなら", "つまり",
+                       "例えば", "たとえば", "実は", "ただし", "そこで", "ここで"]
+  # E02〜E04: 静止画を完全には止めない。写真は寄り／引き／横移動を順に回す
+  motions: ["push_in", "pull_out", "pan"]
+  # E05: 転換は控えめ（ドキュメンタリー寄り）。派手なトランジションは使わない
+  transition: "soft_fade"
+
+# ------------------------------------------------------------
+# 音
+# ------------------------------------------------------------
+audio:
+  # A01〜A04: BGM は盛り上げるためではなく「考える空気」を作る。ブロックで切り替える
+  bgm_moods:
+    ambient:    {beats: [PARADOX_HOOK, EVIDENCE_TEASER, QUESTION_LOCK], feel: "低音・パッド・ミニマル"}
+    curiosity:  {beats: [FAMILIAR_SCENE, ACADEMIC_LENS],                feel: "軽いパルス・反復音"}
+    tension:    {beats: [EVIDENCE_DROP, MECHANISM_REVEAL, PERSPECTIVE_FLIP], feel: "低めの短調・少しの不協和"}
+    reflective: {beats: [HUMAN_RETURN, REFLECTIVE_ENDING],              feel: "ピアノ・アンビエント"}
+  crossfade_seconds: 3.0
+  # A05: SE は「面白くする」ためではなく「ここ重要」と脳に知らせる合図として使う
+  se_role: "attention_cue"
+
+# ------------------------------------------------------------
+# リサーチの木。台本を書く前に「説明できる視点を5つ集めて、2〜3個採用する」
+# ------------------------------------------------------------
+research_lenses:
+  R01: {name: "行動経済学・心理", ask: "人はなぜそう感じ、そう選ぶのか（損失回避・現在バイアス・比較）"}
+  R02: {name: "マクロ経済",      ask: "金利・為替・物価・賃金のどれが動いているか"}
+  R03: {name: "ミクロ・産業構造", ask: "企業の損益・競争・価格転嫁の仕組みはどうなっているか"}
+  R04: {name: "制度・歴史",      ask: "法律・規制・過去の事例が今の形をどう決めたか"}
+  R05: {name: "統計データ",      ask: "実在の公開統計で何が言えて、何が言えないか"}
+  R06: {name: "反論",            ask: "この説明に対する一番強い反論は何か。それでも成り立つか"}
+research_pick: [2, 3]     # 5〜6 個集めて、採用するのは 2〜3 個
+
+# ------------------------------------------------------------
+# タイトル（Knowledge Gap 型）。「○○について解説」は弱い
+# ------------------------------------------------------------
+title_templates:
+  WHY:        "なぜ{X}は{Y}なのか？"
+  PARADOX:    "なぜ{X}な人ほど{Y}するのか？"
+  COMPARISON: "なぜ同じ{X}でも{Y}する人／しない人がいるのか？"
+  HIDDEN:     "{X}を決めている意外なもの"
+  DARK:       "なぜ人は{X}してしまうのか？"
+title_rules:
+  - "日常語で問いを立て、答えに学術的な言葉を使う。タイトル自体を学術用語だらけにしない"
+  - "「〜について解説」「〜とは」「〜まとめ」を使わない"
+  - "逆説（意外な逆）か比較（する人／しない人）を1つ入れる"
+# 判定に使う語（title_matches 用）
+title_signals: ["なぜ", "ほど", "／しない", "意外", "してしまう", "本当は", "実は"]
+
+# ------------------------------------------------------------
+# サムネイル: One Idea / One Emotion。タイトルと同じことを書かない
+# ------------------------------------------------------------
+thumbnail:
+  rule: "タイトルが「問い」を担当するので、サムネは「感情」を担当する。人物＋象徴的な物＋短い文字"
+  main_max_chars: 10
+  forbid_same_words_as_title: true
+
+# ------------------------------------------------------------
+# ナレーションの温度。ずんだもんの声でも、このテンションで書く
+# ------------------------------------------------------------
+narration:
+  temperature: "Calm + Intellectual + Slightly Mysterious（ドキュメンタリーと Podcast の中間）"
+  avoid: ["みんなこんにちは！", "実は〜なんです！", "ヤバい", "衝撃"]
+  prefer:
+    - "しかし、ここには少し奇妙な点があるのだ"
+    - "普通はこう考えるのだ。でも、数字は逆を向いているのだ"
+    - "ここで一度、視点を変えてみるのだ"

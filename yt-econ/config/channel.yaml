@@ -1,0 +1,410 @@
+# ============================================================
+#  チャンネル設定 — ここを書き換えれば全工程の挙動が変わる
+# ============================================================
+
+channel:
+  name: "おやすみ経済学"          # 寝る前に聴く、お金と就活とAI。めたん先輩とずんだもんの掛け合い
+  # 誰に向けて話すか（台本のトーンを決める最重要パラメータ）
+  audience: "眠れない夜に、寝る前に聴く大学生・20代。就活・お金・AI が気になるが、ガクチカも貯金もまだ無い層"
+  # 聴かれ方。sleep = 寝る前に流し聴きする前提（驚かせない・煽らない・最後は落ち着いて終わる）
+  listening_mode: "sleep"
+  # 話者のキャラクター。台本の語尾がこれに合わせて変わる。
+  #   plain    : です・ます調（アナウンサー的）
+  #   zundamon : ずんだもん口調（〜のだ / 〜なのだ）
+  speech_style: "zundamon"
+
+  # 守るべき語り口
+  tone: |
+    - 中学生でも分かる言葉に言い換える。専門用語は必ず初出で1文の言い換えを添える
+    - 上から目線で教えない。「一緒に考える」トーン
+    - 断定しすぎない。予測は「〜という見方がある」と出典付きで
+    - 不安を煽らない。「ヤバい」「終わった」等の煽り表現は使わない
+    - 1文は20〜30字。長いと合成音声の抑揚が単調になり、聞き手が迷子になる
+      （参考: ずんだもん音声のチャンネルは1文19.5字。人の声のチャンネルは41字。
+        声が合成なら短いほうが整合する）
+    - 体言止めを多用しない
+    - 寝る前に聴く動画。驚かせない、急がせない、責めない。「今夜はここまで分かれば十分」と言って終える
+    - 理想と現実の差を「埋めろ」と言わない。差があっても眠れるように、小さな既定値と順番を渡す
+  # 絶対に扱わない領域（収益化・法令リスク回避）
+  banned_topics:
+    - 個別銘柄の売買推奨・値上がり予想
+    - 「絶対儲かる」「確実に」等の断定的投資助言
+    - 特定の個人・企業への誹謗中傷
+    - 未確認の陰謀論・出典不明の統計
+
+video:
+  # 参考チャンネルの実測は 15.9〜35.7分（主参考は22.1分）だが、
+  # 登録者0の段階で22分を出しても最後まで見られない。段階的に伸ばす。
+  #   1〜20本: 8〜10分 / 維持率40%超: 12〜15分 / 安定後: 20分前後
+  target_minutes_min: 15.0
+  target_minutes_max: 18.0
+  # 自分の声で実測した話速（文字/分）。音声生成のログ「実測話速」を写す。
+  # 速さ 1.2・間 0.28 秒の掛け合いで 395 文字/分（生涯賃金の回: 6,296 字 → 16.0 分）。
+  # 等速・間 0.45 秒だと 330。0 なら参照動画の実測値を使う
+  own_chars_per_minute: 395
+  # 日本語ナレーションの体感速度（文字/分）。
+  # 参考4チャンネルの実測は 216〜395（主参考の考えすぎるアシが395）。
+  # ずんだもん音声で速すぎると聞き取れないため間を取って370。
+  # ytecon learn を走らせると自分の音声の実測値で上書きされる。
+  chars_per_minute: 370
+  resolution: [1920, 1080]
+  fps: 30
+  # 画面のデザインの下敷き（config/design_tokens.yaml のプリセット）。
+  #   hybrid         : デジタル庁 × Apple HIG × Material 3 の合成（既定）
+  #   digital_agency : デジタル庁デザインシステム寄り（行政資料のような堅さ）
+  #   apple          : Apple HIG のダーク（黒地・大きな見出し・飾りなし）
+  #   material3      : Material Design 3 のダーク（紫系の役割色・大きな角丸）
+  design: "hybrid"
+  # 1本あたりの本編セクション数（導入・まとめを除く）。
+  # 参考4チャンネルはいずれもチャプター6前後だった
+  body_sections: 8
+
+script:
+  model: "claude-opus-5"
+  effort: "high"
+  # 台本の前に「リサーチの木」（説明できる視点を5〜6個集めて2〜3個採用）を作る。
+  # 構成は config/style_bible.yaml の 9 ブロック
+  research_tree: true
+  research_effort: "medium"
+  # 生成後にファクトチェック用の第2パスを走らせる
+  fact_check: true
+  # 尺が目標レンジから外れたら自動で伸縮リライトする回数
+  max_length_repairs: 2
+
+topics:
+  # 手動の週間スケジュール（日付つきの企画キュー）。空欄なら config/schedule.yaml
+  schedule_file: ""
+  model: "claude-opus-5"
+  effort: "medium"
+  # 1回の収集で何件の候補を評価するか
+  fetch_limit: 60
+  # 過去何日分の投稿済みトピックと重複チェックするか
+  dedupe_window_days: 120
+  # 類似度がこれを超えたら重複扱い
+  dedupe_threshold: 0.72
+  # --- 日本と海外の時差をどう賭けるか -------------------------------
+  # 海外で起きたことは日本に遅れて来る。この時差は弱点ではなく在庫。
+  #   flow   いま日本で話題。今日の再生を稼ぐ燃料
+  #   bridge 海外で起きており日本にも半年以内に来る。先行者として一番おいしい
+  #   stock  海外のみ。今は数字が出ないが、日本で話題化した瞬間に掘り起こされる
+  # 比率はその日だけで割らず、直近の偏りを見て不足している枠から埋める
+  # （1日2本で 3:2:1 をその場で割ると stock が毎日0本になり仕込みが貯まらない）
+  horizon_mix:
+    flow: 3
+    bridge: 2
+    stock: 1
+  # 直近何日ぶんの実績を見て偏りを判断するか
+  horizon_window_days: 30
+  # 1回の生成で最低限確保する本数。flow を枯らすとチャンネルが回らなくなる
+  horizon_floor:
+    flow: 1
+  # この本数に達するまでは flow を厚くする（土台が無いと stock も掘られない）
+  ramp_up_videos: 30
+
+  # stock / bridge の材料になる「海外で先行している領域」の種。
+  # ここを育てるほど先行在庫の質が上がる。半年に一度は見直すこと
+  frontier_seeds:
+    - "米国で進むステーブルコインの決済利用と、日本の資金決済法"
+    - "欧州のAI規制が日本企業の実務に降りてくる経路"
+    - "海外で一般化したライドシェア・民泊が日本で遅れた制度的理由"
+    - "米国のBNPL（後払い）が生んだ若年層の債務問題"
+    - "海外の401k型年金と日本のiDeCo・企業型DCの差"
+    - "欧米で進む『修理する権利』と製造業のビジネスモデル"
+    - "インドのUPIに見る決済インフラの飛び越え型発展"
+    - "米国の学生ローン問題が示す教育投資の採算"
+    - "海外で広がる週4日勤務の生産性データ"
+    - "中国のEV価格競争が日本の自動車産業に及ぶ経路"
+    - "海外の住宅ローン金利上昇が示す、日本の変動金利のリスク"
+    - "米国のギグワーカー保護法制と日本の労働法"
+  rss_sources:
+    - name: "NHK 経済"
+      url: "https://www.nhk.or.jp/rss/news/cat5.xml"
+    - name: "Yahoo!ニュース 経済"
+      url: "https://news.yahoo.co.jp/rss/topics/business.xml"
+    - name: "日本銀行 新着"
+      url: "https://www.boj.or.jp/rss/whatsnew.xml"
+    - name: "IMF Blog"
+      url: "https://www.imf.org/en/Blogs/rss"
+  # ニュースが取れない日でも枯れない常設テーマの種
+  evergreen_seeds:
+    - "円安はなぜ起きる？ 生活にどう効いてくるのか"
+    - "金利が上がると私たちの財布に何が起きるのか"
+    - "インフレとデフレ、結局どっちが困るのか"
+    - "GDPって何を測っている数字なのか"
+    - "日銀は何をしている組織なのか"
+    - "新NISAの仕組みを制度設計から理解する"
+    - "年金は本当に破綻するのか、数字で確かめる"
+    - "なぜ日本の給料は30年上がらなかったのか"
+    - "株価と景気がズレるのはなぜか"
+    - "需要と供給の曲線が現実のどこに現れているか"
+    - "為替介入は何をしているのか"
+    - "国の借金1200兆円をどう捉えるべきか"
+    - "最低賃金を上げると雇用は減るのか"
+    - "半導体が経済の主役になった理由"
+    - "サブスク経済はなぜ強いのか"
+
+tts:
+  # voicevox | google
+  provider: "voicevox"
+  voicevox:
+    # 話者ID。`python -m ytecon speakers` で一覧が見られる
+    #   3 = ずんだもん ノーマル   1 = ずんだもん あまあま
+    #   7 = ずんだもん ツンツン   5 = ずんだもん セクシー
+    speaker: 3
+    # 話す速さ。生涯賃金の回（1.2・間 0.28）と同じ速さに合わせる。
+    # 等速（1.0・間 0.45）にしたら「遅くなった」と感じられたので戻した
+    speed: 1.2
+    pitch: 0.0
+    # 抑揚。1.0 が素。上げるほど感情が乗るが、1.5 を超えると芝居がかる
+    intonation: 1.2
+    # 文末の無音（秒）
+    pause_sentence: 0.28
+    pause_section: 0.65
+  google:
+    voice_name: "ja-JP-Neural2-B"
+    speaking_rate: 1.12
+
+visuals:
+  # 背景画像の取得元（PEXELS_API_KEY 未設定なら自動で単色/グラデにフォールバック）
+  stock_provider: "pexels"
+  # 配色は video.design のプリセット（config/design_tokens.yaml）から決まる。
+  # 個別に上書きしたい色だけここに書く（例: 参考チャンネルの実測色に寄せる）
+  palette: {}
+  #  palette:
+  #    accent: "#4CC2FF"
+  # --- 動く背景 -------------------------------------------------------
+  # カードの後ろに常に動画を流す（「背景がずっと同じ」をなくす）。
+  # assets/footage/ に素材（Artlist などから落とした mp4/mov）を置けばそれを使い、
+  # 無ければ 6 種類の抽象ループ（ぼけ・粒子・格子・波・光線・揺らぎ）を合成して使う。
+  # 置き方・探し方は docs/Artlistの使い方.md
+  motion_backgrounds: true
+  footage_dir: "assets/footage"
+  # カードの描き方: mixed（短い文字は背景に直接、文字が多いものはすりガラス）/ glass / clear / solid
+  card_style: "mixed"
+  # 透過カードの下で背景をどれだけ暗くするか（0〜1）。文字が読みにくければ上げる
+  backdrop_dim: 0.40
+  # 背景のぼかし（px。0 で無し）と彩度（1 で素のまま）。内容に集中させるため控えめに
+  background_blur: 8
+  background_saturation: 0.6
+  # Ken Burns（ゆっくりズーム）を効かせる
+  ken_burns: true
+  # 1シーン（画が変わらない単位）の目標秒数。参考チャンネルは顔で持たせているが
+  # こちらは顔が無いので短めに切る。8秒を超えると「動かない動画」に見える
+  scene_seconds: 7.0
+  scene_seconds_min: 4.0
+  scene_seconds_max: 14.0
+  # 各シーンの頭に短いフェードを入れて「切り替わった感」を出す（フレーム数。0 ならトークンの motion.fade_ms）
+  fade_in_frames: 0
+  # AI 画像生成。空なら使わない。"pollinations" は鍵不要・無料（品質はそこそこ）
+  ai_image_provider: "pollinations"
+  # 画面の文字（図解・表・カード・見出し）のフォント。字幕と同じ丸ゴシックで全部そろえる。
+  # 空にすると見出しは Noto Sans JP Black、本文は丸ゴシックになる
+  font: "assets/fonts/MPLUSRounded1c-Black.ttf"
+  subtitle:
+    # 0 ならデザイントークン（subtitle: 110px）。全行おなじ大きさで出す（行ごとに縮めない）
+    font_size: 0
+    max_chars_per_line: 20
+    outline: 0
+    # 字幕は画面中央。キャラの幅ぶん左右対称に空け、その幅に入る長さで文節ごとに区切る
+    full_width: false
+    # 字幕のフォント。丸ゴシック（ずんだもんの柔らかい声に合う）。空なら本文と同じ Noto Sans JP Black
+    font: "assets/fonts/MPLUSRounded1c-Black.ttf"
+    # 大きなテロップ（EMPHASIS/KEYWORD などを別レイヤーで出す）。字幕と重なるので既定は出さない
+    telops: false
+    # 字幕の中の色分け。数字=黄、減少・リスク・その回の主張=赤、キーワード・用語=青と黄緑を交互。
+    # 同じ語にはいつも同じ色。1 行に付けるのは max_per_line 個まで
+    highlight:
+      enabled: true
+      max_per_line: 2
+      colors: {red: "#FF6B6B", blue: "#4CC2FF", yellow: "#FFD93D", green: "#B4E65A"}
+
+# 出演者。mode: dialogue なら 2 人の掛け合い（左: 解説役、右: 聞き役）。solo なら下の character だけ
+cast:
+  mode: dialogue
+  characters:
+    - key: metan
+      name: 四国めたん
+      tag: めたん                 # 台本の話者タグ【めたん】
+      role: teacher              # 解説役（経済に詳しい先輩）
+      voicevox_speaker: 2        # VOICEVOX 四国めたん（ノーマル）
+      side: left
+      dir: assets/character/四国めたん立ち絵素材2.1
+      flip: true                 # 画面中央（右）を向かせる
+      subtitle_outline: "#7A2E8E"
+      parts: {服: "白ロリ服", 右腕: "普通", 左腕: "普通", 顔色: "普通2", 眉: "太眉ごきげん"}
+      mouth: {base: "ほほえみ", mouth_half: "ゆ", mouth_open: "わあー"}
+      blink: "目閉じ"
+      skip_groups: ["その他の服", "記号など"]
+      expressions:
+        通常: {}
+        笑: {眉: "太眉ごきげん", 顔色: "赤面"}
+        驚: {目セット: "見開き白目", 眉: "太眉ごきげん"}
+        困: {眉: "太眉こまり"}
+        考: {眉: "太眉こまり", 左腕: "口元に指"}
+        指: {右腕: "指差す"}
+        怒: {眉: "太眉おこ"}
+      persona: >-
+        経済と AI に詳しい、社会人 5 年目の先輩。夜に電話で相談に乗ってくれるような、落ち着いて責めない話し方。
+        語尾は「〜よ」「〜ね」「〜かしら」「〜なの」。です・ます調にはしない。数字と出典は必ず自分が言う。
+        励まし方は「頑張れ」ではなく「順番を渡す」。最後は「今夜はここまでで十分」と締める
+    - key: zundamon
+      name: ずんだもん
+      tag: ずんだもん
+      role: student              # 聞き役（新卒社会人。何も知らないので素朴に聞く）
+      voicevox_speaker: 3        # VOICEVOX ずんだもん（ノーマル）
+      side: right
+      dir: assets/character/ずんだもん立ち絵素材2.3
+      flip: false
+      subtitle_outline: "#1E7F3C"
+      persona: >-
+        就活中の大学 3 年生。ガクチカも貯金も資格もまだ無く、自己啓発本を買っては三日で止まる。
+        「なりたい自分」と「いまの自分」の差で夜に眠れなくなるタイプ。経済は知らないが好奇心はある。
+        語尾は「〜のだ」「〜なのだ」。視聴者の焦りや言い訳をそのまま口にし、たまに極端な結論に飛ぶ。
+        一人称は「ぼく」
+  # 掛け合いのときの立ち絵の大きさ（画面の高さに対する比）。1 人のときは character.height_ratio
+  height_ratio: 0.34
+
+# 画面右下の解説キャラクター（ずんだもんなど）。
+# assets/character/ に base.png / mouth_half.png / mouth_open.png / blink.png を
+# 置くと、音声に合わせて口が動き、数秒おきに瞬きする。
+# 無い場合は自動で汎用の仮キャラを生成する（本番前に差し替えること）。
+character:
+  enabled: true
+  # ずんだもんの立ち絵（ゆっくりMovieMaker4 の「動く立ち絵」形式）を使う場合は、
+  # 配布フォルダ（体/顔/口/目/…）を assets/character/ の下に置くだけでよい。
+  # 複数ある場合や別の場所に置く場合はここでフォルダを指定する
+  dir: ""
+  # 使う差分。フォルダ形式なら番号（例 {目: "00", 眉: "01"}）、
+  # PSD（ずんだもん立ち絵素材）ならレイヤー名（例 {眉: "普通眉", 目: "普通目2", 服装1: "制服", 右腕: "指差し"}）
+  parts: {}
+  # PSD のとき、口パクに使う口レイヤーと、まばたきに使う目レイヤー
+  mouth: {base: "むふ", mouth_half: "ほあ", mouth_open: "ほあー"}
+  blink: "UU"
+  # 表情タグ（台本の文頭の [驚] [笑] [困] [考] [指] [怒]）→ 差分の組み合わせ。
+  # 既定は character.py の _PSD_EXPRESSIONS。変えたいものだけ書く
+  #   例) expressions: {驚: {目セット: "見開き白目", 眉: "上がり眉"}}
+  expressions: {}
+  # 話しているコマを何 px 上に動かすか（0 で止める）。ゆっくり動画の「喋ると揺れる」
+  bob_px: 8
+  # 左右反転（画面右下に置くので、左を向いている絵は反転して中央を向かせる）
+  flip: false
+  # 概要欄に自動で入れるクレジット。配布元の規約に従って書く
+  #   例) "立ち絵：坂本アヒル 様（https://seiga.nicovideo.jp/seiga/im10788496）"
+  credit: ""
+  # 画面の高さに対する大きさ（0.40 = 画面の40%の高さ）。胸から上が右下に接地する
+  height_ratio: 0.40
+  # 全身の立ち絵は下を切ってバストアップにする（0.45 = 下から45%を画面外へ）
+  crop_bottom: 0.45
+  # 右端・下端からの余白（px）。下端 0 で胸から上が画面の底に接地する
+  margin_right: 24
+  margin_bottom: 0
+  # 口を開ける音量の閾値（0〜1。小さいほどよく動く）
+  mouth_half_threshold: 0.08
+  mouth_open_threshold: 0.22
+  # 瞬きの間隔（秒）
+  blink_every_min: 2.5
+  blink_every_max: 5.5
+
+render:
+  # ffmpeg | capcut
+  # ffmpeg = 完全自動で mp4 まで出力（推奨・無人運転できる）
+  # capcut = CapCut のドラフトを自動生成し、最後の書き出しだけ手動
+  backend: "ffmpeg"
+  bgm:
+    enabled: true
+    # assets/bgm/ に置いた曲（Artlist など）を使う。合成音は使わない。
+    # 曲が1つも無ければ BGM なしで作る。入手と置き方は docs/Artlistの使い方.md
+    # 1曲を全編に使うならファイル名をここに書く（空なら気分ごとの切り替え）。
+    # 動画の長さに合わせて切り、最後は 3 秒でフェードアウトする
+    file: "Score Maestro - Up to No Good.mp3"
+    # 声に対する BGM の大きさ（BGM を一定の音量に揃えたあとの相対値）。
+    # -8dB ≒ 声の間で声より12dBほど小さい。目立つなら -11、寂しいなら -6
+    volume_db: -8
+    # 声が乗っている間は BGM をさらに下げる（ダッキング）
+    ducking: true
+    # ブロックごとに気分を切り替える（導入=ambient / 探究=curiosity / 意外な事実=tension /
+    # 結論=reflective）。assets/bgm/ambient.mp3 のように気分名のファイルを置くとそれを使い、
+    # 無ければ合成音。file を指定した場合はそちらが優先（全編1曲）
+    mood_timeline: true
+    # フリー BGM を使う場合のクレジット（概要欄に自動で入る）
+    credit: ""
+  # 効果音。assets/sfx/POP.mp3 のように種類名のファイルを置くと、台本の sounds の位置で鳴る
+  sfx:
+    # 寝る前に聴く動画なので効果音は鳴らさない
+    enabled: false
+    volume_db: -10
+    max_total: 80
+  capcut:
+    # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
+    draft_dir: ""
+
+upload:
+  # public | unlisted | private
+  privacy: "public"
+  # 手で用意したサムネイル（ChatGPT などで作った画像）を置くフォルダ。
+  # ファイル名を公開日（2026-09-23.jpg / 20260923.png）か slug にしておくと、その本編に自動で使われ、
+  # 無ければ従来どおり自動生成する。あとから差し替えるときは `ytecon thumbnail 画像 --date 2026-09-23`
+  thumbnail_dir: "thumbnails"
+  # 完成した本編は output/finals/yt_<番号 3 桁>_<公開日 yyyymmdd>.mp4（サムネは .jpg）にも残す。
+  # 番号は 001 から昇順。手で仕上げた動画の記録（json）は finals/ に置く（ytecon publish-file）
+  finals_dir: "finals"
+  # JST での投稿時刻。1 日 1 本、19:00。アウトロの「毎日19:00に更新」もここから出る
+  publish_times_jst: ["19:00"]
+  category_id: "25"      # News & Politics（経済解説はここか 27:Education）
+  language: "ja"
+  playlist_title: "経済ニュースを噛み砕く"
+  made_for_kids: false
+  # 予約投稿を使う（privacy: public + publishAt）
+  schedule: true
+
+# 本編から切り出す Shorts（縦 9:16）。目標 50 万再生の発見面はここ（config/goals.yaml）
+shorts:
+  # 本編 1 本から何本作るか（0 で無効）。3 本 + 本編 1 本で API クォータは 1 日 7,000 ほど（上限 10,000）
+  per_video: 3
+  # story = LLM が本編の材料から 起・承・転・結 の 45〜55 秒を書き直し、音声も新しく合成する（既定）
+  # cut   = 本編の音声から区間を切り出す（LLM が使えないときは自動でこちらに落ちる）
+  mode: story
+  # 最後に必ず入れる本編への誘導（話者タグ付き）。画面には「続きは本編で / 毎日19:00 ▶ 下のリンクから」のカードが出る。
+  # Shorts で概要欄を開く人はほぼいないので「下のリンク」（関連動画）に誘導する。
+  # 関連動画リンクは API から付けられないため、公開後に YouTube Studio → その Shorts → 「関連動画」で本編を選ぶ
+  cta:
+    - "【ずんだもん】続きは本編で聞くのだ。"
+    - "【めたん】本編は毎日19時。下のリンクから飛べるわ。"
+  # Shorts の声は本編より少し速く、間を詰める
+  tts_speed: 1.25
+  pause_sentence: 0.22
+  # 区間の長さ。45 秒前後がいちばん最後まで見られる
+  min_seconds: 30
+  max_seconds: 58
+  # 締めの部分は切り出さない（本編を見る理由を残す）
+  exclude_blocks: ["closing"]
+  # 投稿時刻（JST）。本編の 19:00 とずらし、昼・夕方・深夜 0 時の 3 枠
+  publish_times_jst: ["12:00", "18:00", "00:00"]
+  # 見出しとタイトルを LLM で磨く（false なら見出しはセクション名）
+  llm_hooks: true
+  # 縦画面の組み方
+  resolution: [1080, 1920]
+  cast_height_ratio: 0.23        # 2 人の大きさ（画面の高さに対する比）。下の帯に並ぶ
+  subtitle_size: 76
+  subtitle_gap: 24               # 立ち絵の上端から字幕までの隙間
+  top_band: 420                  # ここより上はフック見出しの帯
+  hook_top: 150                  # 見出しの上端（Shorts の UI に隠れない位置）
+  scene_seconds: 6.0
+  type_scale: 1.2                # 図表・カードの文字の倍率（横幅が本編の半分なので少し大きく）
+
+# 寝かせた動画の掘り起こし（ytecon revive）
+# 企画時に決めた watch_keywords が日本のニュース見出しに出たら、
+# タイトル・サムネ・概要欄を作り替えて「いま探されている1本」にする
+revive:
+  enabled: true
+  # --apply なしでも案だけは毎日作る。自動反映は urgency が now/this_week のときだけ
+  auto_apply: false
+  # 一度掘り起こした動画を、次に再通知するまでの間隔（日）。
+  # 1本に監視語を複数持たせるので、これが無いと同じニュースで何度も鳴る
+  cooldown_days: 45
+
+pipeline:
+  videos_per_day: 1
+  workdir: "output"
+  # 失敗時のリトライ回数
+  retries: 2

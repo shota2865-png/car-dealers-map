@@ -1,0 +1,417 @@
+"""動画レンダリング（ffmpeg）.
+
+シーンごとに短いセグメントを作って concat し、最後の1パスで
+字幕焼き込み・ナレーション・BGM をまとめて合成する。
+セグメント方式にしているのは、1本の巨大な filter_complex にすると
+どこで壊れたのか分からなくなるため。落ちたシーンだけ見に行ける。
+
+必要なもの: ffmpeg / ffprobe（libass 付き。通常のビルドなら入っている）
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+from .config import Config
+from .script import VideoScript
+from .tts import VoiceTrack
+
+log = logging.getLogger(__name__)
+
+
+class RenderError(RuntimeError):
+    pass
+
+
+_ffmpeg_path: str | None = None
+
+
+from .scenes import Scene  # noqa: E402  (Scene の定義は scenes.py に移した)
+
+
+# ----------------------------------------------------------------------
+def ensure_ffmpeg() -> str:
+    """ffmpeg の実行パス。システムに無ければ imageio-ffmpeg の同梱版を使う.
+
+    同梱版は libass 入りなので字幕焼き込みも通る。sudo が使えない環境
+    （共用サーバ・CI・Windows）でも `pip install imageio-ffmpeg` だけで動く。
+    """
+    global _ffmpeg_path
+    if _ffmpeg_path:
+        return _ffmpeg_path
+    exe = shutil.which("ffmpeg")
+    if exe:
+        _ffmpeg_path = exe
+        return exe
+    try:
+        import imageio_ffmpeg
+
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+        log.info("システムの ffmpeg が無いので同梱版を使います: %s", bundled)
+        _ffmpeg_path = bundled
+        return bundled
+    except Exception:
+        pass
+    raise RenderError(
+        "ffmpeg が見つかりません。次のいずれかで導入してください。\n"
+        "  どのOSでも  : pip install imageio-ffmpeg\n"
+        "  Ubuntu/Debian: sudo apt install -y ffmpeg\n"
+        "  macOS        : brew install ffmpeg\n"
+        "  Windows      : winget install Gyan.FFmpeg"
+    )
+
+
+def _run(args: list[str], label: str) -> None:
+    log.debug("ffmpeg: %s", " ".join(args))
+    proc = subprocess.run(args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = "\n".join(proc.stderr.strip().splitlines()[-25:])
+        raise RenderError(f"{label} に失敗しました (exit {proc.returncode})\n{tail}")
+
+
+def _escape_filter_path(path: Path) -> str:
+    """filter 引数に埋めるパスのエスケープ（Windows のドライブレターとバックスラッシュ対策）."""
+    s = str(path).replace("\\", "/")
+    return s.replace(":", r"\:").replace("'", r"\'")
+
+
+# ----------------------------------------------------------------------
+# Ken Burns の最大ズーム倍率。入力はこれより少しだけ大きく作れば足りる
+MAX_ZOOM = 1.12
+OVERSAMPLE = 1.25
+# 全シーンで色の付帯情報（色域・レンジ）をそろえる。素材動画から引き継いだ値がシーンごとに
+# 違うと、連結後の ffmpeg がその境目でフィルタを組み直し、立ち絵の重ね合わせが数フレーム
+# 抜ける（ジャンプカットでキャラが消える現象）
+COLOR_PARAMS = "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+COLOR_FLAGS = ["-color_range", "tv", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
+
+
+def render_segment(cfg: Config, scene: Scene, out: Path, index: int) -> Path:
+    """1シーン = 静止画にゆっくりズームをかけた無音の動画.
+
+    背景動画（scene.background）があるときは、それをループ再生した上に
+    透過カード（PNG）を重ねる。カードは動かさず、背景が動く。
+
+    zoompan には**静止画を1フレームだけ**渡すこと。`-loop 1` で連番入力に
+    すると、入力フレームごとに d フレームずつ吐いてしまい、尺もファイル
+    サイズも爆発する（6秒の想定が数十MBになる）。
+    入力は1枚、出力枚数は `-frames:v` で決める、が正しい組み合わせ。
+    """
+    ffmpeg = ensure_ffmpeg()
+    w, h = cfg.get("video.resolution", [1920, 1080])
+    fps = int(cfg.get("video.fps", 30))
+    frames = max(int(round(scene.duration * fps)), 1)
+    from . import design
+    # 切り替えの長さはデザイントークン（motion.fade_ms）。config で明示したらそちら
+    fade_frames = int(cfg.get("visuals.fade_in_frames", 0) or design.fade_frames(cfg, fps))
+    fade = (f",fade=t=in:st=0:d={fade_frames / fps:.3f}"
+            if fade_frames > 0 and frames > fade_frames * 2 and getattr(scene, "fade_in", True) else "")
+
+    if scene.background is not None:
+        # 背景動画（ループ）＋ 透過カードの重ね合わせ。
+        # 背景は「内容に集中できる」ようにぼかして彩度を落とす（実写 B-roll は弱め）
+        strong = scene.kind not in ("broll",)
+        blur = float(cfg.get("visuals.background_blur", 8)) * (1.0 if strong else 0.35)
+        sat = float(cfg.get("visuals.background_saturation", 0.6)) if strong else 0.85
+        calm = (f"boxblur=lr={blur:.1f}:lp=2," if blur >= 0.5 else "") + f"eq=saturation={sat:.2f}:brightness=-0.03,"
+        # 素材が場面より短いときは、頭から繰り返す代わりにゆっくり再生して伸ばす（最大 2 倍）
+        slow = ""
+        bg_dur = float(getattr(scene, "bg_duration", 0.0) or 0.0)
+        if bg_dur > 0:
+            avail = bg_dur - scene.bg_offset
+            if 0 < avail < scene.duration:
+                factor = min(scene.duration / avail, 2.0)
+                slow = f"setpts={factor:.4f}*PTS,"
+        fc = (
+            f"[0:v]{slow}scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+            f"{calm}fps={fps},format=rgba[bg];"
+            f"[1:v]format=rgba[fg];"
+            f"[bg][fg]overlay=0:0:format=auto,format=yuv420p{fade},{COLOR_PARAMS}[v]"
+        )
+        _run(
+            [ffmpeg, "-y",
+             "-stream_loop", "-1", "-ss", f"{scene.bg_offset:.2f}", "-i", str(scene.background),
+             "-i", str(scene.image),
+             "-filter_complex", fc, "-map", "[v]", "-frames:v", str(frames),
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "17",
+             "-pix_fmt", "yuv420p", "-r", str(fps), *COLOR_FLAGS, "-an", str(out)],
+            f"シーン{index}のレンダリング（動く背景）",
+        )
+        return out
+
+    if cfg.get("visuals.ken_burns", True) and not scene.still:
+        # 拡大時の粗さを防ぐぶんだけ上に取る。2倍まで上げても画質は変わらず遅くなるだけ
+        sw, sh = int(w * OVERSAMPLE), int(h * OVERSAMPLE)
+        step = (MAX_ZOOM - 1.0) / frames
+        # 寄り → 引き → 横移動 を順に回す（E02〜E04。同じ動きが続くと単調に見える）
+        from . import bible
+        motions = bible.motions(cfg) or ["push_in", "pull_out"]
+        motion = motions[index % len(motions)]
+        xexpr, yexpr = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        if motion == "pull_out":
+            zexpr = f"max({MAX_ZOOM}-{step:.8f}*on,1.0)"
+        elif motion == "pan":
+            # 少しだけ寄った状態で、左→右（奇数回は右→左）へゆっくり流す
+            zexpr = f"{1 + (MAX_ZOOM - 1.0) * 0.6:.4f}"
+            span = f"(iw-iw/zoom)"
+            xexpr = (f"{span}*on/{frames}" if (index // len(motions)) % 2 == 0
+                     else f"{span}*(1-on/{frames})")
+        else:
+            zexpr = f"min(zoom+{step:.8f},{MAX_ZOOM})"
+        vf = (
+            f"scale={sw}:{sh}:force_original_aspect_ratio=increase,"
+            f"crop={sw}:{sh},"
+            f"zoompan=z='{zexpr}':x='{xexpr}':y='{yexpr}'"
+            f":d={frames}:s={w}x{h}:fps={fps}"
+        )
+    else:
+        vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+              f"loop=loop={frames}:size=1:start=0,fps={fps}")
+    vf += ",format=yuv420p" + fade + "," + COLOR_PARAMS
+
+    _run(
+        [ffmpeg, "-y", "-i", str(scene.image),
+         "-vf", vf, "-frames:v", str(frames),
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "17",
+         "-pix_fmt", "yuv420p", "-r", str(fps), *COLOR_FLAGS, "-an", str(out)],
+        f"シーン{index}のレンダリング",
+    )
+    return out
+
+
+def measure_loudness(wav: Path) -> float:
+    """声ファイルの統合ラウドネス(LUFS)を1回だけ測る。失敗時は -18 とみなす."""
+    exe = ensure_ffmpeg()
+    r = subprocess.run(
+        [exe, "-nostats", "-i", str(wav), "-af", "ebur128=peak=none", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    m = re.findall(r"I:\s+(-?[\d.]+) LUFS", r.stderr)
+    if not m:
+        return -18.0
+    val = float(m[-1])
+    return val if val > -60 else -18.0
+
+
+VOICE_LUFS = -16.0   # ミックス前に声を揃える基準
+BGM_LUFS = -20.0     # BGM を揃える基準（ここから volume_db ぶん下げる）
+
+
+def audio_chain(
+    cfg: Config, bgm_idx: int | None, total: float, voice_gain_db: float = 0.0,
+    sfx: list[tuple[int, float]] | None = None, bgm_gain_db: float | None = None,
+) -> list[str]:
+    """音声の filter_complex を組む（BGM の混ぜ方はここだけで決まる）.
+
+    考え方:
+      1. 声を先に一定のラウドネス(-16 LUFS)へ。voice_gain_db は
+         measure_loudness() で測った値から出す固定ゲイン（動的処理はしない）
+      2. BGM も一定のラウドネス(-20 LUFS)に揃え、そこから volume_db だけ下げる。
+         bgm_gain_db（measure_loudness で測った固定ゲイン）があればそれを使う。
+         無ければ loudnorm の 1 パス（曲によって 2〜3dB ずれる）
+      3. 声が乗っている間だけ軽く下げる(ratio 2)。強く掛けると BGM が
+         「ある気配」すら消えて、無い動画と区別がつかなくなる。
+         release を短めにして、文と文の 0.3〜0.6 秒の間でも BGM が戻るようにする
+      4. 最後は固定ゲイン(+1.5dB) + リミッターで YouTube 基準(-14 LUFS 前後)へ。
+         1 パスの loudnorm は AGC のように働き、声の切れ目で BGM を持ち上げてしまうので使わない
+
+    入力: [1:a] が声、[{bgm_idx}:a] が BGM。出力ラベルは [a]。
+    """
+    vg = f"volume={voice_gain_db:.2f}dB," if abs(voice_gain_db) > 0.05 else ""
+    sfx = list(sfx or [])
+    sfx_vol = float(cfg.get("render.sfx.volume_db", -10))
+
+    def sfx_bus(chain: list[str]) -> str:
+        """効果音を1本のバス [sfx] にまとめて、そのラベルを返す（無ければ空文字）."""
+        if not sfx:
+            return ""
+        labels = []
+        for k, (idx, at) in enumerate(sfx):
+            ms = int(max(at, 0) * 1000)
+            chain.append(f"[{idx}:a]aresample=48000,aformat=channel_layouts=mono,atrim=0:4,"
+                         f"adelay={ms}|{ms},volume={sfx_vol}dB[sx{k}]")
+            labels.append(f"[sx{k}]")
+        if len(labels) == 1:
+            chain.append(f"{labels[0]}acopy[sfx]")
+        else:
+            chain.append("".join(labels) + f"amix=inputs={len(labels)}:duration=longest:"
+                         "dropout_transition=0:normalize=0[sfx]")
+        return "[sfx]"
+
+    master = "volume=1.5dB,alimiter=limit=0.84:level=false:attack=5:release=80"
+    if bgm_idx is None:
+        chain = [f"[1:a]{vg}apad=pad_dur=0.8[voice]"]
+        bus = sfx_bus(chain)
+        if bus:
+            chain.append(f"[voice]{bus}amix=inputs=2:duration=first:dropout_transition=0:"
+                         f"normalize=0,{master}[a]")
+        else:
+            chain.append(f"[voice]{master}[a]")
+        return chain
+
+    vol = float(cfg.get("render.bgm.volume_db", -6))
+    fade_out_at = max(total - 3, 0)
+    if bgm_gain_db is None:
+        level = f"loudnorm=I={BGM_LUFS:.0f}:TP=-2:LRA=7,volume={vol}dB"
+    else:
+        level = f"volume={bgm_gain_db + vol:.2f}dB"
+    chain = [
+        f"[1:a]{vg}apad=pad_dur=0.8,asplit=2[voice][sc]",
+        f"[{bgm_idx}:a]aresample=48000,{level},"
+        f"afade=t=in:st=0:d=2,afade=t=out:st={fade_out_at:.2f}:d=3[bgm0]",
+    ]
+    if cfg.get("render.bgm.ducking", True):
+        # threshold 0.1 ≒ -20dBFS。声のピークがこれを超えた分の半分だけ BGM を下げる
+        chain.append("[bgm0][sc]sidechaincompress=threshold=0.1:ratio=2:"
+                     "attack=30:release=250:makeup=1[bgm]")
+    else:
+        chain.append("[sc]anullsink;[bgm0]acopy[bgm]")
+    bus = sfx_bus(chain)
+    chain.append(f"[voice][bgm]{bus}amix=inputs={3 if bus else 2}:duration=first:dropout_transition=0:"
+                 f"normalize=0,{master}[a]")
+    return chain
+
+
+def render(
+    cfg: Config,
+    script: VideoScript,
+    track: VoiceTrack,
+    scenes: list[Scene],
+    subtitle_ass: Path,
+    outdir: str | Path,
+    overlays: list[tuple[Path, str]] | None = None,
+    filename: str = "video.mp4",
+) -> Path:
+    """完成した mp4 のパスを返す.
+
+    overlays は全編に重ねる透過 PNG と位置（ffmpeg overlay の "x:y"）。Shorts の上部見出しに使う。
+    """
+    from . import bgm as bgm_mod
+    from . import character
+
+    ffmpeg = ensure_ffmpeg()
+    outdir = Path(outdir)
+    seg_dir = outdir / "segments"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    if not scenes:
+        raise RenderError("シーンがありません")
+
+    segments = [
+        render_segment(cfg, scene, seg_dir / f"seg_{i:03d}.mp4", i)
+        for i, scene in enumerate(scenes)
+    ]
+
+    list_file = seg_dir / "concat.txt"
+    list_file.write_text("".join(f"file '{p.name}'\n" for p in segments), encoding="utf-8")
+    silent = outdir / "silent.mp4"
+    _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
+          "-c", "copy", str(silent)], "シーン連結")
+
+    total = track.duration + 0.8
+    w, h = cfg.get("video.resolution", [1920, 1080])
+
+    # --- 入力を組み立てる（任意のものは有る時だけ） ---
+    inputs = [silent, track.wav_path]
+    # -reinit_filter 0: 途中で映像の付帯情報が変わってもフィルタを組み直さない（立ち絵が消えない保険）
+    args = [ffmpeg, "-y", "-reinit_filter", "0", "-i", str(silent), "-i", str(track.wav_path)]
+
+    bgm_path = bgm_mod.resolve(cfg, script=script, track=track, outdir=outdir)
+    bgm_idx = None
+    if bgm_path:
+        bgm_idx = len(inputs)
+        inputs.append(bgm_path)
+        args += ["-stream_loop", "-1", "-i", str(bgm_path)]
+
+    from . import sfx as sfx_mod
+    sfx_inputs: list[tuple[int, float]] = []
+    for kind, at, path in sfx_mod.plan(cfg, script, track):
+        sfx_inputs.append((len(inputs), at))
+        inputs.append(path)
+        args += ["-i", str(path)]
+
+    char_tracks = character.build_tracks(cfg, track.wav_path, total, outdir, track=track)
+    char_inputs: list[tuple[int, Config]] = []
+    for char_path, ccfg in char_tracks:
+        char_inputs.append((len(inputs), ccfg))
+        inputs.append(char_path)
+        args += ["-i", str(char_path)]
+
+    # --- 映像: 字幕を焼く → キャラクターを右下に重ねる ---
+    fonts_dir = cfg.root / "assets" / "fonts"
+    sub_filter = f"ass='{_escape_filter_path(subtitle_ass)}'"
+    if fonts_dir.exists():
+        sub_filter += f":fontsdir='{_escape_filter_path(fonts_dir)}'"
+    chain = [f"[0:v]{sub_filter}[v0]"]
+    vout = "[v0]"
+    for n, (char_idx, ccfg) in enumerate(char_inputs):
+        ch_h = int(h * float(ccfg.get("character.height_ratio", 0.42)))
+        mb = int(ccfg.get("character.margin_bottom", 0))
+        side = str(ccfg.get("character.side", "right"))
+        if side == "left":
+            ml = int(ccfg.get("character.margin_left", ccfg.get("character.margin_right", 24)))
+            pos = f"{ml}:H-h-{mb}"
+        else:
+            mr = int(ccfg.get("character.margin_right", 24))
+            pos = f"W-w-{mr}:H-h-{mb}"
+        chain.append(f"[{char_idx}:v]scale=-2:{ch_h}[ch{n}]")
+        chain.append(f"{vout}[ch{n}]overlay={pos}:format=auto:eof_action=repeat[v{n + 1}]")
+        vout = f"[v{n + 1}]"
+
+    for m, (png, pos) in enumerate(overlays or []):
+        idx = len(inputs)
+        inputs.append(png)
+        args += ["-loop", "1", "-i", str(png)]
+        chain.append(f"[{idx}:v]format=rgba[ov{m}]")
+        chain.append(f"{vout}[ov{m}]overlay={pos}:format=auto:shortest=1[vo{m}]")
+        vout = f"[vo{m}]"
+
+    voice_gain = VOICE_LUFS - measure_loudness(track.wav_path)
+    voice_gain = max(-20.0, min(20.0, voice_gain))
+    log.info("声のゲイン補正 %+.1f dB（-16 LUFS に揃える）", voice_gain)
+    bgm_gain = None
+    if bgm_path:
+        bgm_gain = max(-30.0, min(30.0, BGM_LUFS - measure_loudness(Path(bgm_path))))
+        log.info("BGM のゲイン補正 %+.1f dB（-20 LUFS に揃えてから volume_db を足す）", bgm_gain)
+    chain += audio_chain(cfg, bgm_idx, total, voice_gain, sfx=sfx_inputs, bgm_gain_db=bgm_gain)
+
+    final = outdir / filename
+    args += [
+        "-filter_complex", ";".join(chain),
+        "-map", vout, "-map", "[a]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-profile:v", "high", "-level", "4.1",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-movflags", "+faststart",
+        "-t", f"{total:.3f}", str(final),
+    ]
+    _run(args, "最終合成")
+    log.info("動画を出力しました: %s (%.1f分 / %dシーン)", final, total / 60, len(scenes))
+    return final
+
+
+def probe_duration(path: str | Path) -> float:
+    """動画の実尺（秒）. ffprobe が無ければ ffmpeg の出力から読み取る."""
+    exe = shutil.which("ffprobe")
+    if exe:
+        proc = subprocess.run(
+            [exe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True,
+        )
+        try:
+            return float(proc.stdout.strip())
+        except ValueError:
+            pass
+
+    # 同梱 ffmpeg には ffprobe が付いてこないので、-i の標準エラーから拾う
+    proc = subprocess.run([ensure_ffmpeg(), "-hide_banner", "-i", str(path)],
+                          capture_output=True, text=True)
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", proc.stderr)
+    if not match:
+        return 0.0
+    h, m, sec = match.groups()
+    return int(h) * 3600 + int(m) * 60 + float(sec)

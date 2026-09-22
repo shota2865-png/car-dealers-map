@@ -1,0 +1,38 @@
+# ============================================================
+#  目標 — 数字で追うための設定（ytecon goal が読む）
+# ============================================================
+# 目標は「30 日で 50 万再生」。収益化（YPP）に必要な数字も並べて追う。
+# 進捗は YouTube Analytics（無ければ Data API の公開統計）から取り、
+# 必要ペース・予測・打ち手を出す。数字は毎回 output/goal/ に残す。
+
+goal:
+  name: "30日で50万再生"
+  start: 2026-09-22          # 初回投稿日（火曜の本編を 19:00 に出す日）
+  days: 30
+  views: 500000
+  # 再生の内訳の想定。新規チャンネルは Shorts が発見面のほぼ全部なので、打ち手の計算に使う
+  mix: {shorts: 0.85, long: 0.15}
+  # 1 日の本数（pipeline.videos_per_day と shorts.per_video を写しておく）
+  per_day: {long: 1, shorts: 3}
+
+# YouTube パートナープログラムの条件（2025 年時点の一般的な要件。変わったらここを直す）
+ypp:
+  subscribers: 1000
+  watch_hours_12m: 4000        # 公開長尺の総再生時間（Shorts の再生時間は含まれない）
+  shorts_views_90d: 10000000   # 上の代わりに、直近 90 日の Shorts 再生 1,000 万でも可
+
+# 週ごとの関門。ここを下回ったら「同じことを続けない」（打ち手は docs/目標_月50万再生.md）
+gates:
+  - {day: 7,  views: 20000,  subscribers: 100}
+  - {day: 14, views: 80000,  subscribers: 300}
+  - {day: 21, views: 220000, subscribers: 600}
+  - {day: 30, views: 500000, subscribers: 1000}
+
+# 1 本ごとの合否ライン。下回った動画は打ち手の対象になる
+rules:
+  long:
+    avg_view_pct_min: 0.30     # 平均視聴率（尺に対する割合）。16 分なら 5 分見られているか
+    views_7d_min: 300          # 公開 7 日で最低これだけ回っていないと、サムネとタイトルを作り直す
+  shorts:
+    avg_view_pct_min: 0.75     # Shorts は最後まで見られるかがすべて
+    views_3d_min: 500

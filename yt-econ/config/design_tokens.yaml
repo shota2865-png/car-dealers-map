@@ -1,0 +1,164 @@
+# ============================================================
+#  デザイントークン — 画面に出るものの寸法・色・角丸・余白・動きの決まり
+#
+#  3つの公開デザインシステムを下敷きにしている:
+#    digital_agency : デジタル庁デザインシステム（日本語の文字階層・8px グリッド・
+#                     アクセシビリティ基準 4.5:1）
+#    apple          : Apple Human Interface Guidelines（ダークモードの階層色、
+#                     太さと大きさで序列を作る、余計な飾りを付けない）
+#    material3      : Google Material Design 3（色の「役割」、surface の段差、
+#                     形の尺度 4/8/12/16/28、強調イージング）
+#    hybrid         : 上の3つのいい所を1本に。**動画の既定はこれ**
+#
+#  使い方: config/channel.yaml の video.design でプリセットを選ぶ。
+#  値は UI 用の px を 1080p の動画（視聴距離が遠い）向けに約 2.5 倍している。
+#  ※ 各システムの色コードは公式トークンの近似値。厳密に合わせたい場合は差し替える
+# ============================================================
+
+common:
+  font_family: "Noto Sans JP"     # 3システムとも日本語は Noto Sans JP を推奨/許容
+  grid: 8                         # 8px グリッド（余白は 8 の倍数）
+  safe_margin: 96                 # 画面端からの余白（1920 の 5%）
+  line_height: 1.5                # 日本語本文の行送り（デジタル庁 1.5〜1.7）
+  min_contrast: 4.5               # 文字と背景のコントラスト比（WCAG AA）
+
+presets:
+  hybrid:
+    label: "既定（3システムの合成）"
+    colors:
+      bg: "#0F1218"               # Apple の黒に近い深い紺。純黒より粒子感が出にくい
+      surface: "#1A1F2B"          # M3 surface-container
+      surface_high: "#252C3B"     # M3 surface-container-high（カードの上のカード）
+      outline: "#3A4459"          # M3 outline-variant
+      text: "#F2F5FA"             # Apple label（primary）
+      text_secondary: "#AEB6C4"   # Apple secondaryLabel 相当
+      muted: "#8B94A6"            # Apple tertiaryLabel 相当
+      accent: "#4CC2FF"           # primary。参考チャンネル実測の青に寄せる
+      accent2: "#FFD60A"          # Apple systemYellow（注目・オチ）
+      positive: "#30D158"         # Apple systemGreen
+      negative: "#FF453A"         # Apple systemRed
+      warning: "#FF9F0A"          # Apple systemOrange
+    type:                         # 1080p 用の px。役割で選ぶ（数値を直接書かない）
+      display_xl: 150
+      display_l: 118
+      display_m: 96
+      display_s: 84
+      headline_l: 88
+      headline_m: 76
+      title: 62
+      body_l: 50
+      body_m: 44
+      label: 36
+      label_s: 30
+      numeral_xl: 200
+      subtitle: 110
+    radius: {s: 12, m: 16, l: 28}   # M3 shape: small/medium/extra-large
+    stroke: {card: 3, text_outline: 5}
+    motion:
+      fade_ms: 300                # Apple の標準的なトランジション
+      easing: "ease_in_out"
+
+  digital_agency:
+    label: "デジタル庁デザインシステム"
+    colors:
+      bg: "#1A1A1C"               # Grey-900（ダーク背景）
+      surface: "#2B2B2E"
+      surface_high: "#414143"     # Grey-800
+      outline: "#626264"          # Grey-700
+      text: "#FFFFFF"
+      text_secondary: "#D8D8DB"
+      muted: "#949497"            # Grey-500
+      accent: "#7096F8"           # Blue-400（ダーク上で 4.5:1 を満たす青）
+      accent2: "#FBD000"          # Yellow-500（フォーカスリングの黄）
+      positive: "#71C598"         # Green-400
+      negative: "#FE3939"         # Red-500
+      warning: "#FFB84C"          # Orange-400
+    type:                         # Display 64/57/48 → Std 45/36/32/28/26/24/22/20/18/17/16 を約 2.4 倍
+      display_xl: 154
+      display_l: 137
+      display_m: 115
+      display_s: 108
+      headline_l: 86
+      headline_m: 77
+      title: 67
+      body_l: 53
+      body_m: 48
+      label: 41
+      label_s: 38
+      numeral_xl: 190
+      subtitle: 112
+    radius: {s: 8, m: 12, l: 16}
+    stroke: {card: 2, text_outline: 4}
+    motion:
+      fade_ms: 200
+      easing: "ease_out"
+
+  apple:
+    label: "Apple Human Interface Guidelines（ダーク）"
+    colors:
+      bg: "#000000"               # systemBackground（dark）
+      surface: "#1C1C1E"          # secondarySystemBackground
+      surface_high: "#2C2C2E"     # tertiarySystemBackground
+      outline: "#38383A"          # separator
+      text: "#FFFFFF"             # label
+      text_secondary: "#EBEBF5"   # secondaryLabel（本来は 60% 透過）
+      muted: "#8E8E93"            # systemGray
+      accent: "#0A84FF"           # systemBlue（dark）
+      accent2: "#FFD60A"          # systemYellow
+      positive: "#30D158"         # systemGreen
+      negative: "#FF453A"         # systemRed
+      warning: "#FF9F0A"          # systemOrange
+    type:                         # Large Title 34 / Title1 28 / Title2 22 / Title3 20 / Body 17 / Footnote 13 を約 4 倍
+      display_xl: 160
+      display_l: 136
+      display_m: 112
+      display_s: 96
+      headline_l: 88
+      headline_m: 80
+      title: 68
+      body_l: 56
+      body_m: 48
+      label: 40
+      label_s: 34
+      numeral_xl: 210
+      subtitle: 112
+    radius: {s: 12, m: 20, l: 28}   # 連続角丸（大きめ）
+    stroke: {card: 0, text_outline: 4}
+    motion:
+      fade_ms: 300
+      easing: "ease_in_out"
+
+  material3:
+    label: "Material Design 3（ダーク baseline）"
+    colors:
+      bg: "#141218"               # surface
+      surface: "#211F26"          # surface-container
+      surface_high: "#2B2930"     # surface-container-high
+      outline: "#49454F"          # outline-variant
+      text: "#E6E0E9"             # on-surface
+      text_secondary: "#CAC4D0"   # on-surface-variant
+      muted: "#938F99"            # outline
+      accent: "#D0BCFF"           # primary
+      accent2: "#EFB8C8"          # tertiary
+      positive: "#B7E4C7"
+      negative: "#F2B8B5"         # error
+      warning: "#FFD8A8"
+    type:                         # Display 57/45/36, Headline 32/28/24, Title 22, Body 16, Label 14/12/11 を約 2.6 倍
+      display_xl: 148
+      display_l: 117
+      display_m: 94
+      display_s: 83
+      headline_l: 73
+      headline_m: 62
+      title: 57
+      body_l: 42
+      body_m: 36
+      label: 31
+      label_s: 29
+      numeral_xl: 190
+      subtitle: 108
+    radius: {s: 8, m: 12, l: 28}   # shape scale: small 8 / medium 12 / extra-large 28
+    stroke: {card: 0, text_outline: 4}
+    motion:
+      fade_ms: 400                # emphasized（medium 250〜400ms）
+      easing: "emphasized"

@@ -1,0 +1,47 @@
+# 生成物（動画・音声・画像は重いので絶対にコミットしない）
+output/*
+!output/demo/
+!output/demo2/
+capcut_drafts/
+logs/
+*.mp4
+*.wav
+*.mp3
+
+# config/style.yaml は ytecon learn の成果物だが、
+# チャンネルの文体そのものなのでコミットして構わない（鍵を含まない）
+
+# 鍵
+.env
+token.json
+client_secret*.json
+
+# フォントは Noto Sans JP（SIL Open Font License 1.1）なので同梱してよい。
+# 毎回 npm を叩かせるより、リポジトリに入っているほうが確実に動く。
+
+# BGM（著作権の都合で各自用意）
+assets/bgm/*
+!assets/bgm/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+yt-econ/colab/ytecon_colab.zip
+
+# 立ち絵（配布素材の再配布はしない。各自で assets/character/ に置く）
+assets/character/*/
+*.psd
+# 動く背景・BGM の素材（Artlist 等。各自で置く）
+assets/footage/*
+!assets/footage/.gitkeep
+assets/bgm/*
+!assets/bgm/.gitkeep
+
+# 素材の実体（Artlist / Mixkit から各自で集める）
+assets/footage/*/
+assets/sfx/*
+!assets/sfx/.gitkeep
