@@ -42,6 +42,16 @@ def available() -> bool:
     return shutil.which("claude") is not None
 
 
+FALLBACK_MODEL = "sonnet"
+_UNAVAILABLE_HINTS = ("not available", "not_found", "does not exist", "no access", "not supported on your plan",
+                      "permission", "invalid model", "unknown model", "model_not_found", "利用できません")
+
+
+def _model_unavailable(text: str) -> bool:
+    t = (text or "").lower()
+    return "model" in t and any(h in t for h in _UNAVAILABLE_HINTS)
+
+
 def _run(prompt: str, system: str, model: str, timeout: int) -> str:
     exe = shutil.which("claude")
     if not exe:
@@ -63,6 +73,11 @@ def _run(prompt: str, system: str, model: str, timeout: int) -> str:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout).strip()[-600:]
+        # プランで使えないモデル（Pro で opus など）なら、一段下のモデルで自動的にやり直す
+        if _model_unavailable(tail) and model != FALLBACK_MODEL:
+            log.warning("モデル %s がこのプランでは使えないようなので %s で続けます: %s",
+                        model, FALLBACK_MODEL, tail[-160:])
+            return _run(prompt, system, FALLBACK_MODEL, timeout)
         raise ClaudeCodeError(f"claude -p が失敗しました (exit {proc.returncode})\n{tail}")
 
     try:
@@ -73,7 +88,12 @@ def _run(prompt: str, system: str, model: str, timeout: int) -> str:
         ) from exc
 
     if payload.get("is_error"):
-        raise ClaudeCodeError(f"claude がエラーを返しました: {payload.get('result')}")
+        msg = str(payload.get("result", ""))
+        if _model_unavailable(msg) and model != FALLBACK_MODEL:
+            log.warning("モデル %s がこのプランでは使えないようなので %s で続けます: %s",
+                        model, FALLBACK_MODEL, msg[-160:])
+            return _run(prompt, system, FALLBACK_MODEL, timeout)
+        raise ClaudeCodeError(f"claude がエラーを返しました: {msg}")
 
     usage = payload.get("usage", {})
     log.debug("claude -p: in=%s out=%s cache_read=%s",
