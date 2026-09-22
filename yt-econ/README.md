@@ -361,6 +361,11 @@ python -m ytecon shorts <slug> -n 3   # Shorts を 3 本書き出す（--upload 
 自動で使われ、無ければ従来どおり自動生成します。投稿済みの本編に後から付けるときは
 `python -m ytecon thumbnail 画像 --date 2026-09-23` で YouTube 側も差し替わります。
 
+完成した本編は `yt_<番号 3 桁>_<公開日 yyyymmdd>`（例 `yt_001_20260922`）の名前で `output/finals/` にも残ります。
+CapCut などで手で仕上げた mp4 は同じ名前にして `python -m ytecon publish-file yt_001_20260922.mp4 --privacy private`
+で非公開で上げ、`python -m ytecon visibility yt_001_20260922 public` で公開します（GitHub Actions からも同じことができます。
+`docs/自動投稿の始め方.md` の 8 節）。メタデータは `finals/<名前>.json`、サムネは `thumbnails/<名前>.jpg`。
+
 `ytecon run` は `shorts.per_video`（既定 3）ぶんの Shorts を本編のあとに自動で作って予約します。
 Shorts は本編の切り出しではなく、本編の材料から LLM が **起・承・転・結** の 45〜55 秒の掛け合いを書き直し、
 音声も新しく合成します（`shorts.mode: story`）。最後は必ず「続きは本編で」の誘導（`shorts.cta`）で終わり、

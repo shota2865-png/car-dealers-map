@@ -171,6 +171,7 @@ jobs:
           name: ytecon-${{ github.run_id }}
           retention-days: 7
           path: |
+            yt-econ/output/finals/*
             yt-econ/output/**/video.mp4
             yt-econ/output/**/script.json
             yt-econ/output/**/story.json

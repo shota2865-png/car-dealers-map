@@ -1,0 +1,111 @@
+name: 完成した本編を投稿（手で仕上げた mp4）
+
+# ------------------------------------------------------------
+# CapCut などで仕上げた完成ファイル（yt_001_20260922.mp4）を YouTube に上げる。
+#   1. mp4 を GitHub の Releases（タグ finals）に同じ名前で添付する（2GB まで）
+#      または直リンク URL を source に入れる
+#   2. Actions → このワークフロー → Run workflow
+#        action=upload   : 非公開（privacy）で上げる。サムネは thumbnails/<名前>.jpg、
+#                          メタデータは finals/<名前>.json
+#        action=publish  : 上げた動画を公開にする（publish_at を入れると予約公開）
+# 秘密情報は daily-upload.yml と同じ（YOUTUBE_*）
+# ------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "upload = 上げる（非公開） / publish = 公開にする"
+        type: choice
+        options: [upload, publish]
+        default: upload
+      name:
+        description: "完成品の名前（yt_001_20260922）"
+        required: true
+        default: "yt_001_20260922"
+      source:
+        description: "mp4 の直リンク URL（空なら Release「finals」の <name>.mp4 を使う）"
+        default: ""
+      privacy:
+        description: "upload のときの公開設定"
+        type: choice
+        options: [private, unlisted, public]
+        default: private
+      publish_at:
+        description: "publish のときの予約日時（JST、例 2026-09-23 19:00。空なら今すぐ公開）"
+        default: ""
+
+concurrency:
+  group: ytecon-daily
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: src
+  YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+  YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+  YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: yt-econ
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: yt-econ/requirements.txt
+
+      - name: Python 依存を入れる
+        run: pip install -r requirements.txt
+
+      # 投稿済みの動画 ID・通し番号を持ち越す（daily-upload.yml と同じキャッシュ）
+      - name: 前回までの状態を復元
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            yt-econ/output/state.sqlite3
+            yt-econ/output/goal
+          key: ytecon-state-${{ github.run_id }}
+          restore-keys: ytecon-state-
+
+      - name: 完成ファイルを取ってくる（Release「finals」）
+        if: inputs.action == 'upload' && inputs.source == ''
+        run: |
+          mkdir -p output/finals
+          gh release download finals --repo "${{ github.repository }}" \
+            --pattern "${{ inputs.name }}.mp4" --dir output/finals --clobber
+          ls -la output/finals
+
+      - name: 上げる
+        if: inputs.action == 'upload'
+        run: |
+          SRC="${{ inputs.source }}"
+          if [ -z "$SRC" ]; then SRC="output/finals/${{ inputs.name }}.mp4"; fi
+          python -m ytecon publish-file "$SRC" --name "${{ inputs.name }}" --privacy "${{ inputs.privacy }}" \
+            | tee publish-report.txt
+          { echo '## 投稿'; echo '```'; cat publish-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 公開にする
+        if: inputs.action == 'publish'
+        run: |
+          python -m ytecon visibility "${{ inputs.name }}" public \
+            ${{ inputs.publish_at != '' && format('--publish-at "{0}"', inputs.publish_at) || '' }} \
+            | tee publish-report.txt
+          { echo '## 公開'; echo '```'; cat publish-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 状態を保存
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            yt-econ/output/state.sqlite3
+            yt-econ/output/goal
+          key: ytecon-state-${{ github.run_id }}

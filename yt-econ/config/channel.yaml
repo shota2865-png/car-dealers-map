@@ -345,6 +345,9 @@ upload:
   # ファイル名を公開日（2026-09-23.jpg / 20260923.png）か slug にしておくと、その本編に自動で使われ、
   # 無ければ従来どおり自動生成する。あとから差し替えるときは `ytecon thumbnail 画像 --date 2026-09-23`
   thumbnail_dir: "thumbnails"
+  # 完成した本編は output/finals/yt_<番号 3 桁>_<公開日 yyyymmdd>.mp4（サムネは .jpg）にも残す。
+  # 番号は 001 から昇順。手で仕上げた動画の記録（json）は finals/ に置く（ytecon publish-file）
+  finals_dir: "finals"
   # JST での投稿時刻。1 日 1 本、19:00。アウトロの「毎日19:00に更新」もここから出る
   publish_times_jst: ["19:00"]
   category_id: "25"      # News & Politics（経済解説はここか 27:Education）

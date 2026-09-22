@@ -99,12 +99,16 @@ def _date_keys(day: _dt.date | None) -> list[str]:
     return [day.isoformat(), day.strftime("%Y%m%d"), day.strftime("%m%d"), day.strftime("%m-%d")]
 
 
-def pick_manual(cfg: Config, slug: str = "", day: _dt.date | None = None) -> Path | None:
-    """thumbnails/ から、その本編用の画像を探す。優先: slug 一致 → 公開日一致（YYYY-MM-DD / YYYYMMDD / MMDD）."""
+def pick_manual(cfg: Config, slug: str = "", day: _dt.date | None = None,
+                extra: list[str] | None = None) -> Path | None:
+    """thumbnails/ から、その本編用の画像を探す。
+
+    優先: 完成品の名前（yt_001_20260922）→ slug → 公開日（YYYY-MM-DD / YYYYMMDD / MMDD）.
+    """
     d = manual_dir(cfg)
     if not d.is_dir():
         return None
-    keys = ([slug] if slug else []) + _date_keys(day)
+    keys = [k for k in (extra or []) if k] + ([slug] if slug else []) + _date_keys(day)
     files = [p for p in sorted(d.iterdir()) if p.suffix.lower() in _EXTS and not p.name.startswith(".")]
     for key in keys:
         for p in files:

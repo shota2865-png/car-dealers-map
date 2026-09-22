@@ -144,8 +144,15 @@ class Pipeline:
         if thumb_copy.get("main"):
             s.thumbnail_copy = thumb_copy
             s.save(art.script)
-        # 手で用意したサムネ（thumbnails/<公開日>.jpg か <slug>.jpg）があればそれを使い、無ければ自動生成
-        manual = thumbnail.pick_manual(self.cfg, slug, self._publish_day(slot_index))
+        # 完成品の名前（yt_001_20260922）。番号は 001 から昇順、日付は公開日
+        from . import finals
+        day = self._publish_day(slot_index)
+        final_name = (self.store.get_video(slug).stage or {}).get("final_name") if self.store.get_video(slug) else None
+        if not final_name:
+            final_name = finals.assign(self.cfg, self.store, day)
+            self.store.update_video(slug, stage={"final_name": final_name})
+        # 手で用意したサムネ（thumbnails/yt_001_20260922.jpg / <公開日>.jpg / <slug>.jpg）があればそれを使い、無ければ自動生成
+        manual = thumbnail.pick_manual(self.cfg, slug, day, extra=[final_name])
         if manual is not None:
             log.info("[%s] 手で用意したサムネイルを使います: %s", slug, manual.name)
             thumbnail.prepare(manual, art.thumb)
@@ -169,6 +176,9 @@ class Pipeline:
             youtube_id=result["video_id"], publish_at=result["publish_at"],
             stage={"url": result["url"]},
         )
+        kept = finals.keep(self.cfg, final_name, art.video, art.thumb)
+        log.info("[%s] 完成品を残しました: %s", slug, kept["video"])
+        result.update({"final_name": final_name, "final_video": kept["video"]})
         return result
 
     def _publish_day(self, slot_index: int = 0) -> dt.date:

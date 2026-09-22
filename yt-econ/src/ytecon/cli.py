@@ -301,6 +301,38 @@ def cmd_thumbnail(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_publish_file(args: argparse.Namespace) -> int:
+    """手で仕上げた完成ファイル（yt_001_20260922.mp4 など）を投稿する。既定は非公開."""
+    from .config import load_config
+    from .state import Store
+    from . import finals
+
+    cfg = load_config(args.config)
+    store = Store(cfg.workdir / "state.sqlite3")
+    name = args.name or Path(args.source).stem
+    result = finals.publish_file(
+        cfg, store, args.source, name, privacy=args.privacy,
+        publish_at=finals.parse_jst(args.publish_at), title=args.title,
+        thumbnail=args.thumbnail, dry_run=args.dry_run,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_visibility(args: argparse.Namespace) -> int:
+    """非公開で上げた動画を公開（または予約公開）にする."""
+    from .config import load_config
+    from .state import Store
+    from . import finals
+
+    cfg = load_config(args.config)
+    store = Store(cfg.workdir / "state.sqlite3")
+    print(json.dumps(finals.set_visibility(cfg, store, args.target, args.privacy,
+                                           publish_at=finals.parse_jst(args.publish_at)),
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_revive(args: argparse.Namespace) -> int:
     """寝かせた動画のテーマが日本で話題化していないか照合する."""
     from .config import load_config
@@ -508,6 +540,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--video-id", help="YouTube の動画 ID を直接指定")
     p.add_argument("--no-upload", action="store_true", help="thumbnails/ に置くだけ（YouTube には触らない）")
     p.set_defaults(func=cmd_thumbnail)
+
+    p = sub.add_parser("publish-file", help="手で仕上げた完成ファイル（yt_001_20260922.mp4）を投稿する。既定は非公開")
+    p.add_argument("source", help="mp4 のパスか URL")
+    p.add_argument("--name", help="yt_001_20260922 の形の名前（省略時はファイル名）。finals/<名前>.json のメタデータを使う")
+    p.add_argument("--privacy", default="private", choices=["private", "unlisted", "public"])
+    p.add_argument("--publish-at", help="予約公開の日時（JST、例 2026-09-23 19:00）。--privacy public のときだけ")
+    p.add_argument("--title", help="タイトルを上書き")
+    p.add_argument("--thumbnail", help="サムネ画像（省略時は thumbnails/<名前>.jpg）")
+    p.add_argument("--dry-run", action="store_true", help="アップロードせず、何を上げるかだけ表示")
+    p.set_defaults(func=cmd_publish_file)
+
+    p = sub.add_parser("visibility", help="投稿済みの動画を公開 / 非公開 / 限定公開にする")
+    p.add_argument("target", help="yt_001_20260922 か YouTube の動画 ID")
+    p.add_argument("privacy", choices=["public", "private", "unlisted"])
+    p.add_argument("--publish-at", help="この日時に公開予約（JST、例 2026-09-23 19:00）")
+    p.set_defaults(func=cmd_visibility)
 
     p = sub.add_parser("goal", help="目標（config/goals.yaml）への進捗と打ち手")
     p.add_argument("--offline", action="store_true", help="API を叩かず、目標の分解だけ表示")

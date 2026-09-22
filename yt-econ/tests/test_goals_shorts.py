@@ -320,3 +320,39 @@ def test_shorts_go_out_at_noon_evening_and_midnight(cfg):
     assert [g.strftime("%m-%d %H:%M") for g in got] == ["09-23 18:00", "09-24 00:00", "09-24 12:00"]
     long_at = next_publish_time(cfg, 0, base=base).astimezone(jst)
     assert long_at.strftime("%m-%d %H:%M") == "09-23 19:00"
+
+
+# ----------------------------------------------------------------------
+# 完成品の名前（yt_001_20260922）と手で仕上げた動画の投稿
+# ----------------------------------------------------------------------
+def test_final_names_count_up_from_001_and_follow_the_publish_day(cfg, tmp_path, monkeypatch):
+    from ytecon import finals
+    from ytecon.state import Store
+    monkeypatch.setattr(finals, "finals_dir", lambda _cfg: tmp_path / "finals")
+    monkeypatch.setattr(finals, "output_dir", lambda _cfg: tmp_path / "out")
+    (tmp_path / "finals").mkdir(); (tmp_path / "out").mkdir()
+    store = Store(tmp_path / "s.sqlite3")
+    assert finals.name_for(1, dt.date(2026, 9, 22)) == "yt_001_20260922"
+    assert finals.parse_name("yt_012_20261001.mp4") == (12, dt.date(2026, 10, 1))
+    assert finals.parse_name("video.mp4") is None
+    assert finals.assign(cfg, store, dt.date(2026, 9, 23)) == "yt_001_20260923"
+    (tmp_path / "finals" / "yt_001_20260922.json").write_text("{}")          # 手で仕上げた 1 本目の記録
+    store.create_video("s", None, "t"); store.update_video("s", stage={"final_name": "yt_002_20260923"})
+    assert finals.assign(cfg, store, dt.date(2026, 9, 24)) == "yt_003_20260924"   # 両方を見て次の番号
+    kept = finals.keep(cfg, "yt_003_20260924", Path(__file__))
+    assert Path(kept["video"]).name == "yt_003_20260924.mp4"
+
+
+def test_manual_final_metadata_and_thumbnail_are_found_by_name(cfg, tmp_path, monkeypatch):
+    from PIL import Image
+    from ytecon import finals, thumbnail
+    meta = finals.load_meta(cfg, "yt_001_20260922")                        # リポジトリに入れた記録
+    assert meta is not None and meta.title.startswith("なぜ給料が上がっても")
+    assert "もくじ" not in meta.description                                 # CapCut でカット済みなのでタイムコードは無い
+    assert "VOICEVOX" in meta.description and meta.tags
+    monkeypatch.setattr(thumbnail, "manual_dir", lambda _cfg: tmp_path)
+    Image.new("RGB", (1280, 720), "red").save(tmp_path / "yt_001_20260922.png")
+    assert finals.find_thumbnail(cfg, "yt_001_20260922").name == "yt_001_20260922.png"
+    assert thumbnail.pick_manual(cfg, "slug", dt.date(2026, 9, 22), extra=["yt_001_20260922"]).name == "yt_001_20260922.png"
+    assert finals.parse_jst("2026-09-23 19:00").hour == 19
+    assert finals.parse_jst("").__class__ is type(None)
