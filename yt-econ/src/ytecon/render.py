@@ -283,8 +283,13 @@ def render(
     scenes: list[Scene],
     subtitle_ass: Path,
     outdir: str | Path,
+    overlays: list[tuple[Path, str]] | None = None,
+    filename: str = "video.mp4",
 ) -> Path:
-    """完成した mp4 のパスを返す."""
+    """完成した mp4 のパスを返す.
+
+    overlays は全編に重ねる透過 PNG と位置（ffmpeg overlay の "x:y"）。Shorts の上部見出しに使う。
+    """
     from . import bgm as bgm_mod
     from . import character
 
@@ -356,6 +361,14 @@ def render(
         chain.append(f"{vout}[ch{n}]overlay={pos}:format=auto:eof_action=repeat[v{n + 1}]")
         vout = f"[v{n + 1}]"
 
+    for m, (png, pos) in enumerate(overlays or []):
+        idx = len(inputs)
+        inputs.append(png)
+        args += ["-loop", "1", "-i", str(png)]
+        chain.append(f"[{idx}:v]format=rgba[ov{m}]")
+        chain.append(f"{vout}[ov{m}]overlay={pos}:format=auto:shortest=1[vo{m}]")
+        vout = f"[vo{m}]"
+
     voice_gain = VOICE_LUFS - measure_loudness(track.wav_path)
     voice_gain = max(-20.0, min(20.0, voice_gain))
     log.info("声のゲイン補正 %+.1f dB（-16 LUFS に揃える）", voice_gain)
@@ -365,7 +378,7 @@ def render(
         log.info("BGM のゲイン補正 %+.1f dB（-20 LUFS に揃えてから volume_db を足す）", bgm_gain)
     chain += audio_chain(cfg, bgm_idx, total, voice_gain, sfx=sfx_inputs, bgm_gain_db=bgm_gain)
 
-    final = outdir / "video.mp4"
+    final = outdir / filename
     args += [
         "-filter_complex", ";".join(chain),
         "-map", vout, "-map", "[a]",

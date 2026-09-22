@@ -163,6 +163,42 @@ class Pipeline:
         )
         return result
 
+    # --- Shorts -------------------------------------------------------------
+    def stage_shorts(self, slug: str, s: script_mod.VideoScript, track: tts.VoiceTrack,
+                     parent_url: str = "", upload: bool = True) -> list[dict[str, Any]]:
+        """本編から Shorts を切り出し、（upload なら）Shorts 用の時刻で予約投稿する."""
+        from . import shorts as shorts_mod
+        art = self.art(slug)
+        made = shorts_mod.build_all(self.cfg, s, track, art.dir, parent_url=parent_url)
+        out = []
+        for k, r in enumerate(made):
+            if upload:
+                try:
+                    out.append(self.upload_short(slug, r, slot_index=k))
+                except Exception as exc:          # Shorts の失敗で本編の結果は壊さない
+                    log.error("Shorts %d の投稿に失敗: %s", k + 1, exc)
+                    out.append({"video": r["video"], "error": str(exc)})
+            else:
+                out.append({"video": r["video"], "hook": r["window"].hook})
+        return out
+
+    def upload_short(self, parent_slug: str, made: dict[str, Any], slot_index: int = 0) -> dict[str, Any]:
+        """Shorts 1 本を予約投稿し、DB に kind=short で記録する."""
+        parent = self.store.get_video(parent_slug)
+        n = int(Path(made["dir"]).name.split("_")[-1])
+        slug = f"{parent_slug}-short{n}"
+        if not self.store.get_video(slug):
+            self.store.create_video(slug, parent.topic_id if parent else None, made["meta"].title)
+        self.store.update_video(slug, stage={"kind": "short", "parent": parent_slug, "hook": made["window"].hook})
+        times = self.cfg.get("shorts.publish_times_jst") or None
+        result = youtube.publish(
+            self.cfg, self.store, made["video"], made["meta"], thumbnail=None, srt=None,
+            slot_index=slot_index, publish_times=times, playlist=False,
+        )
+        self.store.update_video(slug, status="uploaded", youtube_id=result["video_id"],
+                                publish_at=result["publish_at"], stage={"url": result["url"]})
+        return {"slug": slug, **result}
+
     # --- 1本ぶんの通し ---------------------------------------------------
     def produce(self, topic: topics_mod.Topic, slot_index: int = 0,
                 upload: bool = True) -> dict[str, Any]:
@@ -186,6 +222,9 @@ class Pipeline:
                                                  horizon=topic.horizon))
             else:
                 log.info("[%s] アップロードはスキップしました", slug)
+            if int(self.cfg.get("shorts.per_video", 0)) > 0:
+                result["shorts"] = self.stage_shorts(slug, s, track, parent_url=result.get("url", ""),
+                                                     upload=upload and str(self.cfg.get("render.backend")) == "ffmpeg")
             return result
         except Exception as exc:
             self.store.update_video(slug, status="failed",

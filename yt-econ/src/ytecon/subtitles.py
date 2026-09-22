@@ -510,19 +510,21 @@ def write_ass(cfg: Config, cues: list[Cue], out: str | Path,
 
     # 字幕は画面中央。キャラが字幕帯の上にいる（full_width）なら左右 120px だけ空ける
     margin_r = 120 if cfg.get("visuals.subtitle.full_width", False) else max(120, int(reserve_right))
+    # 下端からの距離。縦画面（Shorts）は立ち絵が下の帯にいるので、その上に出す
+    sub_margin = int(cfg.get("visuals.subtitle.margin_v", 0) or 72)
     styles = [
         # 字幕。画面下（alignment 2 = 下中央）
         _style_line("Default", family, base_size, colors["text"], stroke,
-                    outline, 2, 72, margin_r=margin_r),
+                    outline, 2, sub_margin, margin_r=margin_r),
     ]
     # 掛け合い: 話者ごとに縁の色を変える（ずんだもん動画の慣例。文字色は白のまま）
     for c in (cfg.get("cast.characters", []) or []):
         if c.get("key"):
             styles.append(_style_line(f"S_{c['key']}", family, base_size, colors["text"],
-                                      str(c.get("subtitle_outline") or stroke), outline, 2, 72, margin_r=margin_r))
+                                      str(c.get("subtitle_outline") or stroke), outline, 2, sub_margin,
+                                      margin_r=margin_r))
     # テロップは字幕のすぐ上（下三分の一）に置く。
     # 画面上部は背景側の見出しが使うので、そこへ出すと必ずぶつかる。
-    sub_margin = 72
     telop_margin = sub_margin + base_size + 44
     for name, spec in types.items():
         color = colors.get(spec.get("color", "text"), colors["text"])

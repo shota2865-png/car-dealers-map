@@ -144,11 +144,21 @@ def _voice_credit(cfg: Config) -> str:
     provider = str(cfg.get("tts.provider", "")).lower()
     if provider != "voicevox":
         return "この動画のナレーションは音声合成を使用しています。"
-    speaker_id = int(cfg.get("tts.voicevox.speaker", 3))
-    name = _VOICEVOX_SPEAKERS.get(speaker_id, f"話者ID {speaker_id}")
+    # 掛け合いなら出演者全員の話者を並べる（VOICEVOX の規約はキャラクターごとの表記）
+    ids: list[int] = []
+    for c in (cfg.get("cast.characters", []) or []) if str(cfg.get("cast.mode", "solo")) == "dialogue" else []:
+        if c.get("voicevox_speaker") is not None:
+            ids.append(int(c["voicevox_speaker"]))
+    if not ids:
+        ids = [int(cfg.get("tts.voicevox.speaker", 3))]
+    names = []
+    for speaker_id in ids:
+        name = _VOICEVOX_SPEAKERS.get(speaker_id, f"話者ID {speaker_id}")
+        if name not in names:
+            names.append(name)
     return (
         "この動画のナレーションは音声合成ソフト VOICEVOX を使用しています。\n"
-        f"VOICEVOX：{name}\n"
+        + "\n".join(f"VOICEVOX：{n}" for n in names) + "\n"
         "https://voicevox.hiroshiba.jp/"
     )
 

@@ -327,6 +327,70 @@ def cmd_portfolio(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_goal(args: argparse.Namespace) -> int:
+    from .config import load_config
+    from . import goals
+    from .state import Store
+
+    cfg = load_config(args.config)
+    goal = goals.load_goal(cfg)
+    if args.offline:
+        print(goals.plan_text(goal))
+        return 0
+    store = Store(cfg.workdir / "state.sqlite3")
+    try:
+        p = goals.fetch_progress(cfg, store, goal)
+    except Exception as exc:
+        print(goals.plan_text(goal))
+        print(f"\n数字が取れませんでした（{str(exc).splitlines()[0][:160]}）。"
+              "\nYOUTUBE_* を設定し、scripts/auth_youtube.py を再実行すると Analytics まで取れます。")
+        return 1
+    goals.daily_from_snapshots(cfg, p)
+    pc = goals.pace(goal, p)
+    acts = goals.recommend(goal, p, pc)
+    goals.append_snapshot(cfg, p, pc)
+    if args.json:
+        print(json.dumps({"progress": p.to_dict(), "pace": pc, "actions": acts}, ensure_ascii=False, indent=2))
+    else:
+        print(goals.report(goal, p, pc, acts))
+    return 0
+
+
+def cmd_shorts(args: argparse.Namespace) -> int:
+    """本編の成果物フォルダ（script.json / narration.json / narration.wav）から Shorts を作る."""
+    from pathlib import Path as _P
+    from .config import load_config
+    from .script import VideoScript
+    from .tts import VoiceTrack
+    from . import shorts
+
+    cfg = load_config(args.config)
+    d = _P(args.target)
+    if not d.is_dir():
+        d = cfg.workdir / args.target
+    if not (d / "script.json").exists():
+        print(f"{d} に script.json がありません")
+        return 1
+    s = VideoScript.load(d / "script.json")
+    t = VoiceTrack.load_manifest(d / "narration.json")
+    if not _P(t.wav_path).exists():
+        t.wav_path = d / "narration.wav"
+    if args.list:
+        for w in shorts.candidates(cfg, s, t, n=args.number):
+            print(f"{w.start:7.1f}s  {w.duration:4.0f}s  {w.score:5.1f}  {w.hook}")
+            print(f"           {w.lines[0].text} … {w.lines[-1].text}")
+        return 0
+    results = shorts.build_all(cfg, s, t, d, n=args.number, parent_url=args.parent_url or "")
+    for r in results:
+        print(f"[完了] {r['video']}  ({r['window'].duration:.0f}s / {r['window'].hook})")
+    if args.upload and results:
+        from .pipeline import Pipeline
+        pipe = Pipeline(cfg)
+        for k, r in enumerate(results):
+            print(json.dumps(pipe.upload_short(d.name, r, slot_index=k), ensure_ascii=False))
+    return 0 if results else 1
+
+
 def cmd_speakers(args: argparse.Namespace) -> int:
     from .config import load_config
     from .tts import VoiceVox
@@ -412,6 +476,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("speakers", help="VOICEVOX の話者一覧")
     p.set_defaults(func=cmd_speakers)
+
+    p = sub.add_parser("goal", help="目標（config/goals.yaml）への進捗と打ち手")
+    p.add_argument("--offline", action="store_true", help="API を叩かず、目標の分解だけ表示")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_goal)
+
+    p = sub.add_parser("shorts", help="本編の成果物から Shorts（縦 9:16）を切り出す")
+    p.add_argument("target", help="output/<slug> か、script.json のあるフォルダ")
+    p.add_argument("-n", "--number", type=int, default=None, help="本数（既定 shorts.per_video）")
+    p.add_argument("--list", action="store_true", help="候補区間を表示するだけ")
+    p.add_argument("--upload", action="store_true", help="作った Shorts を予約投稿する")
+    p.add_argument("--parent-url", help="概要欄に入れる本編の URL")
+    p.set_defaults(func=cmd_shorts)
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)

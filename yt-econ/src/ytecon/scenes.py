@@ -351,7 +351,9 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     """全ブロックをシーンに割り、画像を描いて、時間順の Scene 列を返す."""
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    assets.apply_layout(cfg)            # 横画面 / 縦画面（Shorts）で上下の帯を切り替える
     painter = _Painter(cfg, outdir)
+    plain = bool(cfg.get("layout.no_title_outro", False))   # Shorts: タイトルカードとアウトロは出さない
 
     target = float(cfg.get("visuals.scene_seconds", 8.0))
     lo = float(cfg.get("visuals.scene_seconds_min", 4.0))
@@ -396,7 +398,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
     hook = chunk_lines(lines_of("hook"), target, lo, hi, pivots)
     for j, ch in enumerate(hook):
         s, e = _span(ch)
-        if j == 0:
+        if j == 0 and not plain:
             scenes.append(painter.title(script.topic_title, s, e))
         else:
             # サムネ文言だけのキーワードカード（「痛みは毎週」のような短句）は文脈が無いと謎になるので出さない
@@ -473,7 +475,7 @@ def plan_and_render(cfg: Config, script: VideoScript, track: VoiceTrack,
             items = [c.text for c in cards][:3] or \
                     [plain_heading(x.rstrip("。")) for x in split_sentences(script.closing)][1:4]
             _extend(scenes, painter.bullets("今日のまとめ", items, s, e, ch))
-        elif j == len(closing) - 1:
+        elif j == len(closing) - 1 and not plain:
             scenes.append(painter.outro(s, e))
         else:
             _extend(scenes, block_card("closing", j - 1, ch))

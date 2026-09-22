@@ -111,11 +111,15 @@ class QuotaGuard:
 
 # ----------------------------------------------------------------------
 def next_publish_time(cfg: Config, slot_index: int,
-                      base: dt.datetime | None = None) -> dt.datetime:
-    """config の publish_times_jst から次の投稿時刻(UTC)を決める."""
+                      base: dt.datetime | None = None,
+                      times: list[str] | None = None) -> dt.datetime:
+    """config の publish_times_jst から次の投稿時刻(UTC)を決める.
+
+    times を渡すとその時刻表（Shorts 用など）を使う。
+    """
     jst = dt.timezone(dt.timedelta(hours=9))
     now = (base or dt.datetime.now(jst)).astimezone(jst)
-    times = cfg.get("upload.publish_times_jst", ["07:30", "19:30"]) or ["07:30"]
+    times = times or cfg.get("upload.publish_times_jst", ["07:30", "19:30"]) or ["07:30"]
     slots: list[dt.datetime] = []
     for day_offset in (0, 1):
         day = now.date() + dt.timedelta(days=day_offset)
@@ -326,10 +330,15 @@ def publish(
     thumbnail: str | Path | None = None,
     srt: str | Path | None = None,
     slot_index: int = 0,
+    publish_times: list[str] | None = None,
+    playlist: bool = True,
 ) -> dict[str, Any]:
-    """アップロード一式（本編 → サムネ → 字幕 → 再生リスト）."""
+    """アップロード一式（本編 → サムネ → 字幕 → 再生リスト）.
+
+    publish_times を渡すと、その時刻表（Shorts 用）で予約する。
+    """
     publish_at = (
-        next_publish_time(cfg, slot_index)
+        next_publish_time(cfg, slot_index, times=publish_times)
         if cfg.get("upload.schedule", True) else None
     )
     video_id = upload_video(cfg, store, video_path, meta, publish_at=publish_at)
@@ -339,7 +348,7 @@ def publish(
     if srt and Path(srt).exists():
         upload_caption(cfg, store, video_id, srt)
 
-    playlist_title = cfg.get("upload.playlist_title", "")
+    playlist_title = cfg.get("upload.playlist_title", "") if playlist else ""
     if playlist_title:
         pid = ensure_playlist(cfg, store, playlist_title)
         if pid:

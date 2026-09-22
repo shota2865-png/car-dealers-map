@@ -29,6 +29,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow  # noqa: E402
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    # ytecon goal が日別の再生・総再生時間・視聴率を取るのに使う（無くても投稿はできる）
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
 ]
 
 

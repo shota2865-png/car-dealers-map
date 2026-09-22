@@ -348,6 +348,28 @@ upload:
   # 予約投稿を使う（privacy: public + publishAt）
   schedule: true
 
+# 本編から切り出す Shorts（縦 9:16）。目標 50 万再生の発見面はここ（config/goals.yaml）
+shorts:
+  # 本編 1 本から何本作るか（0 で無効）。3 本 + 本編 1 本で API クォータは 1 日 7,000 ほど（上限 10,000）
+  per_video: 3
+  # 区間の長さ。45 秒前後がいちばん最後まで見られる
+  min_seconds: 30
+  max_seconds: 58
+  # 締めの部分は切り出さない（本編を見る理由を残す）
+  exclude_blocks: ["closing"]
+  # 投稿時刻（JST）。本編の 19:00 とずらし、昼休み・帰宅・寝る前の 3 枠
+  publish_times_jst: ["12:15", "18:00", "22:30"]
+  # 見出しとタイトルを LLM で磨く（false なら見出しはセクション名）
+  llm_hooks: true
+  # 縦画面の組み方
+  resolution: [1080, 1920]
+  cast_height_ratio: 0.23        # 2 人の大きさ（画面の高さに対する比）。下の帯に並ぶ
+  subtitle_size: 76
+  subtitle_gap: 24               # 立ち絵の上端から字幕までの隙間
+  top_band: 420                  # ここより上はフック見出しの帯
+  hook_top: 150                  # 見出しの上端（Shorts の UI に隠れない位置）
+  scene_seconds: 6.0
+
 # 寝かせた動画の掘り起こし（ytecon revive）
 # 企画時に決めた watch_keywords が日本のニュース見出しに出たら、
 # タイトル・サムネ・概要欄を作り替えて「いま探されている1本」にする

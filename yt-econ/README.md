@@ -335,6 +335,26 @@ key_questions・sources を書けるので、扱ってほしい企業の具体�
 置いて使っています。概要欄には自動で「立ち絵：坂本アヒル 様」が入ります。
 
 
+## 目標（30 日で 50 万再生）と Shorts
+
+目標は `config/goals.yaml` に数字で置き、`ytecon goal` が毎日の進捗・必要ペース・関門の合否・打ち手を出します。
+本編だけでは届かない数字なので、本編 1 本から **Shorts（縦 9:16、30〜58 秒）を 3 本**自動で切り出し、
+本編とは別の時刻（12:15 / 18:00 / 22:30）に予約投稿します。検算と週ごとの打ち手は
+[`docs/目標_月50万再生.md`](docs/目標_月50万再生.md)。
+
+```bash
+python -m ytecon goal                 # 進捗と打ち手（Analytics → 無ければ公開統計。output/goal/ に記録）
+python -m ytecon goal --offline       # API を叩かず、目標の分解だけ
+python -m ytecon shorts <slug> --list # その本編から切り出せる区間と点数
+python -m ytecon shorts <slug> -n 3   # Shorts を 3 本書き出す（--upload で予約投稿）
+```
+
+`ytecon run` は `shorts.per_video`（既定 3）ぶんの Shorts を本編のあとに自動で作って予約します。
+Shorts は「ずんだもんの疑問・ボケ → めたんの数字入りの答え」で完結する区間を点数で選び、
+上にフック見出し、中に図表、下に 2 人、その上に字幕という縦画面で出ます。概要欄には本編のリンクが入ります。
+総再生時間と動画別の視聴率まで取るには、`scripts/auth_youtube.py` を再実行して
+Analytics のスコープ付きの refresh token に差し替えてください（無くても公開統計で動きます）。
+
 ## 品質を上げるつまみ
 
 すべて `config/channel.yaml` にあります。
@@ -360,7 +380,9 @@ key_questions・sources を書けるので、扱ってほしい企業の具体�
 | キャラの大きさ・位置 | `character.height_ratio` / `margin_right` |
 | 口の動きの感度 | `character.mouth_half_threshold` / `mouth_open_threshold` |
 | 声の抑揚・速さ | `tts.voicevox.intonation`（既定1.35） / `speed`（既定1.2） |
-| 投稿時刻を変える | `upload.publish_times_jst` |
+| 投稿時刻を変える | `upload.publish_times_jst`（Shorts は `shorts.publish_times_jst`） |
+| Shorts の本数・尺 | `shorts.per_video` / `shorts.min_seconds` / `shorts.max_seconds` |
+| 目標の数字・関門 | `config/goals.yaml` |
 
 ---
 

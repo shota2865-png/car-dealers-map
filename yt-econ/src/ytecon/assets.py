@@ -166,7 +166,7 @@ def content_width(cfg: Config) -> int:
     カード類の中央揃えや図表の右端はこれを基準にする。
     """
     w, _h = cfg.get("video.resolution", [1920, 1080])
-    if not cfg.get("character.enabled", False):
+    if not cfg.get("character.enabled", False) or cfg.get("layout.characters_in_band", False):
         return w
     from .character import reserved_width
 
@@ -516,7 +516,9 @@ def render_chart(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
 
     # 図表の右端はキャラクターの手前まで。字幕の帯（下 1/3）には何も置かない
     right = min(0.94, content_width(cfg) / w - 0.02)
-    fig.subplots_adjust(left=0.12, right=right, top=0.82, bottom=0.34)
+    # 上下の帯（見出し・字幕）を避ける。横画面では従来どおり top 0.82 / bottom 0.34 になる
+    fig.subplots_adjust(left=0.12, right=right,
+                        top=1.0 - (TOP_BAND + 84) / h, bottom=(SUB_BAND + 137) / h)
 
     note = spec.get("note") or ""
     if note:
@@ -770,8 +772,14 @@ def _fit_glass(img: Image.Image) -> Image.Image:
 
 
 def content_span(cfg: Config) -> tuple[int, int]:
-    """左右の立ち絵に掛からない x の範囲 (x0, x1)."""
+    """左右の立ち絵に掛からない x の範囲 (x0, x1).
+
+    立ち絵が下の帯に収まっている縦画面（layout.characters_in_band）では、横幅は全部使える。
+    """
     w, _h = cfg.get("video.resolution", [1920, 1080])
+    if cfg.get("layout.characters_in_band", False):
+        m = int(cfg.get("layout.side_margin", 40))
+        return m, w - m
     from .character import reserved_widths
     left, right = reserved_widths(cfg)
     return left, w - right
@@ -1166,6 +1174,20 @@ def render_heading_overlay(cfg: Config, heading: str, bullets: list[str], out: P
 # ----------------------------------------------------------------------
 SUB_BAND = 230   # 画面下の字幕帯の高さ（ここには図解の中身も出典も置かない。字幕 110px + 余白）
 TOP_BAND = 110   # 画面上の余白（ここより上には置かない）
+DEFAULT_BANDS = (TOP_BAND, SUB_BAND)
+
+
+def apply_layout(cfg: Config) -> tuple[int, int]:
+    """画面の上下の帯を config（layout.top_band / layout.sub_band）で切り替える.
+
+    横画面（16:9）は既定のまま。Shorts（9:16）は上にフック見出し、下に立ち絵と字幕を
+    まとめて置くので帯が厚くなる。シーン計画の頭で必ず呼び、指定が無ければ既定に戻す
+    （同じプロセスで本編と Shorts を続けて作っても値が残らないように）。
+    """
+    global TOP_BAND, SUB_BAND
+    TOP_BAND = int(cfg.get("layout.top_band", 0) or DEFAULT_BANDS[0])
+    SUB_BAND = int(cfg.get("layout.sub_band", 0) or DEFAULT_BANDS[1])
+    return TOP_BAND, SUB_BAND
 
 
 def _accent_bar(d, x: int, y: int, sample: str, font, fill, lines: int = 1, lh: int | None = None) -> None:
