@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>おやすみ経済学 投稿ツール</title>
+<style>
+  body{font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.8;color:#222}
+  h1{font-size:1.6rem} h2{font-size:1.15rem;margin-top:2em} a{color:#1a5fb4}
+  .note{color:#666;font-size:.95rem}
+</style>
+</head>
+<body>
+<h1>おやすみ経済学 投稿ツール（oyasumi-keizai）</h1>
+<p>YouTube チャンネル「<a href="https://www.youtube.com/channel/UCuOZdUBs68sCzq1g6GS9PIQ">おやすみ経済学</a>」の運営者が、
+自分のチャンネルに動画を予約投稿し、自分のチャンネルの再生数を確認するために使っている内部ツールです。
+一般向けのアプリではなく、利用者はチャンネル運営者本人のみです。</p>
+
+<h2>このツールがすること</h2>
+<ul>
+  <li>経済・お金・就活をテーマにした自作の解説動画（本編 1 本と Shorts 3 本／日）を、決めた時刻に予約投稿する</li>
+  <li>投稿した動画にサムネイルと字幕を付け、再生リストに追加する</li>
+  <li>自分のチャンネルの再生数・登録者数・視聴時間を 1 日 1 回読み取り、投稿計画に反映する</li>
+</ul>
+
+<h2>使用する YouTube API</h2>
+<p>YouTube Data API v3（videos.insert / videos.update / thumbnails.set / captions.insert / playlistItems.insert / videos.list / channels.list）と
+YouTube Analytics API（reports.query）。対象はすべて運営者自身のチャンネルです。</p>
+
+<h2>プライバシー・データの扱い</h2>
+<p>詳しくは <a href="privacy.html">プライバシーポリシー</a> をご覧ください。第三者のデータは取得せず、
+取得した自分のチャンネルの統計は運営者の管理するリポジトリ内にのみ保存します。</p>
+
+<h2>連絡先</h2>
+<p>shotacr@gmail.com</p>
+<p class="note">ソースコード: <a href="https://github.com/shota2865-png/car-dealers-map/tree/main/yt-econ">github.com/shota2865-png/car-dealers-map</a></p>
+</body>
+</html>
