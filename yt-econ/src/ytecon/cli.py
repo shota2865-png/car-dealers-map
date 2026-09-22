@@ -277,6 +277,30 @@ def cmd_learn(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_thumbnail(args: argparse.Namespace) -> int:
+    """手で作ったサムネを thumbnails/ に置き、投稿済みなら YouTube にも反映する."""
+    import datetime as dt
+    from pathlib import Path as _P
+    from .config import load_config
+    from .pipeline import Pipeline
+
+    img = _P(args.image)
+    if not img.exists():
+        print(f"{img} がありません")
+        return 1
+    day = dt.date.fromisoformat(args.date) if args.date else None
+    pipe = Pipeline(load_config(args.config))
+    if args.no_upload:
+        from . import thumbnail
+        dest = thumbnail.manual_dir(pipe.cfg) / thumbnail.name_for(day, args.slug or "")
+        thumbnail.prepare(img, dest)
+        print(json.dumps({"saved": str(dest), "applied": False}, ensure_ascii=False))
+        return 0
+    print(json.dumps(pipe.set_thumbnail_later(img, slug=args.slug or "", day=day, video_id=args.video_id or ""),
+                     ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_revive(args: argparse.Namespace) -> int:
     """寝かせた動画のテーマが日本で話題化していないか照合する."""
     from .config import load_config
@@ -476,6 +500,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("speakers", help="VOICEVOX の話者一覧")
     p.set_defaults(func=cmd_speakers)
+
+    p = sub.add_parser("thumbnail", help="手で作ったサムネを thumbnails/ に置く（投稿済みなら YouTube にも反映）")
+    p.add_argument("image", help="画像ファイル（png/jpg/webp。1280x720 に自動で整える）")
+    p.add_argument("--date", help="その本編の公開日（YYYY-MM-DD）。ファイル名になり、投稿済みならその日の本編に付く")
+    p.add_argument("--slug", help="output/<slug> を直接指定")
+    p.add_argument("--video-id", help="YouTube の動画 ID を直接指定")
+    p.add_argument("--no-upload", action="store_true", help="thumbnails/ に置くだけ（YouTube には触らない）")
+    p.set_defaults(func=cmd_thumbnail)
 
     p = sub.add_parser("goal", help="目標（config/goals.yaml）への進捗と打ち手")
     p.add_argument("--offline", action="store_true", help="API を叩かず、目標の分解だけ表示")

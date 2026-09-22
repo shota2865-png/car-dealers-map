@@ -76,3 +76,66 @@ def build(cfg: Config, script: VideoScript, out: str | Path) -> Path:
         q -= 10
         img.save(out, quality=q)
     return out
+
+
+# ----------------------------------------------------------------------
+# 手で用意したサムネイル（ChatGPT などで作った画像）
+# ----------------------------------------------------------------------
+import datetime as _dt
+import re as _re
+
+_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def manual_dir(cfg: Config) -> Path:
+    d = str(cfg.get("upload.thumbnail_dir", "thumbnails") or "thumbnails")
+    p = Path(d)
+    return p if p.is_absolute() else cfg.root / p
+
+
+def _date_keys(day: _dt.date | None) -> list[str]:
+    if day is None:
+        return []
+    return [day.isoformat(), day.strftime("%Y%m%d"), day.strftime("%m%d"), day.strftime("%m-%d")]
+
+
+def pick_manual(cfg: Config, slug: str = "", day: _dt.date | None = None) -> Path | None:
+    """thumbnails/ から、その本編用の画像を探す。優先: slug 一致 → 公開日一致（YYYY-MM-DD / YYYYMMDD / MMDD）."""
+    d = manual_dir(cfg)
+    if not d.is_dir():
+        return None
+    keys = ([slug] if slug else []) + _date_keys(day)
+    files = [p for p in sorted(d.iterdir()) if p.suffix.lower() in _EXTS and not p.name.startswith(".")]
+    for key in keys:
+        for p in files:
+            if p.stem == key:
+                return p
+    return None
+
+
+def prepare(src: str | Path, out: str | Path) -> Path:
+    """どんな大きさの画像でも 1280x720 の JPEG（2MB 以下）にする。縦横比が違えば中央で切る."""
+    src, out = Path(src), Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img = Image.open(src).convert("RGB")
+    w, h = img.size
+    target = SIZE[0] / SIZE[1]
+    if abs(w / h - target) > 0.01:
+        if w / h > target:                       # 横に長い → 左右を切る
+            nw = int(h * target)
+            img = img.crop(((w - nw) // 2, 0, (w - nw) // 2 + nw, h))
+        else:                                    # 縦に長い → 上下を切る
+            nh = int(w / target)
+            img = img.crop((0, (h - nh) // 2, w, (h - nh) // 2 + nh))
+    img = img.resize(SIZE, Image.LANCZOS)
+    q = 92
+    img.save(out, "JPEG", quality=q)
+    while out.stat().st_size > 2_000_000 and q > 50:
+        q -= 10
+        img.save(out, "JPEG", quality=q)
+    return out
+
+
+def name_for(day: _dt.date | None = None, slug: str = "") -> str:
+    """thumbnails/ に置くときのファイル名（slug があれば slug、無ければ公開日）."""
+    return (slug or (day or _dt.date.today()).isoformat()) + ".jpg"

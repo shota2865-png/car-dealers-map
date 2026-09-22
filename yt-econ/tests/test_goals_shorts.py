@@ -224,7 +224,7 @@ def test_shorts_publish_times_are_separate_from_the_long_video(cfg):
     long_at = next_publish_time(cfg, 0, base=base)
     short_at = next_publish_time(cfg, 0, base=base, times=cfg.get("shorts.publish_times_jst"))
     assert long_at.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime("%H:%M") == "19:00"
-    assert short_at.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime("%H:%M") == "12:15"
+    assert short_at.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime("%H:%M") == "12:00"
     assert next_publish_time(cfg, 2, base=base, times=cfg.get("shorts.publish_times_jst")) > short_at
 
 
@@ -286,3 +286,37 @@ def test_shorts_speak_a_little_faster_than_the_long_video(cfg):
     assert sc.get("tts.voicevox.speed") > cfg.get("tts.voicevox.speed")
     assert sc.get("tts.voicevox.pause_sentence") < cfg.get("tts.voicevox.pause_sentence")
     assert cfg.get("tts.voicevox.speed") == 1.2                  # 本編は生涯賃金の回と同じ速さ
+
+
+# ----------------------------------------------------------------------
+# 手で作ったサムネイルと投稿時刻
+# ----------------------------------------------------------------------
+def test_manual_thumbnail_is_found_by_slug_or_date_and_resized(cfg, tmp_path, monkeypatch):
+    from PIL import Image
+    from ytecon import thumbnail
+    monkeypatch.setattr(thumbnail, "manual_dir", lambda _cfg: tmp_path)
+    Image.new("RGB", (1024, 1024), "red").save(tmp_path / "2026-09-23.png")        # 正方形（ChatGPT の既定）
+    Image.new("RGB", (1920, 1080), "blue").save(tmp_path / "20260924.jpg")
+    Image.new("RGB", (800, 450), "green").save(tmp_path / "my-slug.jpg")
+    assert thumbnail.pick_manual(cfg, "my-slug", dt.date(2026, 9, 23)).name == "my-slug.jpg"   # slug が最優先
+    assert thumbnail.pick_manual(cfg, "other", dt.date(2026, 9, 23)).name == "2026-09-23.png"
+    assert thumbnail.pick_manual(cfg, "other", dt.date(2026, 9, 24)).name == "20260924.jpg"
+    assert thumbnail.pick_manual(cfg, "other", dt.date(2026, 9, 25)) is None                    # 無ければ自動生成へ
+    out = thumbnail.prepare(tmp_path / "2026-09-23.png", tmp_path / "out" / "thumbnail.jpg")
+    img = Image.open(out)
+    assert img.size == (1280, 720) and img.format == "JPEG"
+    assert out.stat().st_size <= 2_000_000
+    assert thumbnail.name_for(dt.date(2026, 9, 23)) == "2026-09-23.jpg"
+    assert thumbnail.name_for(None, "slug-x") == "slug-x.jpg"
+
+
+def test_shorts_go_out_at_noon_evening_and_midnight(cfg):
+    from ytecon.youtube import next_publish_time
+    jst = dt.timezone(dt.timedelta(hours=9))
+    base = dt.datetime(2026, 9, 23, 15, 0, tzinfo=jst)           # Actions は JST 15:00 に走る
+    times = cfg.get("shorts.publish_times_jst")
+    assert times == ["12:00", "18:00", "00:00"]
+    got = [next_publish_time(cfg, i, base=base, times=times).astimezone(jst) for i in range(3)]
+    assert [g.strftime("%m-%d %H:%M") for g in got] == ["09-23 18:00", "09-24 00:00", "09-24 12:00"]
+    long_at = next_publish_time(cfg, 0, base=base).astimezone(jst)
+    assert long_at.strftime("%m-%d %H:%M") == "09-23 19:00"

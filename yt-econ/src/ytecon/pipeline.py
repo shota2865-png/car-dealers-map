@@ -144,7 +144,15 @@ class Pipeline:
         if thumb_copy.get("main"):
             s.thumbnail_copy = thumb_copy
             s.save(art.script)
-        thumbnail.build(self.cfg, s, art.thumb)
+        # 手で用意したサムネ（thumbnails/<公開日>.jpg か <slug>.jpg）があればそれを使い、無ければ自動生成
+        manual = thumbnail.pick_manual(self.cfg, slug, self._publish_day(slot_index))
+        if manual is not None:
+            log.info("[%s] 手で用意したサムネイルを使います: %s", slug, manual.name)
+            thumbnail.prepare(manual, art.thumb)
+            self.store.update_video(slug, stage={"thumbnail": "manual", "thumbnail_file": manual.name})
+        else:
+            thumbnail.build(self.cfg, s, art.thumb)
+            self.store.update_video(slug, stage={"thumbnail": "auto"})
 
         meta = metadata.build(self.cfg, s, track, title=title)
         art.meta.write_text(
@@ -162,6 +170,47 @@ class Pipeline:
             stage={"url": result["url"]},
         )
         return result
+
+    def _publish_day(self, slot_index: int = 0) -> dt.date:
+        """この本編が公開される日（JST）。サムネの日付名の照合に使う."""
+        jst = dt.timezone(dt.timedelta(hours=9))
+        try:
+            return youtube.next_publish_time(self.cfg, slot_index).astimezone(jst).date()
+        except Exception:
+            return dt.datetime.now(jst).date()
+
+    def set_thumbnail_later(self, image: Path, slug: str = "", day: dt.date | None = None,
+                            video_id: str = "") -> dict[str, Any]:
+        """あとから届いたサムネを、投稿済みの本編に付ける（未投稿なら thumbnails/ に置くだけ）."""
+        rec = None
+        if slug:
+            rec = self.store.get_video(slug)
+        elif video_id:
+            rec = next((r for r in self.store.videos_by_status("uploaded") if r.youtube_id == video_id), None)
+        elif day is not None:
+            jst = dt.timezone(dt.timedelta(hours=9))
+            for r in self.store.videos_by_status("uploaded"):
+                if not r.publish_at or (r.stage or {}).get("kind") == "short":
+                    continue
+                try:
+                    when = dt.datetime.fromisoformat(r.publish_at.replace("Z", "+00:00")).astimezone(jst).date()
+                except ValueError:
+                    continue
+                if when == day:
+                    rec = r
+                    break
+        dest = thumbnail.manual_dir(self.cfg) / thumbnail.name_for(day, rec.slug if rec else slug)
+        thumbnail.prepare(image, dest)
+        out: dict[str, Any] = {"saved": str(dest)}
+        if rec is not None and rec.youtube_id:
+            art = self.art(rec.slug)
+            thumbnail.prepare(image, art.thumb)
+            youtube.set_thumbnail(self.cfg, self.store, rec.youtube_id, art.thumb)
+            self.store.update_video(rec.slug, stage={"thumbnail": "manual", "thumbnail_file": dest.name})
+            out.update({"slug": rec.slug, "video_id": rec.youtube_id, "applied": True})
+        else:
+            out["applied"] = False
+        return out
 
     # --- Shorts -------------------------------------------------------------
     def stage_shorts(self, slug: str, s: script_mod.VideoScript, track: tts.VoiceTrack,

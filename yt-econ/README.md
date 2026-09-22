@@ -354,6 +354,13 @@ python -m ytecon shorts <slug> --list # その本編から切り出せる区間�
 python -m ytecon shorts <slug> -n 3   # Shorts を 3 本書き出す（--upload で予約投稿）
 ```
 
+投稿時刻は本編が毎日 19:00、Shorts が 12:00 / 18:00 / 00:00（`upload.publish_times_jst` / `shorts.publish_times_jst`）。
+
+**サムネイルを手で作る場合**（ChatGPT などで作った画像）は `thumbnails/` に公開日の名前で置きます
+（`2026-09-23.jpg`。png / webp でも、正方形でも可。1280×720 に自動で整えます）。その日の本編の投稿時に
+自動で使われ、無ければ従来どおり自動生成します。投稿済みの本編に後から付けるときは
+`python -m ytecon thumbnail 画像 --date 2026-09-23` で YouTube 側も差し替わります。
+
 `ytecon run` は `shorts.per_video`（既定 3）ぶんの Shorts を本編のあとに自動で作って予約します。
 Shorts は本編の切り出しではなく、本編の材料から LLM が **起・承・転・結** の 45〜55 秒の掛け合いを書き直し、
 音声も新しく合成します（`shorts.mode: story`）。最後は必ず「続きは本編で」の誘導（`shorts.cta`）で終わり、

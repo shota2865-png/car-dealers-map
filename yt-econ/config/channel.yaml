@@ -341,6 +341,10 @@ render:
 upload:
   # public | unlisted | private
   privacy: "public"
+  # 手で用意したサムネイル（ChatGPT などで作った画像）を置くフォルダ。
+  # ファイル名を公開日（2026-09-23.jpg / 20260923.png）か slug にしておくと、その本編に自動で使われ、
+  # 無ければ従来どおり自動生成する。あとから差し替えるときは `ytecon thumbnail 画像 --date 2026-09-23`
+  thumbnail_dir: "thumbnails"
   # JST での投稿時刻。1 日 1 本、19:00。アウトロの「毎日19:00に更新」もここから出る
   publish_times_jst: ["19:00"]
   category_id: "25"      # News & Politics（経済解説はここか 27:Education）
@@ -371,8 +375,8 @@ shorts:
   max_seconds: 58
   # 締めの部分は切り出さない（本編を見る理由を残す）
   exclude_blocks: ["closing"]
-  # 投稿時刻（JST）。本編の 19:00 とずらし、昼休み・帰宅・寝る前の 3 枠
-  publish_times_jst: ["12:15", "18:00", "22:30"]
+  # 投稿時刻（JST）。本編の 19:00 とずらし、昼・夕方・深夜 0 時の 3 枠
+  publish_times_jst: ["12:00", "18:00", "00:00"]
   # 見出しとタイトルを LLM で磨く（false なら見出しはセクション名）
   llm_hooks: true
   # 縦画面の組み方
