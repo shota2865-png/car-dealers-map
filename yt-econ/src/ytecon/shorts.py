@@ -364,6 +364,7 @@ def shorts_metadata(cfg: Config, script: VideoScript, w: Window, parent_url: str
         parts.append(f"▶ 本編{('（' + mins + '）') if mins else ''}はこちら\n{parent_url}")
     else:
         parts.append("▶ 本編はチャンネルの最新動画から")
+    # 画面下の「関連動画」リンクは API から付けられない。YouTube Studio で本編を関連動画に設定する
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
     parts.append(f"寝る前に聴く、お金と就活とAIの話。毎日{times[0] if times else '夜'}に本編を更新しています。")
     parts.append("■ 音声\n" + md._voice_credit(cfg))
@@ -410,7 +411,8 @@ def build_short(cfg: Config, script: VideoScript, track: VoiceTrack, w: Window, 
 # 4. story モード: 起承転結のミニ台本を書いて、音声から作る
 # ----------------------------------------------------------------------
 BEATS = ("起", "承", "転", "結")
-_DEFAULT_CTA = ["【ずんだもん】続きは本編で聞くのだ。", "【めたん】本編は毎日19時。概要欄から飛べるわ。"]
+# Shorts で概要欄を開く人はほぼいない。画面下の関連動画リンクへ誘導する
+_DEFAULT_CTA = ["【ずんだもん】続きは本編で聞くのだ。", "【めたん】本編は毎日19時。下のリンクから飛べるわ。"]
 
 
 @dataclass
@@ -463,6 +465,9 @@ Shorts の視聴者は最初の 1 秒で指を止めるかを決め、退屈し�
 - 転（3〜4 文）: ずんだもんが極端な結論に飛び、めたんが「そこは違うの」「むしろ」で視点を返す。ここが山場
 - 結（2 文、めたん）: 視聴者が今夜できる 1 つの小さな行動、または覚えて帰る 1 つの数字。説教にしない
 - 数字は本編の台本にあるものだけを使う。新しい統計や社名を作らない。断定的な投資助言はしない
+- 統計の時点が今から 1 年以上前（例: 令和6年版・2024 年）なら、そのまま「今の数字」のように言わない。
+  「令和6年の時点で」と時点を言い、「今は変わっているけれど、最初のとっかかりの時点でこれだけ差があった」
+  のように、古い数字を「出だしの差」として使う。今日の日付は {today}
 - ずんだもんの語尾は「〜のだ」「〜なのだ」、一人称は「ぼく」。めたんは「〜よ」「〜ね」「〜わ」「〜の」で、です・ます調にしない
 - 感情が動く文には文頭に表情タグ [驚] [困] [笑] [考] [指] を付けてよい（話者タグの後ろ）
 - 本編への誘導の文はこちらで最後に足すので、書かない
@@ -526,8 +531,9 @@ def write_stories(cfg: Config, script: VideoScript, n: int) -> list[Story]:
         for c in (cfg.get("cast.characters", []) or [])
     ) or speech_style(cfg)
     sources = "\n".join(f"- {s.get('name', '')} {s.get('url', '')}".rstrip() for s in (script.sources or [])) or "（なし）"
+    import datetime as _dt
     out = llm.complete_json(
-        _STORY_SYSTEM.format(cast=cast),
+        _STORY_SYSTEM.format(cast=cast, today=_dt.date.today().isoformat()),
         _STORY_USER.format(title=strip_tags(script.topic_title), body=_script_body(script), sources=sources, n=n),
         _story_schema(),
         model=str(cfg.get("shorts.model", cfg.get("script.model", "claude-sonnet-5"))),
@@ -592,7 +598,7 @@ def render_cta_card(cfg: Config, out: Path) -> Path:
     when = f"本編は毎日{times[0]}" if times else "本編はチャンネルで"
     avail = min(w - 160, assets.span_width(cfg))
     f1, l1 = assets.fit_text(cfg, d, "続きは本編で", "display_l", avail, 1, min_size=72)
-    f2, l2 = assets.fit_text(cfg, d, when + " ▶ 概要欄から", "headline_m", avail, 1, min_size=40)
+    f2, l2 = assets.fit_text(cfg, d, when + " ▶ 下のリンクから", "headline_m", avail, 1, min_size=40)
     lh1, lh2 = int(f1.size * 1.3), int(f2.size * 1.4)
     total = lh1 + lh2 + 20
     y = assets.TOP_BAND + (h - assets.SUB_BAND - assets.TOP_BAND - total) // 2
