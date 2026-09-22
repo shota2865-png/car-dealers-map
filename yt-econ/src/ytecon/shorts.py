@@ -590,13 +590,14 @@ def render_cta_card(cfg: Config, out: Path) -> Path:
     img, d, pal, w, h = assets._card_base(cfg, assets.card_style(cfg, "quote"))
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
     when = f"本編は毎日{times[0]}" if times else "本編はチャンネルで"
-    f1 = assets.load_font(cfg, assets.ts(cfg, "display_l", 96), "black")
-    f2 = assets.load_font(cfg, assets.ts(cfg, "headline_m", 64), "black")
+    avail = min(w - 160, assets.span_width(cfg))
+    f1, l1 = assets.fit_text(cfg, d, "続きは本編で", "display_l", avail, 1, min_size=72)
+    f2, l2 = assets.fit_text(cfg, d, when + " ▶ 概要欄から", "headline_m", avail, 1, min_size=40)
     lh1, lh2 = int(f1.size * 1.3), int(f2.size * 1.4)
     total = lh1 + lh2 + 20
     y = assets.TOP_BAND + (h - assets.SUB_BAND - assets.TOP_BAND - total) // 2
-    assets._center_text(d, "続きは本編で", f1, y, w, pal["text"])
-    assets._center_text(d, when + "  ▶ 概要欄", f2, y + lh1 + 20, w, pal["accent"])
+    assets._center_text(d, l1[0], f1, y, w, pal["text"])
+    assets._center_text(d, l2[0], f2, y + lh1 + 20, w, pal["accent"])
     return assets._save(img, out)
 
 
