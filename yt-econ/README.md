@@ -215,8 +215,8 @@ output/20260919-070000-.../
 ### A. サーバ / 自宅PC で cron
 
 ```cron
-# JST 15:00 に本編 1 本 + Shorts 3 本を作る（予約投稿で 19:00 に公開される。upload.publish_times_jst で変更）
-0 15 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/daily.log 2>&1
+# JST 16:10 に本編 1 本 + Shorts 3 本を作る（予約投稿で 19:00 に公開される。upload.publish_times_jst で変更）
+10 16 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/daily.log 2>&1
 # JST 09:00 に目標の進捗と打ち手を記録する
 0 9 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon goal >> logs/goal.log 2>&1
 ```

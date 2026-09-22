@@ -365,3 +365,27 @@ def test_title_format_wraps_hook_and_channel_suffix(cfg):
     assert format_title(cfg, "【本題】", "") == "本題【ずんだもん&めたん解説】"     # 引きが無ければ前は付けない
     long = format_title(cfg, "あ" * 120, "数字の落差")
     assert len(long) <= MAX_TITLE and long.endswith("【ずんだもん&めたん解説】") and "…" in long
+
+
+def test_publish_at_in_jst_is_sent_to_youtube_as_utc(cfg, monkeypatch, tmp_path):
+    """JST の予約時刻を渡しても、YouTube には UTC（Z）で送られる（21:00 JST → 12:00Z）."""
+    from ytecon import youtube, finals
+    from ytecon.metadata import Metadata
+    from ytecon.state import Store
+    sent = {}
+    class _Req:
+        def __init__(self, body): self.body = body
+        def next_chunk(self):
+            sent.update(self.body); return None, {"id": "vid"}
+    class _Videos:
+        def insert(self, part, body, media_body): return _Req(body)
+    class _Svc:
+        def videos(self): return _Videos()
+    monkeypatch.setattr(youtube, "build_service", lambda _cfg: _Svc())
+    import googleapiclient.http
+    monkeypatch.setattr(googleapiclient.http, "MediaFileUpload", lambda *a, **k: None)
+    video = tmp_path / "v.mp4"; video.write_bytes(b"x")
+    store = Store(tmp_path / "s.sqlite3")
+    youtube.upload_video(cfg, store, video, Metadata(title="t", description="d"),
+                         publish_at=finals.parse_jst("2026-09-22 21:00"))
+    assert sent["status"]["publishAt"] == "2026-09-22T12:00:00Z"

@@ -2,7 +2,7 @@ name: 毎日 本編1本 + Shorts 3本を自動生成して予約投稿
 
 # ------------------------------------------------------------
 # GitHub のサーバーで動くので、あなたのパソコンには何も入れません。
-# JST 15:00 に生成を始め、本編は 19:00、Shorts は 18:00 / 翌 0:00 / 翌 12:00 に予約公開されます。
+# JST 16:10 に生成を始め、本編は 19:00、Shorts は 18:00 / 翌 0:00 / 翌 12:00 に予約公開されます。
 #
 # 必要な設定（リポジトリの Settings → Secrets and variables → Actions）:
 #   CLAUDE_CODE_OAUTH_TOKEN   claude setup-token で作る（サブスクの枠で台本生成）
@@ -17,7 +17,9 @@ name: 毎日 本編1本 + Shorts 3本を自動生成して予約投稿
 
 on:
   schedule:
-    - cron: "0 6 * * *"    # JST 15:00 に開始（本編 + Shorts で 60〜100 分かかる）
+    # JST 16:10 に開始（本編 + Shorts で 60〜80 分 → 19:00 の予約に間に合う）。
+    # YouTube API のクォータは太平洋時間 0 時 = JST 16:00 にリセットされるので、その後に始める
+    - cron: "10 7 * * *"
   workflow_dispatch:
     inputs:
       count:

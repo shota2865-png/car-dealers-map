@@ -156,6 +156,9 @@ def upload_video(
     if publish_at is not None and cfg.get("upload.schedule", True):
         # 予約投稿は private + publishAt の組み合わせでないと受け付けられない
         status["privacyStatus"] = "private"
+        # タイムゾーン付きの datetime（JST など）を渡されても UTC に直してから "Z" を付ける
+        if publish_at.tzinfo is not None:
+            publish_at = publish_at.astimezone(dt.timezone.utc)
         status["publishAt"] = publish_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     body = {
