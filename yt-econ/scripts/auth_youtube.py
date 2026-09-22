@@ -52,23 +52,35 @@ def exchange_code(client_id: str, client_secret: str, code: str) -> int:
         print(f"交換に失敗しました: {d.get('error')} {d.get('error_description', '')}")
         return 1
     out = Path(__file__).resolve().parents[1] / ".env"
+    key = f"{PREFIX}YOUTUBE_REFRESH_TOKEN"
     lines = [ln for ln in (out.read_text().splitlines() if out.exists() else [])
-             if not ln.startswith("YOUTUBE_REFRESH_TOKEN=")]
-    lines.append(f"YOUTUBE_REFRESH_TOKEN={d['refresh_token']}")
+             if not ln.startswith(key + "=")]
+    lines.append(f"{key}={d['refresh_token']}")
     out.write_text("\n".join(lines) + "\n")
     print(f"refresh token を {out} に保存しました（スコープ: {d.get('scope', '')}）")
     return 0
 
 
+PREFIX = ""
+
+
 def main() -> int:
+    global PREFIX
+    args = sys.argv[1:]
+    # --prefix PSY_ : 2 つ目のチャンネル用。PSY_YOUTUBE_CLIENT_ID / PSY_YOUTUBE_CLIENT_SECRET を読み、
+    #                 PSY_YOUTUBE_REFRESH_TOKEN を書く（GitHub の Secrets にも同じ名前で入れる）
+    if "--prefix" in args:
+        i = args.index("--prefix")
+        PREFIX = args[i + 1].strip() if i + 1 < len(args) else ""
+        del args[i:i + 2]
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-    client_id = os.environ.get("YOUTUBE_CLIENT_ID")
-    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
+    client_id = os.environ.get(f"{PREFIX}YOUTUBE_CLIENT_ID")
+    client_secret = os.environ.get(f"{PREFIX}YOUTUBE_CLIENT_SECRET")
     if not client_id or not client_secret:
-        print("YOUTUBE_CLIENT_ID と YOUTUBE_CLIENT_SECRET を .env に設定してください")
+        print(f"{PREFIX}YOUTUBE_CLIENT_ID と {PREFIX}YOUTUBE_CLIENT_SECRET を .env に設定してください")
         return 1
-    if len(sys.argv) >= 3 and sys.argv[1] == "--code":
-        return exchange_code(client_id, client_secret, sys.argv[2])
+    if len(args) >= 2 and args[0] == "--code":
+        return exchange_code(client_id, client_secret, args[1])
     from google_auth_oauthlib.flow import InstalledAppFlow   # ブラウザを開く経路でだけ要る
 
     flow = InstalledAppFlow.from_client_config(
@@ -98,7 +110,7 @@ def main() -> int:
 
     print("\n" + "=" * 60)
     print("以下を .env に貼ってください:\n")
-    print(f"YOUTUBE_REFRESH_TOKEN={creds.refresh_token}")
+    print(f"{PREFIX}YOUTUBE_REFRESH_TOKEN={creds.refresh_token}")
     print("=" * 60)
     return 0
 

@@ -45,3 +45,6 @@ assets/bgm/*
 assets/footage/*/
 assets/sfx/*
 !assets/sfx/.gitkeep
+
+# サムネの明朝（scripts/install_fonts.py --serif で入る。13MB 超なのでリポジトリには入れない）
+assets/fonts/NotoSerifJP*

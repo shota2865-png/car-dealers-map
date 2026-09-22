@@ -8,7 +8,8 @@ Noto Sans JP の Bold(700) / Black(900) を入れる。
 fonttools で TTF に戻す（グリフはそのままなので劣化しない）。
 Google Fonts へ直接繋げない環境でも、npm さえ通れば入る。
 
-  python scripts/install_fonts.py
+  python scripts/install_fonts.py            # Noto Sans JP Bold / Black
+  python scripts/install_fonts.py --serif    # 加えて Noto Serif JP Bold（サムネの framed スタイルの明朝）
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "assets" / "fonts"
 PACKAGE = "@fontsource/noto-sans-jp"
+SERIF_PACKAGE = "@fontsource/noto-serif-jp"
 
 # (woff2 のファイル名, 出力名, family, subfamily)
 WANTED = [
@@ -30,6 +32,12 @@ WANTED = [
      "Noto Sans JP", "Bold"),
     ("noto-sans-jp-japanese-900-normal.woff2", "NotoSansJP-Black.ttf",
      "Noto Sans JP Black", "Regular"),
+]
+
+# --serif のときだけ追加で入れる（サムネの framed スタイル用。無くてもゴシックに落ちる）
+SERIF_WANTED = [
+    ("noto-serif-jp-japanese-700-normal.woff2", "NotoSerifJP-Bold.ttf",
+     "Noto Serif JP", "Bold"),
 ]
 
 SYSTEM_FALLBACKS = [
@@ -40,8 +48,8 @@ SYSTEM_FALLBACKS = [
 ]
 
 
-def already_installed() -> bool:
-    return all((DEST / name).exists() for _src, name, _f, _s in WANTED)
+def already_installed(wanted=None) -> bool:
+    return all((DEST / name).exists() for _src, name, _f, _s in (wanted or WANTED))
 
 
 def fix_names(path: Path, family: str, subfamily: str) -> None:
@@ -64,7 +72,8 @@ def fix_names(path: Path, family: str, subfamily: str) -> None:
     font.save(path)
 
 
-def from_npm() -> bool:
+def from_npm(package: str = PACKAGE, wanted=None) -> bool:
+    wanted = wanted or WANTED
     if not shutil.which("npm"):
         print("npm が見つかりません")
         return False
@@ -76,8 +85,8 @@ def from_npm() -> bool:
 
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        print(f"{PACKAGE} を取得しています…")
-        proc = subprocess.run(["npm", "pack", PACKAGE], cwd=work,
+        print(f"{package} を取得しています…")
+        proc = subprocess.run(["npm", "pack", package], cwd=work,
                               capture_output=True, text=True, timeout=300)
         if proc.returncode != 0:
             print(f"取得に失敗: {proc.stderr.strip()[-300:]}")
@@ -95,7 +104,7 @@ def from_npm() -> bool:
         from fontTools.ttLib import TTFont
 
         ok = 0
-        for src_name, out_name, family, subfamily in WANTED:
+        for src_name, out_name, family, subfamily in wanted:
             src = files / src_name
             if not src.exists():
                 matches = sorted(files.glob(src_name.replace("normal", "*")))
@@ -110,7 +119,7 @@ def from_npm() -> bool:
             fix_names(out, family, subfamily)
             print(f"  {out.name}  {out.stat().st_size // 1024}KB  family={family}")
             ok += 1
-        return ok == len(WANTED)
+        return ok == len(wanted)
 
 
 def from_system() -> bool:
@@ -121,7 +130,22 @@ def from_system() -> bool:
     return False
 
 
+def install_serif() -> int:
+    if already_installed(SERIF_WANTED):
+        print(f"明朝は導入済みです: {DEST}")
+        return 0
+    if from_npm(SERIF_PACKAGE, SERIF_WANTED):
+        print(f"明朝を入れました: {DEST}")
+        return 0
+    print("明朝（Noto Serif JP）は入れられませんでした。サムネの framed スタイルはゴシックで描きます")
+    return 1
+
+
 def main() -> int:
+    if "--serif" in sys.argv[1:]:
+        rc = install_serif()
+        if sys.argv[1:] == ["--serif"] and already_installed():
+            return rc
     if already_installed():
         print(f"導入済みです: {DEST}")
         return 0

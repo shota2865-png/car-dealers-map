@@ -54,6 +54,15 @@ _FONT_CANDIDATES = {
         "assets/fonts/MPLUSRounded1c-Black.ttf",
         "assets/fonts/NotoSansJP-Black.ttf",
     ],
+    # 明朝（サムネの framed スタイル）。scripts/install_fonts.py --serif で入る。無ければ bold に落ちる
+    "serif": [
+        "assets/fonts/NotoSerifJP-Bold.ttf",
+        "assets/fonts/NotoSerifJP.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJKjp-Bold.otf",
+        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+        "C:/Windows/Fonts/YuMincho.ttc",
+    ],
 }
 # 大きな見出し・キーワードは black（太くて遠目に効く）、それ以外は body
 _DISPLAY_ROLES = ("display_xl", "display_l", "display_s", "numeral_xl", "headline_l")

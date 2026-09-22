@@ -40,7 +40,11 @@ def _load_file(path: str) -> dict[str, Any]:
 
 
 def load(cfg: Config) -> dict[str, Any]:
-    return _load_file(str(cfg.root / "config" / "style_bible.yaml"))
+    """スタイルバイブル。script.style_bible_file があればそれ（チャンネルごとに差し替えられる）."""
+    p = str(cfg.get("script.style_bible_file", "") or "").strip()
+    q = Path(p) if p else cfg.root / "config" / "style_bible.yaml"
+    q = q if q.is_absolute() else cfg.root / q
+    return _load_file(str(q))
 
 
 # ----------------------------------------------------------------------

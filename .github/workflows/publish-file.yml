@@ -1,26 +1,32 @@
 name: 完成した本編を投稿（手で仕上げた mp4）
 
 # ------------------------------------------------------------
-# CapCut などで仕上げた完成ファイル（yt_001_20260922.mp4）を YouTube に上げる。
+# CapCut などで仕上げた完成ファイル（yt_001_20260922.mp4 / 心理学は ps_001_20260929.mp4）を YouTube に上げる。
 #   1. mp4 を GitHub の Releases（タグ finals）に同じ名前で添付する（2GB まで）
 #      または直リンク URL を source に入れる
 #   2. Actions → このワークフロー → Run workflow
+#        channel         : main（おやすみ経済学）/ psych（心理学）
 #        action=upload   : 非公開（privacy）で上げる。サムネは thumbnails/<名前>.jpg、
-#                          メタデータは finals/<名前>.json
+#                          メタデータは finals/<名前>.json（psych は thumbnails/psych/, finals/psych/）
 #        action=publish  : 上げた動画を公開にする（publish_at を入れると予約公開）
-# 秘密情報は daily-upload.yml と同じ（YOUTUBE_*）
+# 秘密情報は daily-upload.yml と同じ（YOUTUBE_* / PSY_YOUTUBE_*）
 # ------------------------------------------------------------
 
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "チャンネル"
+        type: choice
+        options: [main, psych]
+        default: main
       action:
         description: "upload = 上げる（非公開） / publish = 公開にする"
         type: choice
         options: [upload, publish]
         default: upload
       name:
-        description: "完成品の名前（yt_001_20260922）"
+        description: "完成品の名前（yt_001_20260922 / psych は ps_001_20260929）"
         required: true
         default: "yt_001_20260922"
       source:
@@ -36,15 +42,22 @@ on:
         default: ""
 
 concurrency:
-  group: ytecon-daily
+  group: ytecon-daily-${{ inputs.channel }}
   cancel-in-progress: false
 
 env:
   PYTHONPATH: src
+  YTECON_CHANNEL: ${{ inputs.channel }}
   YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
   YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
   YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+  PSY_YOUTUBE_CLIENT_ID: ${{ secrets.PSY_YOUTUBE_CLIENT_ID }}
+  PSY_YOUTUBE_CLIENT_SECRET: ${{ secrets.PSY_YOUTUBE_CLIENT_SECRET }}
+  PSY_YOUTUBE_REFRESH_TOKEN: ${{ secrets.PSY_YOUTUBE_REFRESH_TOKEN }}
   GH_TOKEN: ${{ github.token }}
+  # チャンネルごとの作業ディレクトリと状態キャッシュ名（daily-upload.yml の matrix と同じ値）
+  WORKDIR: ${{ inputs.channel == 'psych' && 'output/psych' || 'output' }}
+  STATE_KEY: ${{ inputs.channel == 'psych' && 'ytecon-psych-state' || 'ytecon-state' }}
 
 jobs:
   publish:
@@ -71,27 +84,27 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            yt-econ/output/state.sqlite3
-            yt-econ/output/goal
-          key: ytecon-state-${{ github.run_id }}
-          restore-keys: ytecon-state-
+            yt-econ/${{ env.WORKDIR }}/state.sqlite3
+            yt-econ/${{ env.WORKDIR }}/goal
+          key: ${{ env.STATE_KEY }}-${{ github.run_id }}
+          restore-keys: ${{ env.STATE_KEY }}-
 
       - name: 完成ファイルを取ってくる（Release「finals」）
         if: inputs.action == 'upload' && inputs.source == ''
         run: |
-          mkdir -p output/finals
+          mkdir -p "$WORKDIR/finals"
           gh release download finals --repo "${{ github.repository }}" \
-            --pattern "${{ inputs.name }}.mp4" --dir output/finals --clobber
-          ls -la output/finals
+            --pattern "${{ inputs.name }}.mp4" --dir "$WORKDIR/finals" --clobber
+          ls -la "$WORKDIR/finals"
 
       - name: 上げる
         if: inputs.action == 'upload'
         run: |
           SRC="${{ inputs.source }}"
-          if [ -z "$SRC" ]; then SRC="output/finals/${{ inputs.name }}.mp4"; fi
+          if [ -z "$SRC" ]; then SRC="$WORKDIR/finals/${{ inputs.name }}.mp4"; fi
           python -m ytecon publish-file "$SRC" --name "${{ inputs.name }}" --privacy "${{ inputs.privacy }}" \
             | tee publish-report.txt
-          { echo '## 投稿'; echo '```'; cat publish-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "## 投稿（${{ inputs.channel }}）"; echo '```'; cat publish-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 公開にする
         if: inputs.action == 'publish'
@@ -99,13 +112,13 @@ jobs:
           python -m ytecon visibility "${{ inputs.name }}" public \
             ${{ inputs.publish_at != '' && format('--publish-at "{0}"', inputs.publish_at) || '' }} \
             | tee publish-report.txt
-          { echo '## 公開'; echo '```'; cat publish-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "## 公開（${{ inputs.channel }}）"; echo '```'; cat publish-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 状態を保存
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
-            yt-econ/output/state.sqlite3
-            yt-econ/output/goal
-          key: ytecon-state-${{ github.run_id }}
+            yt-econ/${{ env.WORKDIR }}/state.sqlite3
+            yt-econ/${{ env.WORKDIR }}/goal
+          key: ${{ env.STATE_KEY }}-${{ github.run_id }}

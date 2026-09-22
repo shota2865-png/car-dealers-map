@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import logging
 import shutil
@@ -39,8 +40,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("== yt-econ 環境チェック ==\n")
 
     try:
-        cfg = load_config(args.config)
-        print(f"[ok] 設定ファイル: {cfg.root / 'config' / 'channel.yaml'}")
+        cfg = load_config(args.config, channel=args.channel)
+        print(f"[ok] 設定ファイル: {cfg.path}（チャンネル: {cfg.channel_key} / {cfg.get('channel.name', '')}）")
         lo, hi = cfg.target_chars
         print(f"     目標尺 {cfg.get('video.target_minutes_min')}〜"
               f"{cfg.get('video.target_minutes_max')}分 = 約{lo}〜{hi}文字")
@@ -115,7 +116,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for key, required, note in checks:
         val = cfg.env(key)
         if val:
-            print(f"[ok] {key:22s} 設定済み")
+            print(f"[ok] {cfg.env_name(key):22s} 設定済み")
         elif required:
             ok = False
             print(f"[NG] {key:22s} 未設定 — {note}")
@@ -152,7 +153,7 @@ def cmd_topics(args: argparse.Namespace) -> int:
     from .state import Store
     from .topics import select_topics
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     store = Store(cfg.workdir / "state.sqlite3")
     for t in select_topics(cfg, store, args.number):
         print(f"\n■ {t.title}  (score {t.score:.0f} / {t.kind})")
@@ -168,7 +169,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     from .config import load_config
     from .pipeline import Pipeline
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     pipe = Pipeline(cfg)
     results = pipe.run_daily(count=args.number, upload=not args.no_upload)
     print("\n== 結果 ==")
@@ -190,7 +191,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
     from .config import load_config
     from .pipeline import Pipeline
 
-    pipe = Pipeline(load_config(args.config))
+    pipe = Pipeline(load_config(args.config, channel=args.channel))
     print(json.dumps(pipe.resume(args.slug, upload=not args.no_upload),
                      ensure_ascii=False, indent=2))
     return 0
@@ -200,7 +201,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     from .config import load_config
     from .state import STATUSES, Store
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     store = Store(cfg.workdir / "state.sqlite3")
     rows = store.videos_by_status(*STATUSES)
     if not rows:
@@ -219,7 +220,7 @@ def cmd_learn(args: argparse.Namespace) -> int:
     from .config import load_config
     from .learn import learn, load_style
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     out = learn(cfg, args.urls, out=Path(args.out) if args.out else None,
                 lang=args.lang, deep=args.deep, per_channel=args.per_channel,
                 measure_only=args.measure_only)
@@ -289,7 +290,7 @@ def cmd_thumbnail(args: argparse.Namespace) -> int:
         print(f"{img} がありません")
         return 1
     day = dt.date.fromisoformat(args.date) if args.date else None
-    pipe = Pipeline(load_config(args.config))
+    pipe = Pipeline(load_config(args.config, channel=args.channel))
     if args.no_upload:
         from . import thumbnail
         dest = thumbnail.manual_dir(pipe.cfg) / thumbnail.name_for(day, args.slug or "")
@@ -307,7 +308,7 @@ def cmd_publish_file(args: argparse.Namespace) -> int:
     from .state import Store
     from . import finals
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     store = Store(cfg.workdir / "state.sqlite3")
     name = args.name or Path(args.source).stem
     result = finals.publish_file(
@@ -325,7 +326,7 @@ def cmd_visibility(args: argparse.Namespace) -> int:
     from .state import Store
     from . import finals
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     store = Store(cfg.workdir / "state.sqlite3")
     print(json.dumps(finals.set_visibility(cfg, store, args.target, args.privacy,
                                            publish_at=finals.parse_jst(args.publish_at)),
@@ -339,7 +340,7 @@ def cmd_revive(args: argparse.Namespace) -> int:
     from .revive import format_report, run
     from .state import Store
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     if not cfg.get("revive.enabled", True):
         print("revive.enabled が false です")
         return 0
@@ -357,7 +358,7 @@ def cmd_portfolio(args: argparse.Namespace) -> int:
     from .config import load_config
     from .state import Store
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     store = Store(cfg.workdir / "state.sqlite3")
 
     window = int(cfg.get("topics.horizon_window_days", 30))
@@ -388,7 +389,7 @@ def cmd_goal(args: argparse.Namespace) -> int:
     from . import goals
     from .state import Store
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     goal = goals.load_goal(cfg)
     if args.offline:
         print(goals.plan_text(goal))
@@ -420,7 +421,7 @@ def cmd_shorts(args: argparse.Namespace) -> int:
     from .tts import VoiceTrack
     from . import shorts
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     d = _P(args.target)
     if not d.is_dir():
         d = cfg.workdir / args.target
@@ -451,7 +452,7 @@ def cmd_speakers(args: argparse.Namespace) -> int:
     from .config import load_config
     from .tts import VoiceVox
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     for sp in VoiceVox(cfg).speakers():
         for style in sp.get("styles", []):
             print(f"{style['id']:>4}  {sp['name']} / {style['name']}")
@@ -464,7 +465,7 @@ def cmd_script(args: argparse.Namespace) -> int:
     from .script import generate
     from .topics import Topic
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, channel=args.channel)
     topic = Topic(title=args.title, angle=args.angle or "", kind="evergreen")
     s = generate(cfg, topic)
     out = Path(args.out) if args.out else cfg.workdir / "draft_script.json"
@@ -480,6 +481,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ytecon", description="経済解説YouTubeチャンネルの自動運用")
     parser.add_argument("-c", "--config", help="設定ファイルのパス")
+    parser.add_argument("--channel", default=os.environ.get("YTECON_CHANNEL", ""),
+                        help="チャンネルの識別子（config/channels/<key>/channel.yaml）。省略で本体。環境変数 YTECON_CHANNEL でも可")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
