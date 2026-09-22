@@ -207,13 +207,18 @@ output/20260919-070000-.../
 
 ---
 
-## 毎日 1 本（19:00 公開）を自動で回す
+## 毎日 1 本 + Shorts 3 本（19:00 公開）を自動で回す
+
+いちばん確実なのは GitHub Actions です。鍵の作り方から試運転まで
+[`docs/自動投稿の始め方.md`](docs/自動投稿の始め方.md) に順番で書いてあります。
 
 ### A. サーバ / 自宅PC で cron
 
 ```cron
-# JST 17:00 に 1 本作る（予約投稿で 19:00 に公開される。upload.publish_times_jst で変更）
-0 17 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/daily.log 2>&1
+# JST 15:00 に本編 1 本 + Shorts 3 本を作る（予約投稿で 19:00 に公開される。upload.publish_times_jst で変更）
+0 15 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon run -n 1 >> logs/daily.log 2>&1
+# JST 09:00 に目標の進捗と打ち手を記録する
+0 9 * * * cd /path/to/yt-econ && .venv/bin/python -m ytecon goal >> logs/goal.log 2>&1
 ```
 
 ### B. GitHub Actions（PCを起動しっぱなしにしなくていい）
@@ -230,8 +235,8 @@ VOICEVOX は service コンテナとして起動するので、別途用意は�
 「過去に扱った話題」の記憶は Actions のキャッシュで持ち越しています。
 
 > プライベートリポジトリだと Actions の実行時間が課金対象です。
-> 1本あたり20〜35分かかるので、1日1本でも月 600〜1,000 分になり無料枠（2,000分）の半分を使います。
-> 常時稼働PCがあるなら A の cron のほうが安上がりです。
+> 本編 1 本 + Shorts 3 本で 70〜100 分かかるので、月 2,400 分前後になり無料枠（2,000 分）を超えます。
+> リポジトリを公開にする（鍵は Secrets、素材は zip 側なので見えない）か、常時稼働 PC の cron にしてください。
 
 ---
 
@@ -350,8 +355,10 @@ python -m ytecon shorts <slug> -n 3   # Shorts を 3 本書き出す（--upload 
 ```
 
 `ytecon run` は `shorts.per_video`（既定 3）ぶんの Shorts を本編のあとに自動で作って予約します。
-Shorts は「ずんだもんの疑問・ボケ → めたんの数字入りの答え」で完結する区間を点数で選び、
-上にフック見出し、中に図表、下に 2 人、その上に字幕という縦画面で出ます。概要欄には本編のリンクが入ります。
+Shorts は本編の切り出しではなく、本編の材料から LLM が **起・承・転・結** の 45〜55 秒の掛け合いを書き直し、
+音声も新しく合成します（`shorts.mode: story`）。最後は必ず「続きは本編で」の誘導（`shorts.cta`）で終わり、
+画面にも本編の時刻が出ます。上にフック見出し、中に図表、下に 2 人、その上に字幕という縦画面で、
+声は本編より少し速め（`shorts.tts_speed`）。LLM が使えないときは本編の区間の切り出し（cut）に落ちます。
 総再生時間と動画別の視聴率まで取るには、`scripts/auth_youtube.py` を再実行して
 Analytics のスコープ付きの refresh token に差し替えてください（無くても公開統計で動きます）。
 

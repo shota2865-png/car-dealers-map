@@ -226,3 +226,63 @@ def test_shorts_publish_times_are_separate_from_the_long_video(cfg):
     assert long_at.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime("%H:%M") == "19:00"
     assert short_at.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime("%H:%M") == "12:15"
     assert next_publish_time(cfg, 2, base=base, times=cfg.get("shorts.publish_times_jst")) > short_at
+
+
+# ----------------------------------------------------------------------
+# Shorts（story モード: 起承転結のミニ台本）
+# ----------------------------------------------------------------------
+def _story() -> shorts.Story:
+    return shorts.Story(hook="生成AI利用9%対46%", title="日本は安全？AI利用率の落差", section_index=2, beats=[
+        shorts.Beat("起", ["【ずんだもん】[困]海外ではもうAIで仕事が消えていると聞くのだ。"], {"kind": "quote", "text": "仕事が消える？"}),
+        shorts.Beat("承", ["【めたん】総務省の白書によると、生成AIを使った人は日本で約9パーセント。", "【めたん】アメリカは約46パーセントよ。"],
+                    {"kind": "number", "value": "9% vs 46%", "label": "生成AIを使った人の割合", "note": "出典: 総務省"}),
+        shorts.Beat("転", ["【ずんだもん】[驚]じゃあ日本は安全なのだ。", "【めたん】そこは早とちりね。", "【めたん】遅い国ほど一気に入るの。"],
+                    {"kind": "compare", "title": "遅い vs 安全", "items": ["意味|来るのが遅い|来ない"]}),
+        shorts.Beat("結", ["【めたん】今夜は、AIに自分の経験を一つ話してみて。"], {"kind": "steps", "title": "今夜やること", "items": ["経験を一つ話す"]}),
+    ])
+
+
+def test_story_always_ends_with_the_call_to_the_long_video(cfg):
+    st = shorts.with_cta(cfg, _story())
+    assert [b.role for b in st.beats] == ["起", "承", "転", "結", "誘導"]
+    assert "本編" in st.beats[-1].lines[0]
+    assert st.beats[-1].visual["kind"] == "cta"
+    shorts.with_cta(cfg, st)                                   # 2 回呼んでも増えない
+    assert sum(1 for b in st.beats if b.role == "誘導") == 1
+
+
+def test_story_becomes_a_script_the_tts_and_subtitles_understand(cfg):
+    st = shorts.with_cta(cfg, _story())
+    mini = shorts.story_script(cfg, st, _script())
+    blocks = dict(mini.narration_blocks)
+    assert [k for k in blocks if k.startswith("s")] == ["s0", "s1", "s2", "s3", "s4"]
+    assert blocks["hook"] == "" and blocks["closing"] == ""      # タイトルカードもアウトロも無い
+    assert "【ずんだもん】" in blocks["s0"] and blocks["s4"].startswith("【ずんだもん】続きは本編で")
+    assert mini.sections[2].diagrams[0].type == "compare"        # 転の比較は図解として描ける
+    assert mini.sections[1].diagrams == []                       # 数字カードは図解ではない
+    assert mini.title_candidates == [st.title]
+    assert st.chars == sum(len(shorts.strip_tags(x)) for b in st.beats for x in b.lines)
+
+
+def test_story_cta_card_and_hook_band_render(cfg, tmp_path):
+    from PIL import Image
+    sc = shorts.shorts_config(cfg)
+    assets.apply_layout(sc)
+    p = shorts.render_cta_card(sc, tmp_path / "cta.png")
+    img = Image.open(p)
+    assert img.size == (1080, 1920)
+    # 背景を落とす層（半透明）は全面に掛かるので、文字（不透明）だけの範囲を見る
+    bbox = img.getchannel("A").point(lambda a: 255 if a > 200 else 0).getbbox()
+    assert bbox[1] >= sc.get("layout.top_band") - 40            # 見出しの帯には掛からない
+    assert bbox[3] <= 1920 - sc.get("layout.sub_band") + 40     # 字幕と立ち絵の帯にも掛からない
+    h = Image.open(shorts.render_hook_band(sc, "生成AI利用9%対46%", tmp_path / "hook.png"))
+    hb = h.getchannel("A").getbbox()
+    assert hb[3] <= sc.get("layout.top_band")                    # 見出しは帯の中に収まる
+    assets.apply_layout(cfg)
+
+
+def test_shorts_speak_a_little_faster_than_the_long_video(cfg):
+    sc = shorts.shorts_config(cfg)
+    assert sc.get("tts.voicevox.speed") > cfg.get("tts.voicevox.speed")
+    assert sc.get("tts.voicevox.pause_sentence") < cfg.get("tts.voicevox.pause_sentence")
+    assert cfg.get("tts.voicevox.speed") == 1.2                  # 本編は生涯賃金の回と同じ速さ

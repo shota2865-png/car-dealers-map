@@ -1,26 +1,27 @@
-name: 毎日2本を自動生成して投稿
+name: 毎日 本編1本 + Shorts 3本を自動生成して予約投稿
 
 # ------------------------------------------------------------
 # GitHub のサーバーで動くので、あなたのパソコンには何も入れません。
-# タブを閉じても消えません。決めた時刻に勝手に動きます。
+# JST 15:00 に生成を始め、本編は 19:00、Shorts は翌日の 12:15 / 18:00 / 22:30 に予約公開されます。
 #
 # 必要な設定（リポジトリの Settings → Secrets and variables → Actions）:
 #   CLAUDE_CODE_OAUTH_TOKEN   claude setup-token で作る（サブスクの枠で台本生成）
-#   YOUTUBE_CLIENT_ID         Google Cloud Console
+#                             ※ 代わりに ANTHROPIC_API_KEY を入れれば API（従量課金）で動く
+#   YOUTUBE_CLIENT_ID         Google Cloud Console（OAuth クライアント・デスクトップ）
 #   YOUTUBE_CLIENT_SECRET     同上
-#   YOUTUBE_REFRESH_TOKEN     scripts/auth_youtube.py で取得
-#   PEXELS_API_KEY            任意（無ければグラデーション背景）
+#   YOUTUBE_REFRESH_TOKEN     scripts/auth_youtube.py で取得（Analytics のスコープ付き）
+#   MATERIALS_URL             立ち絵 PSD と BGM を入れた zip の直リンク（任意。無いと仮キャラ・BGM なし）
+#   PEXELS_API_KEY            任意（写真素材）
+# 手順は yt-econ/docs/自動投稿の始め方.md
 # ------------------------------------------------------------
 
 on:
   schedule:
-    # UTC 表記。JST 06:00 と JST 18:00 に生成を始め、予約投稿で 07:30 / 19:30 に公開する
-    - cron: "0 21 * * *"   # JST 06:00
-    - cron: "0 9 * * *"    # JST 18:00
+    - cron: "0 6 * * *"    # JST 15:00 に開始（本編 + Shorts で 60〜100 分かかる）
   workflow_dispatch:
     inputs:
       count:
-        description: "作る本数"
+        description: "本編の本数"
         default: "1"
       upload:
         description: "YouTube に投稿するか（false にすると mp4 を成果物として残すだけ）"
@@ -31,16 +32,29 @@ concurrency:
   group: ytecon-daily
   cancel-in-progress: false
 
+env:
+  PYTHONPATH: src
+  VOICEVOX_URL: http://127.0.0.1:50021
+  # claude コマンドがあれば自動でサブスク経由（claude_code）、無ければ ANTHROPIC_API_KEY（api）
+  YTECON_LLM_PROVIDER: auto
+  CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+  YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+  YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+  YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+  MATERIALS_URL: ${{ secrets.MATERIALS_URL }}
+
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 170
     defaults:
       run:
         working-directory: yt-econ
 
     services:
-      # ずんだもんの声。コンテナとして横で立てるので、何も入れなくていい
+      # ずんだもん・四国めたんの声。コンテナとして横で立てるので、何も入れなくていい
       voicevox:
         image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
         ports:
@@ -67,72 +81,86 @@ jobs:
       - name: Python 依存を入れる
         run: pip install -r requirements.txt
 
-      # 台本生成は Claude Code の headless モードで行う。
-      # サブスクのトークンを使うので、API の従量課金が発生しない
+      # 台本生成は Claude Code の headless モード（サブスクの枠）。トークンが無ければ入れない
       - name: Claude Code を入れる
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
         run: npm install -g @anthropic-ai/claude-code
 
-      # 過去に扱った話題の記憶（state.sqlite3）を持ち越す。
-      # これが無いと毎回同じテーマを作ってしまう
+      # --- 素材 -----------------------------------------------------------
+      # 動く背景（Mixkit の実写 1080p、2〜3GB）はキャッシュに置く。初回だけ取得に 10〜20 分かかる
+      - name: 背景素材のキャッシュを復元
+        id: footage
+        uses: actions/cache@v4
+        with:
+          path: yt-econ/assets/footage
+          key: ytecon-footage-v1
+
+      - name: 背景素材を集める（初回だけ）
+        if: steps.footage.outputs.cache-hit != 'true'
+        run: python -m ytecon.freeassets --videos 2 --min-height 1080 --broll-only
+
+      # 立ち絵（PSD）と BGM は配布元の規約で再配布できないので、あなたが置いた zip から展開する。
+      # zip の中身は assets/ と同じ構造（assets/character/<素材名>/*.psd, assets/bgm/*.mp3）
+      - name: 立ち絵と BGM を展開
+        if: env.MATERIALS_URL != ''
+        run: |
+          curl -sSL -o /tmp/materials.zip "$MATERIALS_URL"
+          unzip -o -q /tmp/materials.zip -d .
+          ls -R assets/character assets/bgm | head -40
+
+      # --- 状態 -----------------------------------------------------------
+      # 過去に扱った話題・投稿済みの動画 ID・目標の記録を持ち越す。これが無いと毎回同じテーマを作る
       - name: 前回までの状態を復元
         uses: actions/cache/restore@v4
         with:
-          path: yt-econ/output/state.sqlite3
+          path: |
+            yt-econ/output/state.sqlite3
+            yt-econ/output/goal
           key: ytecon-state-${{ github.run_id }}
           restore-keys: ytecon-state-
 
       - name: VOICEVOX の起動待ち
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 45); do
             curl -sf http://127.0.0.1:50021/version && break
             sleep 2
           done
 
       - name: 環境チェック
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          YTECON_LLM_PROVIDER: claude_code
-          VOICEVOX_URL: http://127.0.0.1:50021
         run: python -m ytecon doctor || true
 
+      # --- 目標の進捗（昨日までの数字）。生成より先に見て、サマリに残す --------
+      - name: 目標の進捗と打ち手
+        if: github.event.inputs.upload != 'false'
+        run: |
+          python -m ytecon goal | tee goal-report.txt || true
+          { echo '## 目標の進捗'; echo '```'; cat goal-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+
+      # --- 生成して投稿（本編 → Shorts 3 本） ----------------------------------
       - name: 生成して投稿
-        env:
-          PYTHONPATH: src
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          YTECON_LLM_PROVIDER: claude_code
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          VOICEVOX_URL: http://127.0.0.1:50021
         run: |
           python -m ytecon run \
             -n "${{ github.event.inputs.count || 1 }}" \
-            ${{ github.event.inputs.upload == 'false' && '--no-upload' || '' }}
+            ${{ github.event.inputs.upload == 'false' && '--no-upload' || '' }} | tee run-report.txt
+          { echo '## 生成結果'; echo '```'; tail -30 run-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
-      # 寝かせた動画のテーマが日本で話題化していないか毎日照合する。
-      # 生成が失敗した日でも、こちらは回しておく価値がある
+      # 寝かせた動画のテーマが日本で話題化していないか毎日照合する
       - name: 寝かせた動画の掘り起こし
         if: always()
-        env:
-          PYTHONPATH: src
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          YTECON_LLM_PROVIDER: claude_code
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: python -m ytecon revive | tee revive-report.txt
+        run: python -m ytecon revive | tee revive-report.txt || true
 
       - name: 掘り起こしレポートをサマリに出す
         if: always()
-        run: cat revive-report.txt >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          { echo '## 掘り起こし'; echo '```'; cat revive-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: 状態を保存
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: yt-econ/output/state.sqlite3
+          path: |
+            yt-econ/output/state.sqlite3
+            yt-econ/output/goal
           key: ytecon-state-${{ github.run_id }}
 
       # 投稿しない設定のときは、できた mp4 をここからダウンロードできる
@@ -145,6 +173,7 @@ jobs:
           path: |
             yt-econ/output/**/video.mp4
             yt-econ/output/**/script.json
+            yt-econ/output/**/story.json
             yt-econ/output/**/metadata.json
             yt-econ/output/**/subtitles.srt
             yt-econ/output/**/thumbnail.jpg

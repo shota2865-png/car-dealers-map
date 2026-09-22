@@ -4,9 +4,15 @@
 Shorts の発見面から来るので、本編 1 本から 2〜3 本の Shorts を自動で切り出し、
 本編への導線（概要欄のリンク）を付けて別枠の時刻に投稿する。
 
+2 つの作り方がある（shorts.mode）:
+  story（既定）: 本編の台本を材料に、LLM が 1 本ごとに 起・承・転・結 の 45〜55 秒の掛け合いを
+                 書き直し、音声も新しく合成する。切り出しではないので 1 本で話が閉じる。
+                 最後は必ず本編への誘導（shorts.cta）で終わり、画面にも「続きは本編で」を出す
+  cut          : 本編の音声から区間を切り出す（LLM が使えないときの予備）
+
 やっていること:
   1. 台本と音声のタイムコードから「ずんだもんのボケ／質問 → めたんの数字入りの答え」で
-     完結する 30〜58 秒の窓を探し、点数を付けて重ならないように上位を選ぶ
+     完結する 30〜58 秒の窓を探し、点数を付けて重ならないように上位を選ぶ（cut）
   2. その区間の音声を切り出し、本編と同じ部品（シーン計画・字幕・立ち絵・BGM）を
      縦画面の設定で回す。上にフック見出し、下に 2 人、そのすぐ上に字幕
   3. 本編のリンク入りのメタデータを書く（Shorts はサムネ不要・字幕は焼き込み）
@@ -27,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
-from .script import VideoScript, plain_heading, strip_tags
+from .script import Diagram, Section, VideoScript, Visual, plain_heading, strip_tags
 from .tts import Line, VoiceTrack
 
 log = logging.getLogger(__name__)
@@ -279,6 +285,11 @@ def shorts_config(cfg: Config) -> Config:
     ch = raw.setdefault("character", {})
     ch["height_ratio"] = ratio
     ch["margin_bottom"] = 0
+    # Shorts は本編より少しだけ速く、間を詰める（指を止めた 1 秒を無駄にしない）
+    vv = raw.setdefault("tts", {}).setdefault("voicevox", {})
+    vv["speed"] = float(sc.get("tts_speed", 1.25))
+    vv["pause_sentence"] = float(sc.get("pause_sentence", 0.22))
+    vv["pause_section"] = float(sc.get("pause_section", 0.45))
     return Config(raw=raw, root=cfg.root)
 
 
@@ -353,7 +364,8 @@ def shorts_metadata(cfg: Config, script: VideoScript, w: Window, parent_url: str
         parts.append(f"▶ 本編{('（' + mins + '）') if mins else ''}はこちら\n{parent_url}")
     else:
         parts.append("▶ 本編はチャンネルの最新動画から")
-    parts.append("寝る前に聴く、お金と就活とAIの話。毎日19:00に本編を更新しています。")
+    times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
+    parts.append(f"寝る前に聴く、お金と就活とAIの話。毎日{times[0] if times else '夜'}に本編を更新しています。")
     parts.append("■ 音声\n" + md._voice_credit(cfg))
     credits = [c for c in detect_credits(cfg) + [str(cfg.get("render.bgm.credit", "") or "").strip()] if c]
     if credits:
@@ -394,21 +406,306 @@ def build_short(cfg: Config, script: VideoScript, track: VoiceTrack, w: Window, 
     return {"dir": str(d), "video": str(video), "meta": meta, "window": w, "srt": str(subs["srt"])}
 
 
+# ----------------------------------------------------------------------
+# 4. story モード: 起承転結のミニ台本を書いて、音声から作る
+# ----------------------------------------------------------------------
+BEATS = ("起", "承", "転", "結")
+_DEFAULT_CTA = ["【ずんだもん】続きは本編で聞くのだ。", "【めたん】本編は毎日19時。概要欄から飛べるわ。"]
+
+
+@dataclass
+class Beat:
+    role: str                                # 起 / 承 / 転 / 結 / 誘導
+    lines: list[str]                         # 話者タグ付きの文
+    visual: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+@dataclass
+class Story:
+    """Shorts 1 本ぶんのミニ台本."""
+    hook: str                                # 画面上部の見出し（≦ 14 字）
+    title: str                               # 投稿タイトル（≦ 28 字）
+    beats: list[Beat]
+    section_index: int = -1
+    query: str = ""                          # 背景選びの英語キーワード
+    sources: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def chars(self) -> int:
+        return sum(len(strip_tags(ln)) for b in self.beats for ln in b.lines)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"hook": self.hook, "title": self.title, "section_index": self.section_index,
+                "chars": self.chars,
+                "beats": [{"role": b.role, "lines": b.lines, "visual": b.visual} for b in self.beats]}
+
+
+_STORY_SYSTEM = """あなたは YouTube Shorts の構成作家です。経済・お金・就活・AI を扱う、2 人の掛け合いのチャンネルの
+本編（15 分）から、単体で成立する 45〜55 秒の Shorts を書きます。
+
+Shorts の視聴者は最初の 1 秒で指を止めるかを決め、退屈した瞬間に次へ送ります。
+だから「途中を切り出したもの」ではなく、**1 本で 起・承・転・結 が閉じる小さな話**にしてください。
+面白いか、役に立つか。どちらかが無い Shorts は最後まで見られません。両方あるのが理想です。
+
+出演者:
+{cast}
+
+守ること:
+- 文は 1 文 12〜28 字。1 文ずつ改行し、文頭に話者タグ（【めたん】【ずんだもん】）を付ける。地の文は書かない
+- 全体で 280〜360 字（タグを除く）。少ないと薄く、これを超えると 60 秒に収まらない
+- 起（1〜2 文、ずんだもん）: 視聴者が自分ごとにできる具体的な状況か、意外な数字で始める。
+  「こんにちは」「今日は」は禁止。前置きなしで、いきなり本題
+- 承（2〜3 文、めたん）: 事実を数字と出典つきで。出典は「総務省の白書によると」のように文中で
+- 転（3〜4 文）: ずんだもんが極端な結論に飛び、めたんが「そこは違うの」「むしろ」で視点を返す。ここが山場
+- 結（2 文、めたん）: 視聴者が今夜できる 1 つの小さな行動、または覚えて帰る 1 つの数字。説教にしない
+- 数字は本編の台本にあるものだけを使う。新しい統計や社名を作らない。断定的な投資助言はしない
+- ずんだもんの語尾は「〜のだ」「〜なのだ」、一人称は「ぼく」。めたんは「〜よ」「〜ね」「〜わ」「〜の」で、です・ます調にしない
+- 感情が動く文には文頭に表情タグ [驚] [困] [笑] [考] [指] を付けてよい（話者タグの後ろ）
+- 本編への誘導の文はこちらで最後に足すので、書かない
+
+画面（visual）は各ビートに 1 つ。次のどれか:
+- {{"kind": "number", "value": "9% vs 46%", "label": "生成AIを使った人の割合", "note": "出典: 総務省"}}
+- {{"kind": "compare", "title": "AIの文 vs 自分の文", "items": ["速さ|速い|遅い", "材料|一般論|自分の事実"]}}
+- {{"kind": "table", "title": "…", "items": ["項目|値", "項目|値"]}}（2〜4 行）
+- {{"kind": "steps", "title": "今夜やること", "items": ["…", "…"]}}（2〜3 行、各 ≦ 14 字）
+- {{"kind": "quote", "text": "体言止めの一句（≦ 18 字）", "source": ""}}
+起は quote か number、承は number か table、転は compare か quote、結は steps か quote が合います。
+"""
+
+_STORY_USER = """# 本編のタイトル
+{title}
+
+# 本編の台本（セクションごと。ここにある事実・数字・出典だけを使う）
+{body}
+
+# 出典
+{sources}
+
+# 依頼
+この本編から、互いに別のセクションを土台にした Shorts を {n} 本書いてください。
+1 本ごとに、いちばん「指が止まる」入口（数字の落差・誤解の訂正・視聴者の痛いところ）を選ぶこと。
+hook は画面上部に常に出る見出しで 14 字以内（数字があれば入れる、名詞止め）。
+title は投稿タイトルで 28 字以内（疑問形か数字入り。煽り語「ヤバい」「終わった」は使わない）。
+"""
+
+
+def _story_schema():
+    from . import llm
+    visual = llm.obj({"kind": llm.STR, "value": llm.STR, "label": llm.STR, "note": llm.STR,
+                      "title": llm.STR, "items": llm.arr(llm.STR), "text": llm.STR, "source": llm.STR},
+                     ["kind"])
+    beat = llm.obj({"role": llm.STR, "lines": llm.arr(llm.STR), "visual": visual}, ["role", "lines", "visual"])
+    item = llm.obj({"section_index": {"type": "integer"}, "hook": llm.STR, "title": llm.STR,
+                    "beats": llm.arr(beat)}, ["section_index", "hook", "title", "beats"])
+    return llm.obj({"items": llm.arr(item)}, ["items"])
+
+
+def _script_body(script: VideoScript) -> str:
+    parts = []
+    for i, sec in enumerate(script.sections):
+        extra = []
+        for c in sec.cards:
+            extra.append(f"  カード: {c.text}" + (f"（{c.source}）" if c.source else ""))
+        for g in sec.diagrams:
+            extra.append(f"  図解({g.type}): {g.title} / " + " ; ".join(g.items))
+        parts.append(f"[{i}] {plain_heading(sec.heading)}\n{sec.narration.strip()}\n" + "\n".join(extra))
+    return "\n\n".join(parts)
+
+
+def write_stories(cfg: Config, script: VideoScript, n: int) -> list[Story]:
+    """LLM に n 本ぶんのミニ台本を書かせる。失敗したら例外（呼び出し側が cut に落とす）."""
+    from . import llm
+    from .script import speech_style
+
+    cast = "\n".join(
+        f"- 【{c.get('tag') or c.get('name')}】{c.get('name')}: {str(c.get('persona', '')).strip()}"
+        for c in (cfg.get("cast.characters", []) or [])
+    ) or speech_style(cfg)
+    sources = "\n".join(f"- {s.get('name', '')} {s.get('url', '')}".rstrip() for s in (script.sources or [])) or "（なし）"
+    out = llm.complete_json(
+        _STORY_SYSTEM.format(cast=cast),
+        _STORY_USER.format(title=strip_tags(script.topic_title), body=_script_body(script), sources=sources, n=n),
+        _story_schema(),
+        model=str(cfg.get("shorts.model", cfg.get("script.model", "claude-sonnet-5"))),
+        effort=str(cfg.get("shorts.effort", "medium")),
+    )
+    stories: list[Story] = []
+    for it in (out.get("items") or [])[:n]:
+        beats = []
+        for b in it.get("beats") or []:
+            lines = [str(x).strip() for x in (b.get("lines") or []) if str(x).strip()]
+            if lines:
+                beats.append(Beat(role=str(b.get("role", "")), lines=lines,
+                                  visual={k: v for k, v in (b.get("visual") or {}).items() if v not in ("", [], None)}))
+        if not beats:
+            continue
+        idx = int(it.get("section_index", -1))
+        sec = script.sections[idx] if 0 <= idx < len(script.sections) else None
+        st = Story(hook=strip_tags(str(it.get("hook", "")))[:20], title=strip_tags(str(it.get("title", "")))[:40],
+                   beats=beats, section_index=idx,
+                   query=(sec.visual.query if sec else "") or "", sources=list(script.sources or []))
+        stories.append(st)
+    if not stories:
+        raise RuntimeError("Shorts の台本が返りませんでした")
+    return stories
+
+
+def with_cta(cfg: Config, story: Story) -> Story:
+    """最後に本編への誘導を足す（shorts.cta。無ければ既定の 2 文）."""
+    cta = [str(x) for x in (cfg.get("shorts.cta") or _DEFAULT_CTA)]
+    if story.beats and story.beats[-1].role == "誘導":
+        return story
+    story.beats.append(Beat(role="誘導", lines=cta, visual={"kind": "cta"}))
+    return story
+
+
+def story_script(cfg: Config, story: Story, parent: VideoScript) -> VideoScript:
+    """ミニ台本を、音声合成と字幕がそのまま扱える VideoScript にする（ビート = セクション）."""
+    sections = []
+    for b in story.beats:
+        v = b.visual or {}
+        diagrams = []
+        if v.get("kind") in ("compare", "table", "steps", "flow", "balance") and v.get("items"):
+            diagrams.append(Diagram(type=str(v["kind"]), title=str(v.get("title", "")),
+                                    items=[str(x) for x in v["items"]][:5],
+                                    note=str(v.get("note", "")), after_sentence=0))
+        sections.append(Section(heading=b.role, narration=b.text, on_screen=[],
+                                visual=Visual(kind="textcard", query=story.query),
+                                beat=b.role, diagrams=diagrams))
+    return VideoScript(
+        topic_title=story.title or parent.topic_title, hook="", proof="", promise="",
+        sections=sections, closing="", title_candidates=[story.title], description="",
+        tags=list(parent.tags), thumbnail_copy={}, sources=list(parent.sources or []),
+        terms=[], disclaimer=parent.disclaimer,
+    )
+
+
+def render_cta_card(cfg: Config, out: Path) -> Path:
+    """最後の画面: 続きは本編で。投稿時刻は upload.publish_times_jst から."""
+    from . import assets
+    img, d, pal, w, h = assets._card_base(cfg, assets.card_style(cfg, "quote"))
+    times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
+    when = f"本編は毎日{times[0]}" if times else "本編はチャンネルで"
+    f1 = assets.load_font(cfg, assets.ts(cfg, "display_l", 96), "black")
+    f2 = assets.load_font(cfg, assets.ts(cfg, "headline_m", 64), "black")
+    lh1, lh2 = int(f1.size * 1.3), int(f2.size * 1.4)
+    total = lh1 + lh2 + 20
+    y = assets.TOP_BAND + (h - assets.SUB_BAND - assets.TOP_BAND - total) // 2
+    assets._center_text(d, "続きは本編で", f1, y, w, pal["text"])
+    assets._center_text(d, when + "  ▶ 概要欄", f2, y + lh1 + 20, w, pal["accent"])
+    return assets._save(img, out)
+
+
+def plan_story_scenes(cfg: Config, story: Story, mini: VideoScript, track: VoiceTrack, outdir: Path) -> list:
+    """ビートごとに 1 画面（図解はハイライト付き）。誘導は専用カード."""
+    from . import assets
+    from . import scenes as scenes_mod
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    assets.apply_layout(cfg)
+    painter = scenes_mod._Painter(cfg, outdir)
+    painter.words = story.query
+    scenes: list = []
+    for i, (b, sec) in enumerate(zip(story.beats, mini.sections)):
+        lines = [ln for ln in track.lines if ln.block_id == f"s{i}"]
+        if not lines:
+            continue
+        s, e = lines[0].start, lines[-1].end
+        v = b.visual or {}
+        kind = str(v.get("kind", ""))
+        try:
+            if kind == "cta":
+                p = render_cta_card(cfg, painter._next("cta"))
+                scenes.append(painter._bg(scenes_mod.Scene(p, s, e, True, "card", "本編へ")))
+            elif kind == "number" and v.get("value"):
+                scenes.append(painter.number(str(v["value"]), str(v.get("label", "")), str(v.get("note", "")), s, e))
+            elif sec.diagrams:
+                scenes.extend(painter.diagram(sec.diagrams[0], s, e, lines=lines))
+            elif kind == "quote" and v.get("text"):
+                scenes.append(painter.quote(str(v["text"]), s, e, source=str(v.get("source", ""))))
+            elif kind == "bullets" and v.get("items"):
+                scenes.extend(painter.bullets(str(v.get("title", "")), [str(x) for x in v["items"]], s, e, lines))
+            else:
+                scenes.append(painter.quote(scenes_mod.nominalize(strip_tags(b.lines[0])), s, e))
+        except Exception as exc:                          # 画面 1 枚の失敗で止めない
+            log.warning("Shorts の画面（%s）を描けなかったので一文カードにします: %s", kind, exc)
+            scenes.append(painter.quote(scenes_mod.nominalize(strip_tags(b.lines[0])), s, e))
+    scenes.sort(key=lambda x: x.start)
+    for a, b2 in zip(scenes, scenes[1:]):
+        a.end = b2.start
+    if scenes:
+        scenes[0].start = 0.0
+        scenes[-1].end = track.duration + 0.8
+    return scenes
+
+
+def build_story_short(cfg: Config, parent: VideoScript, story: Story, outdir: Path, index: int,
+                      parent_url: str = "", parent_minutes: float = 0.0) -> dict[str, Any]:
+    """ミニ台本 → 音声合成 → 縦画面。outdir/shorts/short_NN/ に書き出す."""
+    from . import render, subtitles, tts
+
+    d = Path(outdir) / "shorts" / f"short_{index:02d}"
+    d.mkdir(parents=True, exist_ok=True)
+    scfg = shorts_config(cfg)
+    story = with_cta(cfg, story)
+    mini = story_script(cfg, story, parent)
+    mini.save(d / "script.json")
+    (d / "story.json").write_text(json.dumps(story.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    track = tts.synthesize(scfg, mini, d)
+    max_s = float(cfg.get("shorts.max_seconds", 58))
+    if track.duration > max_s + 4:
+        log.warning("Shorts %02d は %.0f 秒（上限 %.0f）。台本が長すぎます", index, track.duration, max_s)
+    scenes = plan_story_scenes(scfg, story, mini, track, d / "images")
+    subs = subtitles.build(scfg, track, d, script=mini, reserve_right=0)
+    hook_png = render_hook_band(scfg, story.hook, d / "hook.png")
+    video = render.render(scfg, mini, track, scenes, subs["ass"], d, overlays=[(hook_png, "0:0")])
+
+    w = Window(0.0, track.duration, track.lines, f"story{index}", hook=story.hook,
+               reasons=[f"title:{story.title}"] if story.title else [])
+    meta = shorts_metadata(cfg, parent, w, parent_url, parent_minutes=parent_minutes)
+    (d / "metadata.json").write_text(json.dumps(meta.__dict__, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("Shorts %02d（story）: %.1f秒 / %d字 / %s / %s", index, track.duration, story.chars, story.hook, video)
+    return {"dir": str(d), "video": str(video), "meta": meta, "window": w, "srt": str(subs["srt"]), "story": story}
+
+
 def build_all(cfg: Config, script: VideoScript, track: VoiceTrack, outdir: Path,
               n: int | None = None, parent_url: str = "") -> list[dict[str, Any]]:
-    """本編 1 本から n 本の Shorts を作る。0 本なら何もしない."""
+    """本編 1 本から n 本の Shorts を作る。0 本なら何もしない.
+
+    既定は story（LLM が起承転結を書き直し、音声も合成する）。LLM が使えなければ cut に落ちる。
+    """
     count = int(n if n is not None else cfg.get("shorts.per_video", 0))
     if count <= 0:
         return []
+    mode = str(cfg.get("shorts.mode", "story")).lower()
+    results: list[dict[str, Any]] = []
+    if mode == "story":
+        try:
+            stories = write_stories(cfg, script, count)
+        except Exception as exc:
+            log.warning("Shorts の台本を書けなかったので、本編の切り出し（cut）で作ります: %s", exc)
+            stories = []
+        for i, st in enumerate(stories, 1):
+            try:
+                results.append(build_story_short(cfg, script, st, outdir, i, parent_url=parent_url,
+                                                 parent_minutes=track.duration / 60))
+            except Exception as exc:               # 1 本失敗しても残りは作る
+                log.error("Shorts %02d の生成に失敗: %s", i, exc)
+        if results:
+            return results
     wins = candidates(cfg, script, track, n=count)
     if not wins:
         log.warning("Shorts にできる区間が見つかりませんでした")
         return []
     refine_hooks(cfg, script, wins)
-    results = []
     for i, w in enumerate(wins, 1):
         try:
             results.append(build_short(cfg, script, track, w, outdir, i, parent_url=parent_url))
-        except Exception as exc:               # 1 本失敗しても残りは作る
+        except Exception as exc:
             log.error("Shorts %02d の生成に失敗: %s", i, exc)
     return results
