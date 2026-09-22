@@ -120,7 +120,14 @@ def find_thumbnail(cfg: Config, name: str) -> Path | None:
 
 
 def fetch(source: str, dest: Path) -> Path:
-    """URL ならダウンロード、ローカルならそのまま."""
+    """URL ならダウンロード、ローカルならそのまま。Google Drive の共有リンクは gdown で落とす."""
+    if "drive.google.com" in source or "docs.google.com" in source:
+        import gdown                                 # 大きいファイルの「ウイルススキャンできません」確認を越えるため
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        got = gdown.download(url=source, output=str(dest), quiet=False, fuzzy=True)
+        if not got or not dest.exists() or dest.stat().st_size < 1024:
+            raise RuntimeError("Google Drive から取得できませんでした。共有設定が「リンクを知っている全員」になっているか確認してください")
+        return dest
     if re.match(r"^https?://", source):
         import requests
         dest.parent.mkdir(parents=True, exist_ok=True)

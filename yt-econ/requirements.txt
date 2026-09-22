@@ -26,5 +26,8 @@ google-auth-httplib2>=0.2
 # 参考にしたい動画の字幕とメタデータだけ取得する。動画本体は落とさない
 yt-dlp>=2024.4.9
 
+# --- 手で仕上げた動画を Google Drive から取る（ytecon publish-file）---
+gdown>=5.0
+
 # --- 開発用 ---
 pytest>=8.0
