@@ -24,7 +24,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dotenv import load_dotenv  # noqa: E402
-from google_auth_oauthlib.flow import InstalledAppFlow  # noqa: E402
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -34,6 +33,33 @@ SCOPES = [
 ]
 
 
+def exchange_code(client_id: str, client_secret: str, code: str) -> int:
+    """ブラウザが開けない環境用: 認可 URL を別の端末で開き、戻り先 URL の code をここに渡す.
+
+        python scripts/auth_youtube.py --code 4/0A...   （code= の値、または戻り先 URL 全体）
+    """
+    import requests
+    from urllib.parse import parse_qs, urlparse
+
+    if "code=" in code:
+        code = parse_qs(urlparse(code).query).get("code", [code])[0]
+    r = requests.post("https://oauth2.googleapis.com/token", data={
+        "code": code, "client_id": client_id, "client_secret": client_secret,
+        "redirect_uri": "http://localhost", "grant_type": "authorization_code",
+    }, timeout=30)
+    d = r.json()
+    if not r.ok or not d.get("refresh_token"):
+        print(f"交換に失敗しました: {d.get('error')} {d.get('error_description', '')}")
+        return 1
+    out = Path(__file__).resolve().parents[1] / ".env"
+    lines = [ln for ln in (out.read_text().splitlines() if out.exists() else [])
+             if not ln.startswith("YOUTUBE_REFRESH_TOKEN=")]
+    lines.append(f"YOUTUBE_REFRESH_TOKEN={d['refresh_token']}")
+    out.write_text("\n".join(lines) + "\n")
+    print(f"refresh token を {out} に保存しました（スコープ: {d.get('scope', '')}）")
+    return 0
+
+
 def main() -> int:
     load_dotenv(Path(__file__).resolve().parents[1] / ".env")
     client_id = os.environ.get("YOUTUBE_CLIENT_ID")
@@ -41,6 +67,9 @@ def main() -> int:
     if not client_id or not client_secret:
         print("YOUTUBE_CLIENT_ID と YOUTUBE_CLIENT_SECRET を .env に設定してください")
         return 1
+    if len(sys.argv) >= 3 and sys.argv[1] == "--code":
+        return exchange_code(client_id, client_secret, sys.argv[2])
+    from google_auth_oauthlib.flow import InstalledAppFlow   # ブラウザを開く経路でだけ要る
 
     flow = InstalledAppFlow.from_client_config(
         {
