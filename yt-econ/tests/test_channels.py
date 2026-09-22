@@ -252,3 +252,39 @@ def test_thumbnail_style_switch(monkeypatch, tmp_path):
     thumbnail.build(Config(raw={"thumbnail": {"style": "framed"}}), _V(), tmp_path / "a.jpg")
     thumbnail.build(Config(raw={}), _V(), tmp_path / "b.jpg")
     assert calls == {"framed": ("見出し", "補足"), "bar": ("見出し", "補足")}
+
+
+# --- 表のセルは枠からはみ出さない ------------------------------------------------
+def _needed_height(d, font, lines, spacing=1.15):
+    bb = d.textbbox((0, 0), "".join(lines), font=font)
+    return int(font.size * spacing) * (len(lines) - 1) + (bb[3] - bb[1])
+
+
+@pytest.mark.parametrize("channel", ["main", "psych"])
+def test_table_cells_fit_inside_box(channel):
+    from PIL import Image, ImageDraw
+    from ytecon import assets, shorts
+    cfg = load_config(channel=channel)
+    for c in (cfg, shorts.shorts_config(cfg)):      # 本編と Shorts（文字が 1.2 倍）の両方
+        d = ImageDraw.Draw(Image.new("RGB", (100, 100)))
+        for text in ("中央値66日（18〜254日）", "美容整形外科医マクスウェル・マルツ", "96人の日常行動を12週間追った実測の中央値", "21日"):
+            for box_w, box_h in ((360, 110), (240, 90), (520, 60)):
+                f, lines = assets._fit_cell(c, d, text, "title", box_w, box_h, max_lines=2, min_size=24)
+                assert lines and all(d.textlength(ln, font=f) <= box_w for ln in lines), (text, box_w)
+                assert _needed_height(d, f, lines) <= box_h + 2, (text, box_w, box_h, f.size, lines)
+
+
+def test_compare_and_table_render_in_both_layouts(tmp_path):
+    from PIL import Image
+    from ytecon import assets, shorts
+    items = ["出所|1960年の観察|2010年の実測", "日数|21日|中央値66日（18〜254日）", "対象|手術後の患者|96人の日常行動を12週間"]
+    for c in (load_config(), shorts.shorts_config(load_config(channel="psych"))):
+        assets.apply_layout(c)
+        try:
+            p1 = assets.render_compare(c, "21日説 vs 実測", items, "出典", tmp_path / "c.png", active=1)
+            p2 = assets.render_table(c, "21日説の正体", ["出どころ|1960年の著書", "書いた人|美容整形外科医マクスウェル・マルツ"], "",
+                                     tmp_path / "t.png", active=0)
+            w, h = c.get("video.resolution", [1920, 1080])
+            assert Image.open(p1).size == (w, h) and Image.open(p2).size == (w, h)
+        finally:
+            assets.apply_layout(load_config())

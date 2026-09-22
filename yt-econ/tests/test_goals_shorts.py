@@ -15,7 +15,8 @@ from ytecon.tts import Line, VoiceTrack
 
 @pytest.fixture
 def cfg():
-    return load_config()
+    import copy
+    return copy.deepcopy(load_config())
 
 
 @pytest.fixture
