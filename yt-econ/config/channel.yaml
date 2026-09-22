@@ -353,6 +353,9 @@ upload:
   category_id: "25"      # News & Politics（経済解説はここか 27:Education）
   language: "ja"
   playlist_title: "経済ニュースを噛み砕く"
+  # タイトルの型: 【引き】本題【ずんだもん&めたん解説】。引きは LLM が 5〜10 字で付ける（問い / 数字の落差 / 意外な断言）
+  title_hook_tag: true
+  title_suffix: "【ずんだもん&めたん解説】"
   made_for_kids: false
   # 予約投稿を使う（privacy: public + publishAt）
   schedule: true

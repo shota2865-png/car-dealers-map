@@ -347,7 +347,7 @@ def test_manual_final_metadata_and_thumbnail_are_found_by_name(cfg, tmp_path, mo
     from PIL import Image
     from ytecon import finals, thumbnail
     meta = finals.load_meta(cfg, "yt_001_20260922")                        # リポジトリに入れた記録
-    assert meta is not None and meta.title.startswith("なぜ給料が上がっても")
+    assert meta is not None and "なぜ給料が上がっても" in meta.title and meta.title.endswith("【ずんだもん&めたん解説】")
     assert "もくじ" not in meta.description                                 # CapCut でカット済みなのでタイムコードは無い
     assert "VOICEVOX" in meta.description and meta.tags
     monkeypatch.setattr(thumbnail, "manual_dir", lambda _cfg: tmp_path)
@@ -356,3 +356,12 @@ def test_manual_final_metadata_and_thumbnail_are_found_by_name(cfg, tmp_path, mo
     assert thumbnail.pick_manual(cfg, "slug", dt.date(2026, 9, 22), extra=["yt_001_20260922"]).name == "yt_001_20260922.png"
     assert finals.parse_jst("2026-09-23 19:00").hour == 19
     assert finals.parse_jst("").__class__ is type(None)
+
+
+def test_title_format_wraps_hook_and_channel_suffix(cfg):
+    from ytecon.metadata import format_title, MAX_TITLE
+    t = format_title(cfg, "なぜ給料が上がっても生活は楽にならないのか", "給料どこいった")
+    assert t == "【給料どこいった】なぜ給料が上がっても生活は楽にならないのか【ずんだもん&めたん解説】"
+    assert format_title(cfg, "【本題】", "") == "本題【ずんだもん&めたん解説】"     # 引きが無ければ前は付けない
+    long = format_title(cfg, "あ" * 120, "数字の落差")
+    assert len(long) <= MAX_TITLE and long.endswith("【ずんだもん&めたん解説】") and "…" in long

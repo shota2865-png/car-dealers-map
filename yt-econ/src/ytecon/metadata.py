@@ -32,11 +32,22 @@ class Metadata:
 _TITLE_SCHEMA = llm.obj(
     {
         "title": llm.STR,
+        "hook_tag": llm.STR,
         "reason": llm.STR,
         "thumbnail_main": llm.STR,
         "thumbnail_sub": llm.STR,
     }
 )
+
+_HOOK_TAG_GUIDE = """
+# 先頭の【】（hook_tag）
+タイトルの先頭に【…】で 5〜10 字の引きを付けます。次のどれかの型で:
+- 視聴者の状況を言い当てる問い（例: 給料どこいった / 昇給、実感ある？）
+- 数字の落差（例: 物価8%、給料5%）
+- 意外な断言（例: 値上げの方が速い / 給料は最後尾）
+【】は含めず、中身だけを hook_tag に入れる。煽り語（ヤバい・終わった・知らないと損）は使わない。
+本文の title と同じ語を繰り返さない。
+"""
 
 _TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。視聴者は{audience}。
 
@@ -94,19 +105,31 @@ def choose_title(cfg: Config, script: VideoScript,
         _TITLE_SYSTEM.format(
             audience=cfg.get("channel.audience", ""),
             horizon_guide=_TITLE_HORIZON.get(horizon, _TITLE_HORIZON["flow"]),
-        ),
+        ) + (_HOOK_TAG_GUIDE if cfg.get("upload.title_hook_tag", True) else ""),
         user,
         _TITLE_SCHEMA,
         model=cfg.get("script.model", llm.DEFAULT_MODEL),
         effort="medium",
     )
-    title = (data.get("title") or script.topic_title)[:MAX_TITLE]
+    title = format_title(cfg, data.get("title") or script.topic_title, data.get("hook_tag") or "")
     thumb = {
         "main": (data.get("thumbnail_main") or "")[:14],
         "sub": (data.get("thumbnail_sub") or "")[:16],
     }
     log.info("タイトル決定: %s", title)
     return title, thumb
+
+
+def format_title(cfg: Config, body: str, hook_tag: str = "") -> str:
+    """タイトルの型: 【引き】本題【ずんだもん&めたん解説】。全体が MAX_TITLE を超えるなら本題を詰める."""
+    suffix = str(cfg.get("upload.title_suffix", "") or "").strip()
+    body = body.strip().strip("【】")
+    tag = hook_tag.strip().strip("【】")[:12]
+    prefix = f"【{tag}】" if tag and cfg.get("upload.title_hook_tag", True) else ""
+    room = MAX_TITLE - len(prefix) - len(suffix)
+    if len(body) > room:
+        body = body[: max(room - 1, 8)].rstrip("、。 ") + "…"
+    return f"{prefix}{body}{suffix}"[:MAX_TITLE]
 
 
 def build_chapters(script: VideoScript, track: VoiceTrack) -> list[str]:
