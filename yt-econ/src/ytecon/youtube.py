@@ -139,7 +139,7 @@ def next_publish_time(cfg: Config, slot_index: int,
     now = (base or dt.datetime.now(jst)).astimezone(jst)
     times = times or cfg.get("upload.publish_times_jst", ["07:30", "19:30"]) or ["07:30"]
     slots: list[dt.datetime] = []
-    for day_offset in (0, 1):
+    for day_offset in (0, 1, 2):
         day = now.date() + dt.timedelta(days=day_offset)
         for t in times:
             hh, mm = (int(x) for x in str(t).split(":"))
@@ -353,13 +353,19 @@ def publish(
     slot_index: int = 0,
     publish_times: list[str] | None = None,
     playlist: bool = True,
+    after: dt.datetime | None = None,
 ) -> dict[str, Any]:
     """アップロード一式（本編 → サムネ → 字幕 → 再生リスト）.
 
     publish_times を渡すと、その時刻表（Shorts 用）で予約する。
+    after を渡すと、その時刻より後の枠だけを使う（Shorts を本編の公開より先に出さない）。
     """
+    base = None
+    if after is not None:
+        now = dt.datetime.now(dt.timezone.utc)
+        base = max(now, after if after.tzinfo else after.replace(tzinfo=dt.timezone.utc))
     publish_at = (
-        next_publish_time(cfg, slot_index, times=publish_times)
+        next_publish_time(cfg, slot_index, base=base, times=publish_times)
         if cfg.get("upload.schedule", True) else None
     )
     video_id = upload_video(cfg, store, video_path, meta, publish_at=publish_at)

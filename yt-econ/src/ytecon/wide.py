@@ -262,6 +262,34 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
                 y += int(f.size * 1.35)
         s.add(2, ans, slide=False, delay=0.35)
 
+    elif kind == "opening":
+        # 冒頭のあいさつ（寝ながら聴く人へ）。段階 0 = 大きな一言、1 = 補足、2 = 今日のテーマ
+        lines = [str(x) for x in (sc.get("lines") or [])][:2]
+        theme_t = str(sc.get("theme") or "")
+        cy0 = 260
+
+        def big(d, p):
+            f, ls = P.fit(d, lines[0] if lines else "", CW, 88)
+            y = cy0
+            for ln in ls:
+                tw = d.textlength(ln, font=f)
+                P.marker_text(d, int((W - tw) / 2), y, ln, f, p=p)
+                y += int(f.size * 1.35)
+        s.add(0, big, slide=False)
+        if len(lines) > 1:
+            s.add(1, lambda d, p: P.caption_under(d, W // 2, cy0 + 200, lines[1], P.f(52, 500), th.sec))
+        if theme_t:
+            def th_(d, p):
+                f = P.f(44)
+                tw = d.textlength("今日のテーマ", font=f)
+                d.text(((W - tw) / 2, cy0 + 330), "今日のテーマ", font=f, fill=th.blue)
+                f2, ls = P.fit(d, theme_t, CW, 64)
+                y = cy0 + 400
+                for ln in ls:
+                    P.text_mm(d, W / 2, y + f2.size * 0.6, ln, f2, th.text)
+                    y += int(f2.size * 1.3)
+            s.add(2, th_)
+
     elif kind == "ending":
         # 締め。真ん中に大きく「今日のひとつ」、その下に次回と更新時刻
         times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
@@ -291,6 +319,9 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
             total = sum(d.textlength(t, font=f) for t, _ in parts_) + 20
             P.marker_line(d, int((W - total) / 2), cy0 + 480, parts_, f, p=p, hl_color=th.blue)
         s.add(1, foot, slide=False)
+        rest = str(sc.get("rest") or "")
+        if rest:
+            s.add(2, lambda d, p: P.caption_under(d, W // 2, cy0 + 600, rest, P.f(46, 500), th.sec))
 
     else:
         s.add(0, title)

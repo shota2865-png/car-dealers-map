@@ -179,3 +179,16 @@ def test_line_break_never_splits_inside_brackets(cfg):
     f, lines = P.fit(d, "3. 「もし〜なら」を書く", 360, 56)
     assert len(lines) == 1 or all(ln.count("「") == ln.count("」") for ln in lines), lines
     assert lines[0].strip() != "3.", lines
+
+
+def test_shorts_slots_come_after_the_parent_goes_public():
+    """Shorts は本編の公開（19:00）より後の枠に入る。先に出ると概要欄の本編リンクが「非公開」になる."""
+    import datetime as dt
+    from ytecon import youtube
+    cfg = copy.deepcopy(load_config())
+    jst = dt.timezone(dt.timedelta(hours=9))
+    parent = dt.datetime(2026, 9, 24, 19, 0, tzinfo=jst)
+    times = ["12:00", "18:00", "00:00"]
+    got = [youtube.next_publish_time(cfg, k, base=parent, times=times).astimezone(jst) for k in range(3)]
+    assert all(g > parent for g in got)
+    assert [g.strftime("%m/%d %H:%M") for g in got] == ["09/25 00:00", "09/25 12:00", "09/25 18:00"]

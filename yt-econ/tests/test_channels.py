@@ -164,7 +164,7 @@ def test_psych_profile_overrides_and_inherits(psych):
     assert psych.channel_key == "psych" and psych.get("channel.env_prefix") == "PSY_"
     assert "おやすみ" not in psych.get("channel.name")
     assert domain.field(psych) == "心理学" and "心理学" in psych.get("upload.title_suffix")
-    assert psych.get("channel.listening_mode") == "daytime"
+    assert psych.get("channel.listening_mode") == "sleep"
     assert psych.get("video.design") == "dads" and design.tokens(psych)["name"] == "dads"
     assert psych.get("render.bgm.file") != load_config().get("render.bgm.file")
     assert psych.get("upload.publish_times_jst") == ["20:00"]

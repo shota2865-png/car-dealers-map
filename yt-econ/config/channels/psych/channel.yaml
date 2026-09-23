@@ -14,15 +14,15 @@ channel:
   # 名前の候補は docs/2チャンネル目_心理学.md。決まったらここを書き換えるだけ（タイトルカードと Shorts の上部に出る）
   name: "こころの図書室"
   audience: "20代前半の大学生と新社会人。人間関係・やる気・自己肯定感・SNS 疲れが気になり、心理学の本を買っては最後まで読めていない層"
-  # 昼に聴く（本体の sleep と違い、テンポを保ち、各節の終わりに「今日試す 1 つ」を置く）
-  listening_mode: "daytime"
+  # 寝る前に聴く（寝落ちしながら・画面を見ずに聴く人がいる前提。本編は約 30 分、声だけで全部わかるように話す）
+  listening_mode: "sleep"
   speech_style: "zundamon"
   # --- 分野の言葉（台本・企画・Shorts・概要欄のプロンプトに入る） ---
   field: "心理学"
   lens: "心理学"
   topic_words: "心理学・人間関係・習慣・感情・自己理解"
   term_examples: "認知的不協和 / 確証バイアス / 自己効力感 / 内発的動機づけ / 損失回避 / 帰属のエラー"
-  pitch: "通勤や昼休みに聴く、人の心のしくみの話。"
+  pitch: "寝る前に、目を閉じたまま聴ける、人の心のしくみの話。"
   disclaimer: |-
     この動画は心理学の研究や理論を一般向けに紹介するもので、医学的な診断や治療の代わりにはなりません。
     つらさが続くときは、医療機関や相談窓口（こころの健康相談統一ダイヤル 0570-064-556 など）にご相談ください。
@@ -54,8 +54,8 @@ channel:
 video:
   # 見た目: デジタル庁デザインシステム準拠（白地・青。config/design_tokens.yaml の dads）
   design: "dads"
-  target_minutes_min: 13.0
-  target_minutes_max: 16.0
+  target_minutes_min: 28.0
+  target_minutes_max: 32.0
 
 script:
   # 構成の 9 ブロックは本体と同じスタイルバイブルを使う（identity の「経済学のレンズ」は台本プロンプト側で心理学に置き換わる）
@@ -126,6 +126,20 @@ tts:
 
 character:
   enabled: false
+
+# 本編（16:9・約 30 分）。台本は src/ytecon/honpen.py、画面は wide.py、組み立ては quiz.build(wide=True)
+honpen:
+  model: "claude-opus-5"
+  effort: "high"
+  part_chars_min: 1600      # 5 部 × この字数 + 冒頭と締め ≒ 30 分
+  part_chars_max: 1900
+  speed: 0.95               # Shorts（1.02）よりゆっくり
+  seg_gap: 0.35             # 文節の間
+  scene_tail: 1.1           # 場面の終わりの余韻
+  count_tick: 1.3           # カウントダウン 1 拍（数も声で読む）
+  voice_countdown: true
+  outro_seconds: 45         # 最後に画面をゆっくり暗くして、音楽だけを流す
+  bgm_db: -20
 
 upload:
   privacy: "public"
