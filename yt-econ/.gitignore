@@ -48,3 +48,6 @@ assets/sfx/*
 
 # サムネの明朝（scripts/install_fonts.py --serif で入る。13MB 超なのでリポジトリには入れない）
 assets/fonts/NotoSerifJP*
+assets/fonts/NotoSansJP-VF.ttf
+assets/fonts/NotoSansJP-Regular.ttf
+assets/fonts/NotoSansJP-Medium.ttf

@@ -171,11 +171,13 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config, channel=args.channel)
     pipe = Pipeline(cfg)
-    results = pipe.run_daily(count=args.number, upload=not args.no_upload)
+    results = pipe.run_daily(count=args.number, upload=not args.no_upload, force=args.force)
     print("\n== 結果 ==")
     failed = 0
     for r in results:
-        if "error" in r:
+        if r.get("skipped"):
+            print(f"  [省略] {r.get('title')}（{r.get('slug')} {r.get('url', '')}）")
+        elif "error" in r:
             failed += 1
             print(f"  [失敗] {r.get('title','?')}: {r['error']}")
         else:
@@ -477,6 +479,41 @@ def cmd_script(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------------
+def cmd_quiz(args: argparse.Namespace) -> int:
+    """参加型テストの Shorts を 1 本作る（心理学チャンネルの型）。--json で人が書いた台本からも作れる."""
+    import json as _json
+    from .config import load_config
+    from . import quiz as quiz_mod
+    from .pipeline import slugify
+
+    cfg = load_config(args.config, channel=args.channel)
+    if args.json:
+        q = _json.loads(Path(args.json).read_text(encoding="utf-8"))
+        topic = q.get("title") or Path(args.json).stem
+    else:
+        if not args.topic:
+            print("テーマ（または --json）を指定してください")
+            return 1
+        q = quiz_mod.write_quiz(cfg, args.topic, args.angle or "")
+        topic = args.topic
+    outdir = Path(args.out) if args.out else cfg.workdir / "quiz" / slugify(topic)
+    outdir.mkdir(parents=True, exist_ok=True)
+    built = quiz_mod.build(cfg, q, outdir)
+    meta = quiz_mod.quiz_metadata(cfg, built.quiz, parent_url=args.parent_url or "")
+    (outdir / "metadata.json").write_text(_json.dumps(meta.__dict__, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"[完了] {built.video}  ({built.seconds:.0f} 秒)")
+    print(f"タイトル: {meta.title}")
+    if args.upload:
+        from . import youtube
+        from .state import Store
+        store = Store(cfg.workdir / "state.sqlite3")
+        times = cfg.get("shorts.publish_times_jst") or None
+        res = youtube.publish(cfg, store, built.video, meta, thumbnail=None, srt=None,
+                              slot_index=args.slot, publish_times=times, playlist=False)
+        print(f"投稿: {res['url']}  公開 {res['publish_at']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ytecon", description="経済解説YouTubeチャンネルの自動運用")
@@ -514,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run", help="当日分を作って投稿する")
     p.add_argument("-n", "--number", type=int, default=None)
     p.add_argument("--no-upload", action="store_true", help="投稿せず mp4 まで")
+    p.add_argument("--force", action="store_true", help="同じ日の本編が予約済みでも作る")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("resume", help="途中で落ちた回を再開")
@@ -532,6 +570,16 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("portfolio", help="flow/bridge/stock の偏りと在庫を見る")
     p.set_defaults(func=cmd_portfolio)
+
+    p = sub.add_parser("quiz", help="参加型テストの Shorts を 1 本作る（--channel psych）")
+    p.add_argument("topic", nargs="?", help="テーマ")
+    p.add_argument("-a", "--angle", help="切り口")
+    p.add_argument("--json", help="人が書いた台本 JSON から作る")
+    p.add_argument("-o", "--out", help="出力先フォルダ")
+    p.add_argument("--parent-url", help="概要欄に入れる本編の URL")
+    p.add_argument("--upload", action="store_true", help="YouTube に予約投稿する")
+    p.add_argument("--slot", type=int, default=0, help="投稿枠（shorts.publish_times_jst の何番目か）")
+    p.set_defaults(func=cmd_quiz)
 
     p = sub.add_parser("speakers", help="VOICEVOX の話者一覧")
     p.set_defaults(func=cmd_speakers)

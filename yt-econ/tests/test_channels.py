@@ -165,7 +165,7 @@ def test_psych_profile_overrides_and_inherits(psych):
     assert "おやすみ" not in psych.get("channel.name")
     assert domain.field(psych) == "心理学" and "心理学" in psych.get("upload.title_suffix")
     assert psych.get("channel.listening_mode") == "daytime"
-    assert psych.get("video.design") == "ink" and design.tokens(psych)["name"] == "ink"
+    assert psych.get("video.design") == "dads" and design.tokens(psych)["name"] == "dads"
     assert psych.get("render.bgm.file") != load_config().get("render.bgm.file")
     assert psych.get("upload.publish_times_jst") == ["20:00"]
     assert len(psych.get("shorts.publish_times_jst")) == 3
@@ -179,11 +179,11 @@ def test_psych_profile_overrides_and_inherits(psych):
     assert Path(psych.get("upload.thumbnail_dir")) != Path(main.get("upload.thumbnail_dir"))
     assert Path(psych.get("upload.finals_dir")) != Path(main.get("upload.finals_dir"))
     # 継承されているもの
-    assert psych.get("tts.voicevox.speed") == main.get("tts.voicevox.speed")
+    assert psych.get("tts.provider") == main.get("tts.provider")
+    assert psych.get("tts.voicevox.speaker") == 2                # めたんの声だけ
     assert psych.get("topics.horizon_mix") == main.get("topics.horizon_mix")
-    # 掛け合いの話者タグは 2 人ぶん
-    tags = script.cast_tags(psych)
-    assert "めたん" in tags and "ずんだもん" in tags
+    # 立ち絵なし・1 人語り
+    assert script.cast_tags(psych) == {}
     # 分野の言葉に経済が残っていない
     for key in ("field", "lens", "topic_words", "pitch", "term_examples"):
         assert "経済" not in psych.get(f"channel.{key}")
@@ -228,9 +228,10 @@ def test_framed_thumbnail_renders_1280x720(tmp_path, psych):
                                   tmp_path / "t.jpg", photo=None)
     img = Image.open(out)
     assert img.size == (1280, 720) and out.stat().st_size < 2_000_000
-    # 枠の線が引かれている（inset 34 の位置が明るい）
-    px = img.convert("RGB").getpixel((640, 34))
-    assert sum(px) > 400
+    # 枠の線が引かれている（inset 34 の位置が、すぐ内側と違う色）
+    rgb = img.convert("RGB")
+    line, inside = rgb.getpixel((640, 34)), rgb.getpixel((640, 60))
+    assert sum(abs(x - y) for x, y in zip(line, inside)) > 60
     # 写真を渡しても落ちない
     Image.new("RGB", (400, 900), "#446688").save(tmp_path / "p.jpg")
     out2 = thumbnail.render_framed(psych, "三日坊主は意志が弱いからではない", "", tmp_path / "t2.jpg", photo=tmp_path / "p.jpg")
