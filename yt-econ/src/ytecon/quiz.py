@@ -139,9 +139,13 @@ def write_quiz(cfg: Config, topic: str, angle: str = "") -> dict[str, Any]:
 def normalize(q: dict[str, Any], add_cta: bool = True) -> dict[str, Any]:
     """LLM の出力を整える: countdown と cta を保証し、文節を 25 字前後に、段階を 0 からの連番に."""
     scenes = [s for s in (q.get("scenes") or []) if isinstance(s, dict) and s.get("kind")]
-    kinds = [s["kind"] for s in scenes]
-    if "question" in kinds and "countdown" not in kinds:
-        scenes.insert(kinds.index("question") + 1, {"kind": "countdown"})
+    # どの question の直後にも countdown を置く（本編は 1 本に何問もある）
+    fixed = []
+    for i, s in enumerate(scenes):
+        fixed.append(s)
+        if s["kind"] == "question" and (i + 1 >= len(scenes) or scenes[i + 1].get("kind") != "countdown"):
+            fixed.append({"kind": "countdown"})
+    scenes = fixed
     if add_cta and "cta" not in [s["kind"] for s in scenes]:
         scenes.append({"kind": "cta"})
     for s in scenes:
@@ -314,8 +318,21 @@ class Parts:
                 return f, [text]
             s1 -= 2
         # 割る位置: 助詞・読点・閉じ括弧の後ろ（無ければどこでも）。2 行の長さがいちばん揃うところ
-        cands = [i + 1 for i, ch in enumerate(text[:-1]) if ch in self._BREAK_AFTER]
-        cands += [i for i, ch in enumerate(text) if ch == "「" and i > 0]
+        # 次の行が助詞や句読点で始まる位置では割らない（「出ないの／は」→「出ないのは／緊張の…」）
+        # 「」の中はなるべく割らない（「も／し〜なら」）。番号（「3. 」）だけの行も作らない
+        depth, inside = 0, set()
+        for i, ch in enumerate(text):
+            if ch == "「":
+                depth += 1
+            elif ch == "」":
+                depth = max(0, depth - 1)
+            if depth > 0:
+                inside.add(i + 1)
+        nat = [i + 1 for i, ch in enumerate(text[:-1])
+               if ch in self._BREAK_AFTER and text[i + 1] not in "はがをにでともへのや、。」）"]
+        nat += [i for i, ch in enumerate(text) if ch == "「" and i > 0 and not re.fullmatch(r"\s*\d+\.\s*", text[:i])]
+        # 括弧の外で割れるならそちらを優先。全体が 1 つの「」なら中で割ってよい（「確認させて／ください」）
+        cands = [i for i in nat if i not in inside] or nat
         if not cands:
             # 自然に割れる場所が無い語（「どう思われる？」など）は、途中で割らずに 1 行のまま縮める
             s3 = int(size * 0.8)
@@ -667,10 +684,24 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     from . import tts
 
     quiz = normalize(dict(quiz), add_cta=not wide)
+    seg_gap, scene_tail, tick = SEG_GAP, SCENE_TAIL, COUNT_TICK
+    voice_count, outro = False, 0.0
     if wide:
         from . import wide as wide_mod
         th = wide_mod.theme_wide(cfg)
         builder = wide_mod.build_scene_wide
+        # 本編は寝ながら聴く人向け: ゆっくり・間を長く・カウントダウンも声に出す・最後は静かな余韻
+        seg_gap = float(cfg.get("honpen.seg_gap", 0.35))
+        scene_tail = float(cfg.get("honpen.scene_tail", 1.1))
+        tick = float(cfg.get("honpen.count_tick", 1.3))
+        voice_count = bool(cfg.get("honpen.voice_countdown", True))
+        outro = float(cfg.get("honpen.outro_seconds", 45))
+        if cfg.get("honpen.speed") is not None and provider is None:
+            import copy as _copy
+            cfg2 = _copy.deepcopy(cfg)
+            cfg2.raw.setdefault("tts", {}).setdefault("voicevox", {})["speed"] = float(cfg.get("honpen.speed"))
+            from . import tts as _tts
+            provider = _tts.make_provider(cfg2)
     else:
         th = theme(cfg)
         builder = build_scene
@@ -716,10 +747,12 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
         wavs.append((p, 0.0))
 
     scenes = quiz["scenes"]
-    q_scene = next((sc for sc in scenes if sc.get("kind") == "question"), None)
+    q_scene = None                      # カウントダウンは直前の question の画面で数える
     shared_dy = None
     for sc in scenes:
         kind = sc.get("kind")
+        if kind == "question":
+            q_scene = sc
         if kind == "countdown":
             base = builder(cfg, th, dict(q_scene or {}, kind="countdown"))
             if shared_dy is None:
@@ -727,9 +760,18 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             for num in (3, 2, 1):
                 def extra(img, t, num=num, base=base):
                     base.extra(ImageDraw.Draw(img), t, num)
-                animate(base, 3, COUNT_TICK, shared_dy, extra=extra, static=True)
-                silence(COUNT_TICK)
-                total += COUNT_TICK
+                dur = tick
+                if voice_count:             # 画面を見ていない人にも数が聞こえるように
+                    data = provider.synth({3: "さん。", 2: "に。", 1: "いち。"}[num])
+                    p = fr / f"a{len(wavs):03d}.wav"
+                    p.write_bytes(data)
+                    v = _wav_seconds(data)
+                    dur = max(tick, v + 0.3)
+                    wavs.append((p, dur - v))
+                else:
+                    silence(dur)
+                animate(base, 3, dur, shared_dy, extra=extra, static=True)
+                total += dur
             continue
         scene = builder(cfg, th, sc)
         nar = sc.get("narration") or (cta_narration(cfg) if kind == "cta" else [])
@@ -753,7 +795,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             else:
                 p = None
                 voice = 1.2
-            tail = SCENE_TAIL if i == len(ordered) - 1 else SEG_GAP
+            tail = scene_tail if i == len(ordered) - 1 else seg_gap
             if p is not None:
                 wavs.append((p, tail))
             else:
@@ -768,6 +810,18 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 animate(scene, st, 1.0, dy)
                 total += 1.0
 
+    if outro > 0 and frames:
+        # 静かな余韻: 最後の画面をゆっくり暗くして、音楽だけを流す（寝落ちした人の耳に急な無音や明るさを残さない）
+        last = Image.open(fr / frames[-2].split("'")[1]).convert("RGB")
+        dark = Image.new("RGB", last.size, "#101014")
+        fade = min(8.0, outro)
+        k = int(fade * 6)
+        for i in range(k):
+            emit(Image.blend(last, dark, (i + 1) / k), fade / k)
+        if outro > fade:
+            emit(dark, outro - fade)
+        silence(outro)
+        total += outro
     frames.append(frames[-2])
     (fr / "frames.txt").write_text("\n".join(frames), encoding="utf-8")
     padded = []
@@ -781,11 +835,11 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
 
     dst = outdir / "video.mp4"
     bgm = bgm_mod.resolve(cfg)
-    vol = float(cfg.get("shorts.bgm_db", -22))
+    vol = float(cfg.get("honpen.bgm_db", -20) if wide else cfg.get("shorts.bgm_db", -22))
     cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(fr / "frames.txt"), "-i", str(voice_wav)]
     if bgm:
         cmd += ["-stream_loop", "-1", "-i", str(bgm),
-                "-filter_complex", f"[2:a]volume={vol}dB,afade=t=in:d=1.5,afade=t=out:st={max(0.0, total-3):.2f}:d=3[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                "-filter_complex", f"[2:a]volume={vol}dB,afade=t=in:d=1.5,afade=t=out:st={max(0.0, total-(12 if wide else 3)):.2f}:d={12 if wide else 3}[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
                 "-map", "0:v", "-map", "[a]"]
     else:
         cmd += ["-map", "0:v", "-map", "1:a"]

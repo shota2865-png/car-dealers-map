@@ -250,9 +250,16 @@ class Pipeline:
             self.store.create_video(slug, parent.topic_id if parent else None, made["meta"].title)
         self.store.update_video(slug, stage={"kind": "short", "parent": parent_slug, "hook": made["window"].hook})
         times = self.cfg.get("shorts.publish_times_jst") or None
+        # 本編の公開より後の枠に入れる（先に出すと、概要欄の本編リンクが「非公開」になる）
+        after = None
+        if parent and parent.publish_at:
+            try:
+                after = dt.datetime.fromisoformat(str(parent.publish_at).replace("Z", "+00:00"))
+            except ValueError:
+                after = None
         result = youtube.publish(
             self.cfg, self.store, made["video"], made["meta"], thumbnail=None, srt=None,
-            slot_index=slot_index, publish_times=times, playlist=False,
+            slot_index=slot_index, publish_times=times, playlist=False, after=after,
         )
         self.store.update_video(slug, status="uploaded", youtube_id=result["video_id"],
                                 publish_at=result["publish_at"], stage={"url": result["url"]})

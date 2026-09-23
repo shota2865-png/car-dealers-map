@@ -107,6 +107,8 @@ def test_wide_scenes_render_in_16x9_and_stay_in_safe_area(cfg):
         {"kind": "branch", "heading": "研究", "source": "先延ばす人", "targets": [{"text": "課題"}, {"text": "嫌な気分", "avoided": True}]},
         {"kind": "versus", "heading": "一言目", "left": {"text": "完璧な言い返しを探す", "caption": "間に合わない"}, "right": {"text": "「確認させてください」", "caption": "時間ができる"}},
         {"kind": "steps", "items": ["紙を出す", "書く", "閉じる"]},
+        {"kind": "result", "pick": "B", "option": "布団で返す言葉を考える", "strike": "考えれば、すっきりする", "answer": "夜に考えるほど、気分は重くなりやすい"},
+        {"kind": "ending", "one": "夜は考えず、紙に書いて寝る", "next": "三日坊主の心理学"},
     ]
     for sc in scenes:
         s = wide.build_scene_wide(cfg, th, sc)
@@ -162,3 +164,31 @@ def test_retry_resumes_same_slug_and_never_reuploads(tmp_path, monkeypatch):
     # 同じ slug でもう一度回しても、投稿済みの本編は上げ直さない
     again = pipe.produce(topic, upload=True, slug=slugs[0])
     assert again["video_id"] == "vid1" and calls["n"] == 2
+
+
+def test_line_break_never_starts_with_a_particle(cfg):
+    P = quiz.Parts(cfg, quiz.theme(cfg))
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    f, lines = P.fit(d, "出ないのは緊張のせい", 300, 56)
+    assert len(lines) == 2 and lines[1][0] not in "はがをにでともへのや", lines
+
+
+def test_line_break_never_splits_inside_brackets(cfg):
+    P = quiz.Parts(cfg, quiz.theme(cfg))
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    f, lines = P.fit(d, "3. 「もし〜なら」を書く", 360, 56)
+    assert len(lines) == 1 or all(ln.count("「") == ln.count("」") for ln in lines), lines
+    assert lines[0].strip() != "3.", lines
+
+
+def test_shorts_slots_come_after_the_parent_goes_public():
+    """Shorts は本編の公開（19:00）より後の枠に入る。先に出ると概要欄の本編リンクが「非公開」になる."""
+    import datetime as dt
+    from ytecon import youtube
+    cfg = copy.deepcopy(load_config())
+    jst = dt.timezone(dt.timedelta(hours=9))
+    parent = dt.datetime(2026, 9, 24, 19, 0, tzinfo=jst)
+    times = ["12:00", "18:00", "00:00"]
+    got = [youtube.next_publish_time(cfg, k, base=parent, times=times).astimezone(jst) for k in range(3)]
+    assert all(g > parent for g in got)
+    assert [g.strftime("%m/%d %H:%M") for g in got] == ["09/25 00:00", "09/25 12:00", "09/25 18:00"]
