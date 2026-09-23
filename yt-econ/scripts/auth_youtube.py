@@ -28,6 +28,8 @@ from dotenv import load_dotenv  # noqa: E402
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    # 字幕ファイル（CC）の登録に要る（captions.insert は youtube だけでは 403）
+    "https://www.googleapis.com/auth/youtube.force-ssl",
     # ytecon goal が日別の再生・総再生時間・視聴率を取るのに使う（無くても投稿はできる）
     "https://www.googleapis.com/auth/yt-analytics.readonly",
 ]

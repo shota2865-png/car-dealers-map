@@ -91,7 +91,9 @@ def _credentials(cfg: Config):
         client_id=client_id,
         client_secret=client_secret,
         token_uri=TOKEN_URI,
-        scopes=SCOPES,
+        # スコープは指定しない: refresh token に許可された分がそのまま使える（字幕の許可を足した鍵でも、
+        # 古い鍵でも動く。ここで許可にないスコープを求めると invalid_scope で投稿ごと止まる）
+        scopes=None,
     )
 
 
