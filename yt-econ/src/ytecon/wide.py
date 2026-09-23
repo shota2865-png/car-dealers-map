@@ -228,6 +228,70 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         if note:
             s.add(2, lambda d, p: P.caption_under(d, W // 2, y0 + bh + 90, note, P.f(56), th.text, p=p, hl=True), slide=False)
 
+    elif kind == "result":
+        # 答え合わせ。段階 0 = 選んだ肢（左・選択状態）、1 = 思いこみに打ち消し線、2 = 矢印と本当の答え（右）
+        pick = str(sc.get("pick") or "B").strip()[:1] or "B"
+        heading = sc.get("heading") or f"{pick}を選んだ人へ"
+        parts = P.split_hl(heading, sc.get("heading_hl") or pick)
+        s.add(0, lambda d, p: P.title(d, parts, y=170, size=TITLE, p=p))
+        oy = TY + 20
+        ow = 720
+        s.add(0, lambda d, p: P.option(d, oy, pick, str(sc.get("option") or ""), state="selected", h=220, x0=M, x1=M + ow, size=58))
+        rx = M + ow + 200
+        strike_t = str(sc.get("strike") or "")
+        answer = str(sc.get("answer") or "")
+
+        def weak(d, p):
+            f, lines = P.fit(d, strike_t, W - M - rx, 64)
+            y = oy + 70
+            for ln in lines:
+                d.text((rx, y), ln, font=f, fill=th.muted)
+                tw = int(d.textlength(ln, font=f))
+                P.strike(d, rx - 8, rx + tw + 8, y + int(f.size * 0.62), p=p)
+                y += int(f.size * 1.3)
+        if strike_t:
+            s.add(1, weak, slide=False)
+        s.add(2, lambda d, p: P.arrow(d, (M + ow + 40, oy + 52 + 110), (rx - 30, oy + 52 + 110), p=p), slide=False)
+        ay = oy + 52 + 220 + 90
+
+        def ans(d, p):
+            f, lines = P.fit(d, answer, CW, 84)
+            y = ay
+            for ln in lines:
+                P.marker_text(d, M, y, ln, f, color=th.blue, p=p)
+                y += int(f.size * 1.35)
+        s.add(2, ans, slide=False, delay=0.35)
+
+    elif kind == "ending":
+        # 締め。真ん中に大きく「今日のひとつ」、その下に次回と更新時刻
+        times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
+        when = times[0] if times else "20:00"
+        one = str(sc.get("one") or "")
+        cy0 = 250
+
+        def label(d, p):
+            f = P.f(48)
+            tw = d.textlength("今日のひとつ", font=f)
+            d.text(((W - tw) / 2, cy0), "今日のひとつ", font=f, fill=th.blue)
+        s.add(0, label, slide=False)
+
+        def big(d, p):
+            f, lines = P.fit(d, one, CW, 100)
+            y = cy0 + 100
+            for ln in lines:
+                tw = d.textlength(ln, font=f)
+                P.marker_text(d, int((W - tw) / 2), y, ln, f, p=p)
+                y += int(f.size * 1.35)
+        s.add(0, big, slide=False, delay=0.2)
+        nxt = str(sc.get("next") or "")
+
+        def foot(d, p):
+            f = P.f(56)
+            parts_ = ([("次回は", False), (nxt, True)] if nxt else []) + [("　毎日", False), (when, True), ("更新", False)]
+            total = sum(d.textlength(t, font=f) for t, _ in parts_) + 20
+            P.marker_line(d, int((W - total) / 2), cy0 + 480, parts_, f, p=p, hl_color=th.blue)
+        s.add(1, foot, slide=False)
+
     else:
         s.add(0, title)
     return s

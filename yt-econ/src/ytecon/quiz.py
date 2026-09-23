@@ -314,8 +314,21 @@ class Parts:
                 return f, [text]
             s1 -= 2
         # 割る位置: 助詞・読点・閉じ括弧の後ろ（無ければどこでも）。2 行の長さがいちばん揃うところ
-        cands = [i + 1 for i, ch in enumerate(text[:-1]) if ch in self._BREAK_AFTER]
-        cands += [i for i, ch in enumerate(text) if ch == "「" and i > 0]
+        # 次の行が助詞や句読点で始まる位置では割らない（「出ないの／は」→「出ないのは／緊張の…」）
+        # 「」の中はなるべく割らない（「も／し〜なら」）。番号（「3. 」）だけの行も作らない
+        depth, inside = 0, set()
+        for i, ch in enumerate(text):
+            if ch == "「":
+                depth += 1
+            elif ch == "」":
+                depth = max(0, depth - 1)
+            if depth > 0:
+                inside.add(i + 1)
+        nat = [i + 1 for i, ch in enumerate(text[:-1])
+               if ch in self._BREAK_AFTER and text[i + 1] not in "はがをにでともへのや、。」）"]
+        nat += [i for i, ch in enumerate(text) if ch == "「" and i > 0 and not re.fullmatch(r"\s*\d+\.\s*", text[:i])]
+        # 括弧の外で割れるならそちらを優先。全体が 1 つの「」なら中で割ってよい（「確認させて／ください」）
+        cands = [i for i in nat if i not in inside] or nat
         if not cands:
             # 自然に割れる場所が無い語（「どう思われる？」など）は、途中で割らずに 1 行のまま縮める
             s3 = int(size * 0.8)
