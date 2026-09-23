@@ -61,8 +61,6 @@ jobs:
     name: ${{ matrix.channel }}
     runs-on: ubuntu-latest
     timeout-minutes: 170
-    if: github.event_name == 'schedule' || github.event.inputs.channel == 'all' || github.event.inputs.channel == ''
-        || github.event.inputs.channel == matrix.channel
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -96,11 +94,15 @@ jobs:
     steps:
       # 2 つ目以降のチャンネルは、そのチャンネルの鍵が無ければここで終わる（本体の鍵で誤投稿しないため）。
       # 投稿しない試運転（upload=false）は鍵が無くても回す
-      - name: このチャンネルの鍵があるか
+      # 手動実行で channel を指定したときは、そのチャンネル以外は何もしない（job の if では matrix を参照できないためここで判定）
+      - name: このチャンネルを回すか・鍵があるか
         id: gate
         working-directory: .
         run: |
-          if [ "${{ matrix.channel }}" != "main" ] && [ -z "${!TOKEN_ENV}" ] && [ "${{ github.event.inputs.upload }}" != "false" ]; then
+          if [ -n "$WANT" ] && [ "$WANT" != "all" ] && [ "$WANT" != "${{ matrix.channel }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ matrix.channel }}: 指定外のチャンネルなので何もしません"
+          elif [ "${{ matrix.channel }}" != "main" ] && [ -z "${!TOKEN_ENV}" ] && [ "${{ github.event.inputs.upload }}" != "false" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::${{ matrix.channel }}: ${TOKEN_ENV} が未設定なので何もしません（docs/2チャンネル目_心理学.md）"
           else
@@ -108,6 +110,7 @@ jobs:
           fi
         env:
           TOKEN_ENV: ${{ matrix.token_env }}
+          WANT: ${{ github.event.inputs.channel }}
 
       - uses: actions/checkout@v4
         if: steps.gate.outputs.skip != 'true'
