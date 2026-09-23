@@ -171,11 +171,13 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     cfg = load_config(args.config, channel=args.channel)
     pipe = Pipeline(cfg)
-    results = pipe.run_daily(count=args.number, upload=not args.no_upload)
+    results = pipe.run_daily(count=args.number, upload=not args.no_upload, force=args.force)
     print("\n== 結果 ==")
     failed = 0
     for r in results:
-        if "error" in r:
+        if r.get("skipped"):
+            print(f"  [省略] {r.get('title')}（{r.get('slug')} {r.get('url', '')}）")
+        elif "error" in r:
             failed += 1
             print(f"  [失敗] {r.get('title','?')}: {r['error']}")
         else:
@@ -549,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run", help="当日分を作って投稿する")
     p.add_argument("-n", "--number", type=int, default=None)
     p.add_argument("--no-upload", action="store_true", help="投稿せず mp4 まで")
+    p.add_argument("--force", action="store_true", help="同じ日の本編が予約済みでも作る")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("resume", help="途中で落ちた回を再開")

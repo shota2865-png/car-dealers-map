@@ -291,8 +291,32 @@ class Pipeline:
             raise
 
     # --- 当日分をまとめて ------------------------------------------------
-    def run_daily(self, count: int | None = None, upload: bool = True) -> list[dict[str, Any]]:
+    def scheduled_long_on(self, day: dt.date) -> list[Any]:
+        """その日（JST）に公開予定・公開済みの本編（Shorts を除く）."""
+        jst = dt.timezone(dt.timedelta(hours=9))
+        out = []
+        for r in self.store.videos_by_status("uploaded"):
+            if not r.publish_at or (r.stage or {}).get("kind") == "short":
+                continue
+            try:
+                when = dt.datetime.fromisoformat(r.publish_at.replace("Z", "+00:00")).astimezone(jst).date()
+            except ValueError:
+                continue
+            if when == day:
+                out.append(r)
+        return out
+
+    def run_daily(self, count: int | None = None, upload: bool = True, force: bool = False) -> list[dict[str, Any]]:
         count = count or int(self.cfg.get("pipeline.videos_per_day", 2))
+        # 同じ日の本編がもう予約済みなら作らない（予約実行が遅れて手動実行と重なったときの二重投稿を防ぐ）
+        if upload and not force:
+            day = self._publish_day(0)
+            already = self.scheduled_long_on(day)
+            if already:
+                log.warning("%s の本編はもう予約済みなので今回は作りません: %s（作るなら --force）",
+                            day, ", ".join(r.slug for r in already))
+                return [{"skipped": True, "title": f"{day} は予約済み", "slug": already[0].slug,
+                         "url": (already[0].stage or {}).get("url", ""), "publish_at": already[0].publish_at}]
         chosen = topics_mod.select_topics(self.cfg, self.store, count)
         results = []
         retries = int(self.cfg.get("pipeline.retries", 2))

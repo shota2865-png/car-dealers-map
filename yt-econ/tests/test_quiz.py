@@ -69,3 +69,25 @@ def test_psych_is_voice_only(cfg):
     assert cfg.get("cast.mode") == "solo" and not cfg.get("character.enabled")
     assert int(cfg.get("tts.voicevox.speaker")) == 2
     assert cfg.get("shorts.mode") == "quiz" and cfg.get("video.design") == "dads"
+
+
+def test_run_daily_skips_when_the_day_already_has_an_episode(tmp_path, monkeypatch):
+    import datetime as dt
+    from ytecon.pipeline import Pipeline
+    from ytecon.state import Store
+    cfg = copy.deepcopy(load_config())
+    store = Store(tmp_path / "s.sqlite3")
+    pipe = Pipeline(cfg, store=store)
+    day = dt.date(2026, 9, 23)
+    monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: day)
+    called = []
+    monkeypatch.setattr("ytecon.topics.select_topics", lambda *a, **k: called.append(1) or [])
+    store.create_video("ep1", None, "t")
+    store.update_video("ep1", status="uploaded", youtube_id="x", publish_at="2026-09-23T10:00:00+00:00", stage={"kind": "long"})
+    store.create_video("ep1-short1", None, "s")
+    store.update_video("ep1-short1", status="uploaded", youtube_id="y", publish_at="2026-09-24T03:00:00+00:00", stage={"kind": "short"})
+    res = pipe.run_daily(count=1, upload=True)
+    assert res[0]["skipped"] and not called
+    assert pipe.run_daily(count=1, upload=True, force=True) == [] and called      # --force なら作る
+    monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: day + dt.timedelta(days=1))
+    assert pipe.run_daily(count=1, upload=True) == []                              # 翌日は空いている（Shorts は数えない）
