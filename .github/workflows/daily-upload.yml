@@ -204,6 +204,8 @@ jobs:
       # --- 生成して投稿（本編 → Shorts 3 本） ----------------------------------
       - name: 生成して投稿
         if: steps.gate.outputs.skip != 'true'
+        # job の 170 分より先に切る。止まっても後ろの「状態を保存」「成果物を残す」が必ず走り、途中の台本・動画が残る
+        timeout-minutes: 150
         run: |
           python -m ytecon run \
             -n "${{ github.event.inputs.count || 1 }}" \

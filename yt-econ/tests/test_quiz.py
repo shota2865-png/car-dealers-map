@@ -125,3 +125,40 @@ def test_unbreakable_labels_stay_on_one_line(cfg):
     d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     f, lines = P.fit(d, "どう思われる？", 280, 60)
     assert lines == ["どう思われる？"] and d.textlength(lines[0], font=f) <= 280
+
+
+def test_retry_resumes_same_slug_and_never_reuploads(tmp_path, monkeypatch):
+    """失敗して再試行しても最初から作り直さない（同じ slug で続きから）。投稿済みの本編は二度上げない."""
+    import datetime as dt
+    from ytecon import topics as topics_mod
+    from ytecon.pipeline import Pipeline
+    from ytecon.state import Store
+    cfg = copy.deepcopy(load_config())
+    cfg.raw["pipeline"]["workdir"] = str(tmp_path)
+    cfg.raw.setdefault("shorts", {})["per_video"] = 0
+    store = Store(tmp_path / "s.sqlite3")
+    pipe = Pipeline(cfg, store=store)
+    monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: dt.date(2026, 9, 24))
+    topic = topics_mod.Topic(title="テスト回", angle="", kind="evergreen")
+    monkeypatch.setattr("ytecon.topics.select_topics", lambda *a, **k: [topic])
+    slugs, published = [], []
+    monkeypatch.setattr(pipe, "stage_script", lambda slug, t: slugs.append(slug) or type("S", (), {"topic_title": "テスト回"})())
+    monkeypatch.setattr(pipe, "stage_voice", lambda slug, s: None)
+    monkeypatch.setattr(pipe, "stage_visuals", lambda slug, s, tr: ([], {}))
+    monkeypatch.setattr(pipe, "stage_render", lambda *a: None)
+    calls = {"n": 0}
+
+    def publish(slug, s, track, slot_index, horizon="flow"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("一時的な失敗")
+        published.append(slug)
+        store.update_video(slug, status="uploaded", youtube_id="vid1", stage={"url": "u"})
+        return {"video_id": "vid1", "url": "u"}
+    monkeypatch.setattr(pipe, "stage_publish", publish)
+    res = pipe.run_daily(count=1, upload=True, force=True)
+    assert len(set(slugs)) == 1 and len(slugs) == 2        # 再試行も同じ slug（作り直さない）
+    assert res[0]["video_id"] == "vid1" and published == [slugs[0]]
+    # 同じ slug でもう一度回しても、投稿済みの本編は上げ直さない
+    again = pipe.produce(topic, upload=True, slug=slugs[0])
+    assert again["video_id"] == "vid1" and calls["n"] == 2
