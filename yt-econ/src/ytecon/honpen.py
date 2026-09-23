@@ -163,7 +163,7 @@ def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] =
 
 def opening(cfg: Config, ol: dict[str, Any]) -> dict[str, Any]:
     name = str(cfg.get("channel.name", ""))
-    theme = str(ol.get("theme") or ol.get("title") or "")
+    theme = str(ol.get("title") or ol.get("theme") or "")      # theme は長い説明文になりがちなので、声と画面はタイトルで
     return {"kind": "opening", "lines": ["声だけで、わかるようにお話しします", "眠くなったら、目を閉じたままで大丈夫です"], "theme": theme,
             "narration": [[f"こんばんは。{name}です。", 0],
                           ["この動画は、寝る前に、目を閉じたまま聴けるように作っています。", 0],

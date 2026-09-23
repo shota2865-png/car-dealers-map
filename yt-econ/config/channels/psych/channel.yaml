@@ -131,8 +131,8 @@ character:
 honpen:
   model: "claude-opus-5"
   effort: "high"
-  part_chars_min: 1600      # 5 部 × この字数 + 冒頭と締め ≒ 30 分
-  part_chars_max: 1900
+  part_chars_min: 1800      # 5 部 × この字数 + 冒頭と締め ≒ 30 分（1600〜1900 で 27 分半だった）
+  part_chars_max: 2100
   speed: 0.95               # Shorts（1.02）よりゆっくり
   seg_gap: 0.35             # 文節の間
   scene_tail: 1.1           # 場面の終わりの余韻
