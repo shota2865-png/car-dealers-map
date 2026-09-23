@@ -28,6 +28,10 @@ SERIF_PACKAGE = "@fontsource/noto-serif-jp"
 
 # (woff2 のファイル名, 出力名, family, subfamily)
 WANTED = [
+    ("noto-sans-jp-japanese-400-normal.woff2", "NotoSansJP-Regular.ttf",
+     "Noto Sans JP", "Regular"),
+    ("noto-sans-jp-japanese-500-normal.woff2", "NotoSansJP-Medium.ttf",
+     "Noto Sans JP Medium", "Regular"),
     ("noto-sans-jp-japanese-700-normal.woff2", "NotoSansJP-Bold.ttf",
      "Noto Sans JP", "Bold"),
     ("noto-sans-jp-japanese-900-normal.woff2", "NotoSansJP-Black.ttf",

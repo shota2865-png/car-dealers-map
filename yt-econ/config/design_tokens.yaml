@@ -164,6 +164,41 @@ presets:
       fade_ms: 360
       easing: "ease_in_out"
 
+  dads:
+    label: "デジタル庁デザインシステム準拠（白地・青・グレー罫線。心理学チャンネルの参加型テスト）"
+    colors:
+      bg: "#FFFFFF"
+      surface: "#F1F1F4"            # solid-gray-50
+      surface_high: "#E8F1FE"       # blue-50（選択中・強調の面）
+      outline: "#D8D8DB"            # solid-gray-200
+      text: "#1A1A1C"
+      text_secondary: "#626264"
+      muted: "#949497"
+      accent: "#0017C1"             # blue-900
+      accent2: "#FFE97A"            # マーカー（黄）
+      positive: "#197A4B"
+      negative: "#EC0000"
+      warning: "#E9A93F"
+    type:
+      display_xl: 150
+      display_l: 118
+      display_m: 96
+      display_s: 84
+      headline_l: 88
+      headline_m: 76
+      title: 62
+      body_l: 50
+      body_m: 44
+      label: 36
+      label_s: 30
+      numeral_xl: 200
+      subtitle: 110
+    radius: {s: 8, m: 8, l: 12}
+    stroke: {card: 2, text_outline: 0}
+    motion:
+      fade_ms: 400
+      easing: "ease_in_out"
+
   material3:
     label: "Material Design 3（ダーク baseline）"
     colors:

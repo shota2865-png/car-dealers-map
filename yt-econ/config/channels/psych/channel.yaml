@@ -52,8 +52,8 @@ channel:
     - 恋愛・対人の「操作テクニック」（相手を思いどおりに動かす類）
 
 video:
-  # 本体と別の見た目: 墨色 × 琥珀（config/design_tokens.yaml の ink）
-  design: "ink"
+  # 見た目: デジタル庁デザインシステム準拠（白地・青。config/design_tokens.yaml の dads）
+  design: "dads"
   target_minutes_min: 13.0
   target_minutes_max: 16.0
 
@@ -101,49 +101,8 @@ topics:
     - "自分を励ます言葉が効かない人へ。セルフコンパッションの研究"
 
 cast:
-  mode: dialogue
-  characters:
-    - key: metan
-      name: 四国めたん
-      tag: めたん
-      role: teacher
-      voicevox_speaker: 2
-      side: left
-      dir: assets/character/四国めたん立ち絵素材2.1
-      flip: true
-      subtitle_outline: "#8A4B1F"
-      parts: {服: "白ロリ服", 右腕: "普通", 左腕: "普通", 顔色: "普通2", 眉: "太眉ごきげん"}
-      mouth: {base: "ほほえみ", mouth_half: "ゆ", mouth_open: "わあー"}
-      blink: "目閉じ"
-      skip_groups: ["その他の服", "記号など"]
-      expressions:
-        通常: {}
-        笑: {眉: "太眉ごきげん", 顔色: "赤面"}
-        驚: {目セット: "見開き白目", 眉: "太眉ごきげん"}
-        困: {眉: "太眉こまり"}
-        考: {眉: "太眉こまり", 左腕: "口元に指"}
-        指: {右腕: "指差す"}
-        怒: {眉: "太眉おこ"}
-      persona: >-
-        心理学を専攻した大学院生。人の行動を「良い悪い」ではなく「仕組み」として面白がる。
-        昼休みに隣で話してくれる先輩のような、軽くて速いテンポ。語尾は「〜よ」「〜ね」「〜かしら」「〜なの」。
-        研究の出典は必ず自分が言い、再現されていない話は「有名だけど怪しいの」とはっきり言う。
-        励まし方は「性格を変えろ」ではなく「環境と手順を変える」。締めは「今日ひとつ試してみて」
-    - key: zundamon
-      name: ずんだもん
-      tag: ずんだもん
-      role: student
-      voicevox_speaker: 3
-      side: right
-      dir: assets/character/ずんだもん立ち絵素材2.3
-      flip: false
-      subtitle_outline: "#1E7F3C"
-      persona: >-
-        入社 1 年目の新社会人。会議で言い返せない、LINE の既読が気になる、三日坊主、
-        SNS で同期と比べて落ち込む、を全部やっている。心理学は「メンタリストの動画で見た」程度。
-        語尾は「〜のだ」「〜なのだ」。視聴者の本音・言い訳・照れをそのまま口にし、たまに極端な結論に飛ぶ。
-        一人称は「ぼく」
-  height_ratio: 0.34
+  mode: solo
+  characters: []
 
 render:
   bgm:
@@ -156,6 +115,18 @@ render:
   sfx:
     enabled: false
 
+# 声は四国めたんだけ（立ち絵なし・字幕なし）。参加型テストの Shorts（quiz）はこの声で文節ごとに合成する
+tts:
+  provider: "voicevox"
+  voicevox:
+    speaker: 2
+    speed: 1.02
+    pitch: 0.0
+    intonation: 1.05
+
+character:
+  enabled: false
+
 upload:
   privacy: "public"
   thumbnail_dir: "thumbnails/psych"
@@ -167,19 +138,23 @@ upload:
   category_id: "27"      # Education
   playlist_title: "人の心のしくみ"
   title_hook_tag: true
-  title_suffix: "【ずんだもん&めたんの心理学】"
+  title_suffix: "【めたんの心理学】"
 
 shorts:
   per_video: 3
-  mode: story
+  # quiz = 参加型テスト（2 択 → 研究 → 今日のひとつ）。src/ytecon/quiz.py
+  mode: quiz
+  model: "claude-opus-5"
+  effort: "medium"
+  bgm_db: -22
   cta:
-    - "【ずんだもん】続きは本編で聞くのだ。"
-    - "【めたん】本編は毎日20時。下のリンクから飛べるわ。"
+    - "続きは本編で。"
+    - "本編は毎日20時。下のリンクから。"
   # 朝の通勤・昼休み・夜のくつろぎ時間
   publish_times_jst: ["07:30", "12:30", "21:30"]
 
 thumbnail:
-  # 自動サムネは「写真 + 細い枠 + 明朝 2 行」（本体は bar）。手で作ったものが thumbnails/psych/ にあればそちら
+  # サムネは手で作る（thumbnails/psych/ に置く）。無い日だけ framed で自動生成
   style: "framed"
 
 goal:
