@@ -46,9 +46,27 @@ class QuotaExceeded(UploadError):
     pass
 
 
+def check_channel_keys(cfg: Config) -> None:
+    """2 つ目以降のチャンネル（channel.env_prefix あり）は、自分の鍵が無いまま本体の鍵に落ちてはいけない.
+
+    落ちると本体のチャンネルに誤投稿する。試したいときだけ upload.share_main_account: true にする。
+    """
+    import os
+    prefix = str(cfg.get("channel.env_prefix", "") or "").strip()
+    if not prefix or cfg.get("upload.share_main_account", False):
+        return
+    if not os.environ.get(prefix + "YOUTUBE_REFRESH_TOKEN"):
+        raise UploadError(
+            f"{prefix}YOUTUBE_REFRESH_TOKEN が未設定です。チャンネル {cfg.channel_key} は本体の鍵では投稿しません。\n"
+            f"  python scripts/auth_youtube.py --prefix {prefix}\n"
+            f"で取得するか、意図して同じアカウントに上げるなら upload.share_main_account: true にしてください。"
+        )
+
+
 def _credentials(cfg: Config):
     from google.oauth2.credentials import Credentials
 
+    check_channel_keys(cfg)
     client_id = cfg.env("YOUTUBE_CLIENT_ID")
     client_secret = cfg.env("YOUTUBE_CLIENT_SECRET")
     refresh_token = cfg.env("YOUTUBE_REFRESH_TOKEN")

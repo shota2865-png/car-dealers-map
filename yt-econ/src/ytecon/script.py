@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import llm
+from . import domain, llm
 from .config import Config
 from .topics import Topic
 
@@ -403,11 +403,11 @@ _SCRIPT_SCHEMA = llm.obj(
 # ----------------------------------------------------------------------
 # プロンプト
 # ----------------------------------------------------------------------
-_SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家です。
+_SYSTEM = """あなたは日本語の{field}解説YouTube動画の構成作家です。
 
 # 視聴者
 {audience}
-経済の授業を受けたことはあっても、実務・生活との接続ができていません。
+{field}の授業を受けたことはあっても、実務・生活との接続ができていません。
 専門用語を並べると3秒で離脱します。
 
 # 語り口の決まり
@@ -435,8 +435,8 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 # ビジネス用語を毎回 2〜4 個、正面から扱う
 
 このチャンネルの視聴者は、ニュースに出てくる**ビジネスの言葉**を
-知りたがっている。日常語ではなく、仕事や経済の場面でしか使わない語のこと。
-（例: 実質賃金 / 政策金利 / 貿易収支 / 購買力平価 / 名目と実質 / 為替介入）
+知りたがっている。日常語ではなく、仕事や{field}の場面でしか使わない語のこと。
+（例: {term_examples}）
 
 - 動画ごとに 2〜4 個を terms に入れる。term（用語）、meaning（一文の意味）、
   example（**数字つきの具体例**。「〜を示す〇〇という数字が、アメリカは△△、
@@ -478,7 +478,7 @@ _SYSTEM = """あなたは日本語の経済解説YouTube動画の構成作家で
 # 構成の型（必ずこの流れ）
 
 このチャンネルは「雑学」でも「論文解説」でもなく、
-**日常の違和感を、経済学を使って映画のように説明する**映像エッセイです。
+**日常の違和感を、{lens}を使って映画のように説明する**映像エッセイです。
 骨格は次の 9 ブロック。順番を崩さないこと。
 
 {bible}
@@ -776,8 +776,8 @@ human_return を HUMAN_RETURN と closing に反映してください。
 この内容で動画1本ぶんの台本を作ってください。"""
 
 
-_RESEARCH_SYSTEM = """あなたは日本語の経済解説YouTube動画のリサーチャーです。
-**まだ台本は書きません。** 1本の動画を「日常の違和感 → 経済学のレンズ → 意外な説明」
+_RESEARCH_SYSTEM = """あなたは日本語の{field}解説YouTube動画のリサーチャーです。
+**まだ台本は書きません。** 1本の動画を「日常の違和感 → {lens}のレンズ → 意外な説明」
 で作るために、説明できる視点を先に集めます。
 
 手順:
@@ -801,6 +801,7 @@ def research_tree(cfg: Config, topic: Topic) -> dict[str, Any]:
     from . import bible
 
     system = _RESEARCH_SYSTEM.format(
+        field=domain.field(cfg), lens=domain.lens(cfg),
         audience=cfg.get("channel.audience", ""),
         lenses=bible.research_prompt_block(cfg),
         banned="、".join(cfg.get("channel.banned_topics", []) or []),
@@ -894,9 +895,27 @@ _SLEEP_BLOCK = """# 聴かれ方: 寝る前に、布団の中で流し聴きさ�
 """
 
 
+_DAYTIME_BLOCK = """# 聴かれ方: 通勤・昼休み・作業中に、画面を時々見ながら聴かれる
+この動画は「日中に、少し頭を使いたいときに開く」ために作る。眠らせる動画ではない。
+守ること:
+- 冒頭 20 秒で「自分のことだ」と思わせる。視聴者が今日した行動・言われた一言・感じた違和感から始める
+- テンポを保つ。同じ要点を 2 度言い直さない。代わりにセクションごとに具体例を 1 つ足す
+- 驚きは歓迎するが、煽らない。「実は逆だった」は言ってよいが「ヤバい」「知らないと損」は使わない
+- 各セクションの終わりに、視聴者が「今日その場で試せる 1 つのこと」か「自分に当てはめる 1 つの問い」を置く
+- 断定と出典をセットにする。研究の結果は「◯◯の研究では」と言い、再現されていないものはそう言う
+- closing は前向きに閉じる。まとめ → 今日試す 1 つの行動 → 明日また来る理由（次回の問い）を一言。登録の頼み方は一言だけ
+- ずんだもん（聞き役）は視聴者の本音・言い訳・照れをそのまま口にしてよい。めたんはそれを笑わず、
+  仕組みで説明して「だからこうすると楽」と返す。ここがこの動画の価値になる
+"""
+
+
 def listening_block(cfg: Config) -> str:
     mode = str(cfg.get("channel.listening_mode", "") or "").strip()
-    return _SLEEP_BLOCK if mode == "sleep" else ""
+    if mode == "sleep":
+        return _SLEEP_BLOCK
+    if mode == "daytime":
+        return _DAYTIME_BLOCK
+    return ""
 
 
 def cast_tags(cfg: Config) -> dict[str, str]:
@@ -942,6 +961,7 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
         except Exception as exc:              # リサーチが落ちても台本は作る
             log.warning("リサーチの木を作れませんでした（台本だけ作ります）: %s", exc)
     system = _SYSTEM.format(
+        field=domain.field(cfg), lens=domain.lens(cfg), term_examples=domain.term_examples(cfg),
         bible=bible.render_for_prompt(cfg, n_sections),
         style_block=_style_block(cfg),
         speech_style=speech_style(cfg),
@@ -1047,7 +1067,7 @@ def fit_length(cfg: Config, script: VideoScript) -> VideoScript:
 # ----------------------------------------------------------------------
 # ファクトチェック
 # ----------------------------------------------------------------------
-_FACT_SYSTEM = """あなたは経済メディアの校閲担当です。
+_FACT_SYSTEM = """あなたは{field}メディアの校閲担当です。
 渡された台本の中の「事実主張」を洗い出し、次の方針で**台本を修正**してください。
 
 - 出典を示せない具体的な数字は、幅を持たせた表現か定性的表現に書き換える
@@ -1070,7 +1090,7 @@ def fact_check(cfg: Config, script: VideoScript) -> VideoScript:
         f"```json\n{json.dumps(script.to_dict(), ensure_ascii=False, indent=2)}\n```"
     )
     data = llm.complete_json(
-        _FACT_SYSTEM, user, _SCRIPT_SCHEMA,
+        _FACT_SYSTEM.replace("{field}", domain.field(cfg)), user, _SCRIPT_SCHEMA,
         model=cfg.get("script.model", llm.DEFAULT_MODEL), effort="high",
     )
     log.info("ファクトチェック完了")

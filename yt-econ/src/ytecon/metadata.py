@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from . import llm
+from . import domain, llm
 from .config import Config
 from .script import VideoScript
 from .tts import VoiceTrack
@@ -42,9 +42,9 @@ _TITLE_SCHEMA = llm.obj(
 _HOOK_TAG_GUIDE = """
 # 先頭の【】（hook_tag）
 タイトルの先頭に【…】で 5〜10 字の引きを付けます。次のどれかの型で:
-- 視聴者の状況を言い当てる問い（例: 給料どこいった / 昇給、実感ある？）
-- 数字の落差（例: 物価8%、給料5%）
-- 意外な断言（例: 値上げの方が速い / 給料は最後尾）
+- 視聴者の状況を言い当てる問い（例: {question}）
+- 数字の落差（例: {gap}）
+- 意外な断言（例: {claim}）
 【】は含めず、中身だけを hook_tag に入れる。煽り語（ヤバい・終わった・知らないと損）は使わない。
 本文の title と同じ語を繰り返さない。
 """
@@ -105,7 +105,7 @@ def choose_title(cfg: Config, script: VideoScript,
         _TITLE_SYSTEM.format(
             audience=cfg.get("channel.audience", ""),
             horizon_guide=_TITLE_HORIZON.get(horizon, _TITLE_HORIZON["flow"]),
-        ) + (_HOOK_TAG_GUIDE if cfg.get("upload.title_hook_tag", True) else ""),
+        ) + (_HOOK_TAG_GUIDE.format(**domain.hook_examples(cfg)) if cfg.get("upload.title_hook_tag", True) else ""),
         user,
         _TITLE_SCHEMA,
         model=cfg.get("script.model", llm.DEFAULT_MODEL),
@@ -206,8 +206,7 @@ def build(cfg: Config, script: VideoScript, track: VoiceTrack,
     parts.append(
         "■ ご注意\n"
         + (disclaimer + "\n" if disclaimer else "")
-        + "この動画は経済の仕組みを解説するもので、特定の金融商品の購入を\n"
-        "推奨するものではありません。投資の判断はご自身の責任でお願いします。\n"
+        + domain.disclaimer(cfg).rstrip() + "\n"
         "内容には万全を期していますが、誤りにお気づきの際はコメントで\n"
         "ご指摘いただけると助かります。"
     )

@@ -208,6 +208,8 @@ def _analytics_service(cfg: Config):
     from googleapiclient.discovery import build as gbuild
     from .youtube import TOKEN_URI
 
+    from . import youtube as _yt
+    _yt.check_channel_keys(cfg)
     creds = Credentials(
         token=None, refresh_token=cfg.env("YOUTUBE_REFRESH_TOKEN"),
         client_id=cfg.env("YOUTUBE_CLIENT_ID"), client_secret=cfg.env("YOUTUBE_CLIENT_SECRET"),

@@ -2,26 +2,36 @@ name: 毎日 本編1本 + Shorts 3本を自動生成して予約投稿
 
 # ------------------------------------------------------------
 # GitHub のサーバーで動くので、あなたのパソコンには何も入れません。
-# JST 16:10 に生成を始め、本編は 19:00、Shorts は 18:00 / 翌 0:00 / 翌 12:00 に予約公開されます。
+# JST 16:10 に生成を始め、チャンネルごとに本編と Shorts を予約公開します。
+#   main  : おやすみ経済学   本編 19:00 / Shorts 12:00・18:00・0:00
+#   psych : 心理学（2 つ目）  本編 20:00 / Shorts 7:30・12:30・21:30（config/channels/psych/channel.yaml）
 #
 # 必要な設定（リポジトリの Settings → Secrets and variables → Actions）:
 #   CLAUDE_CODE_OAUTH_TOKEN   claude setup-token で作る（サブスクの枠で台本生成）
 #                             ※ 代わりに ANTHROPIC_API_KEY を入れれば API（従量課金）で動く
-#   YOUTUBE_CLIENT_ID         Google Cloud Console（OAuth クライアント・デスクトップ）
+#   YOUTUBE_CLIENT_ID         Google Cloud Console（OAuth クライアント）
 #   YOUTUBE_CLIENT_SECRET     同上
 #   YOUTUBE_REFRESH_TOKEN     scripts/auth_youtube.py で取得（Analytics のスコープ付き）
 #   MATERIALS_URL             立ち絵 PSD と BGM を入れた zip の直リンク（任意。無いと仮キャラ・BGM なし）
 #   PEXELS_API_KEY            任意（写真素材）
-# 手順は yt-econ/docs/自動投稿の始め方.md
+#   PSY_YOUTUBE_CLIENT_ID / PSY_YOUTUBE_CLIENT_SECRET / PSY_YOUTUBE_REFRESH_TOKEN
+#                             2 つ目のチャンネル用。別の Google Cloud プロジェクトで作ると API クォータも別になる。
+#                             PSY_YOUTUBE_REFRESH_TOKEN が無い間、psych は何もせずに終わる（本体のアカウントに誤投稿しない）
+# 手順は yt-econ/docs/自動投稿の始め方.md と yt-econ/docs/2チャンネル目_心理学.md
 # ------------------------------------------------------------
 
 on:
   schedule:
-    # JST 16:10 に開始（本編 + Shorts で 60〜80 分 → 19:00 の予約に間に合う）。
+    # JST 16:10 に開始（本編 + Shorts で 60〜80 分 → 19:00 / 20:00 の予約に間に合う）。
     # YouTube API のクォータは太平洋時間 0 時 = JST 16:00 にリセットされるので、その後に始める
     - cron: "10 7 * * *"
   workflow_dispatch:
     inputs:
+      channel:
+        description: "どのチャンネルを回すか"
+        type: choice
+        options: [all, main, psych]
+        default: all
       count:
         description: "本編の本数"
         default: "1"
@@ -29,10 +39,6 @@ on:
         description: "YouTube に投稿するか（false にすると mp4 を成果物として残すだけ）"
         type: boolean
         default: true
-
-concurrency:
-  group: ytecon-daily
-  cancel-in-progress: false
 
 env:
   PYTHONPATH: src
@@ -45,15 +51,38 @@ env:
   YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
   YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
   YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+  PSY_YOUTUBE_CLIENT_ID: ${{ secrets.PSY_YOUTUBE_CLIENT_ID }}
+  PSY_YOUTUBE_CLIENT_SECRET: ${{ secrets.PSY_YOUTUBE_CLIENT_SECRET }}
+  PSY_YOUTUBE_REFRESH_TOKEN: ${{ secrets.PSY_YOUTUBE_REFRESH_TOKEN }}
   MATERIALS_URL: ${{ secrets.MATERIALS_URL }}
 
 jobs:
   produce:
+    name: ${{ matrix.channel }}
     runs-on: ubuntu-latest
     timeout-minutes: 170
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          # state_key は変えないこと（過去の投稿履歴・通し番号のキャッシュ名）。workdir は各 channel.yaml の pipeline.workdir と同じ
+          - channel: main
+            workdir: output
+            state_key: ytecon-state
+            token_env: YOUTUBE_REFRESH_TOKEN
+          - channel: psych
+            workdir: output/psych
+            state_key: ytecon-psych-state
+            token_env: PSY_YOUTUBE_REFRESH_TOKEN
+    concurrency:
+      group: ytecon-daily-${{ matrix.channel }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: yt-econ
+    env:
+      YTECON_CHANNEL: ${{ matrix.channel }}
 
     services:
       # ずんだもん・四国めたんの声。コンテナとして横で立てるので、何も入れなくていい
@@ -63,34 +92,65 @@ jobs:
           - 50021:50021
 
     steps:
+      # 2 つ目以降のチャンネルは、そのチャンネルの鍵が無ければここで終わる（本体の鍵で誤投稿しないため）。
+      # 投稿しない試運転（upload=false）は鍵が無くても回す
+      # 手動実行で channel を指定したときは、そのチャンネル以外は何もしない（job の if では matrix を参照できないためここで判定）
+      - name: このチャンネルを回すか・鍵があるか
+        id: gate
+        working-directory: .
+        run: |
+          if [ -n "$WANT" ] && [ "$WANT" != "all" ] && [ "$WANT" != "${{ matrix.channel }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ matrix.channel }}: 指定外のチャンネルなので何もしません"
+          elif [ "${{ matrix.channel }}" != "main" ] && [ -z "${!TOKEN_ENV}" ] && [ "${{ github.event.inputs.upload }}" != "false" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ matrix.channel }}: ${TOKEN_ENV} が未設定なので何もしません（docs/2チャンネル目_心理学.md）"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          TOKEN_ENV: ${{ matrix.token_env }}
+          WANT: ${{ github.event.inputs.channel }}
+
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != 'true'
 
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: yt-econ/requirements.txt
 
       - uses: actions/setup-node@v4
+        if: steps.gate.outputs.skip != 'true'
         with:
           node-version: "22"
 
       - name: ffmpeg を入れる
+        if: steps.gate.outputs.skip != 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg
 
       - name: Python 依存を入れる
-        run: pip install -r requirements.txt
+        if: steps.gate.outputs.skip != 'true'
+        run: pip install -r requirements.txt fonttools brotli
+
+      # サムネの framed スタイル（2 つ目のチャンネル）で使う明朝。入らなくてもゴシックで描く
+      - name: 明朝フォントを入れる
+        if: steps.gate.outputs.skip != 'true'
+        run: python scripts/install_fonts.py --serif || true
 
       # 台本生成は Claude Code の headless モード（サブスクの枠）。トークンが無ければ入れない
       - name: Claude Code を入れる
-        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        if: steps.gate.outputs.skip != 'true' && env.CLAUDE_CODE_OAUTH_TOKEN != ''
         run: npm install -g @anthropic-ai/claude-code
 
       # --- 素材 -----------------------------------------------------------
-      # 動く背景（Mixkit の実写 1080p、2〜3GB）はキャッシュに置く。初回だけ取得に 10〜20 分かかる
+      # 動く背景（Mixkit の実写 1080p、2〜3GB）はキャッシュに置く。初回だけ取得に 10〜20 分かかる。両チャンネルで共用
       - name: 背景素材のキャッシュを復元
+        if: steps.gate.outputs.skip != 'true'
         id: footage
         uses: actions/cache@v4
         with:
@@ -98,30 +158,32 @@ jobs:
           key: ytecon-footage-v1
 
       - name: 背景素材を集める（初回だけ）
-        if: steps.footage.outputs.cache-hit != 'true'
+        if: steps.gate.outputs.skip != 'true' && steps.footage.outputs.cache-hit != 'true'
         run: python -m ytecon.freeassets --videos 2 --min-height 1080 --broll-only
 
       # 立ち絵（PSD）と BGM は配布元の規約で再配布できないので、あなたが置いた zip から展開する。
       # zip の中身は assets/ と同じ構造（assets/character/<素材名>/*.psd, assets/bgm/*.mp3）
       - name: 立ち絵と BGM を展開
-        if: env.MATERIALS_URL != ''
+        if: steps.gate.outputs.skip != 'true' && env.MATERIALS_URL != ''
         run: |
           curl -sSL -o /tmp/materials.zip "$MATERIALS_URL"
           unzip -o -q /tmp/materials.zip -d .
           ls -R assets/character assets/bgm | head -40
 
       # --- 状態 -----------------------------------------------------------
-      # 過去に扱った話題・投稿済みの動画 ID・目標の記録を持ち越す。これが無いと毎回同じテーマを作る
+      # 過去に扱った話題・投稿済みの動画 ID・目標の記録を持ち越す（チャンネルごとに別）。これが無いと毎回同じテーマを作る
       - name: 前回までの状態を復元
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/cache/restore@v4
         with:
           path: |
-            yt-econ/output/state.sqlite3
-            yt-econ/output/goal
-          key: ytecon-state-${{ github.run_id }}
-          restore-keys: ytecon-state-
+            yt-econ/${{ matrix.workdir }}/state.sqlite3
+            yt-econ/${{ matrix.workdir }}/goal
+          key: ${{ matrix.state_key }}-${{ github.run_id }}
+          restore-keys: ${{ matrix.state_key }}-
 
       - name: VOICEVOX の起動待ち
+        if: steps.gate.outputs.skip != 'true'
         run: |
           for i in $(seq 1 45); do
             curl -sf http://127.0.0.1:50021/version && break
@@ -129,54 +191,56 @@ jobs:
           done
 
       - name: 環境チェック
+        if: steps.gate.outputs.skip != 'true'
         run: python -m ytecon doctor || true
 
       # --- 目標の進捗（昨日までの数字）。生成より先に見て、サマリに残す --------
       - name: 目標の進捗と打ち手
-        if: github.event.inputs.upload != 'false'
+        if: steps.gate.outputs.skip != 'true' && github.event.inputs.upload != 'false'
         run: |
           python -m ytecon goal | tee goal-report.txt || true
-          { echo '## 目標の進捗'; echo '```'; cat goal-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          { echo "## 目標の進捗（${{ matrix.channel }}）"; echo '```'; cat goal-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
       # --- 生成して投稿（本編 → Shorts 3 本） ----------------------------------
       - name: 生成して投稿
+        if: steps.gate.outputs.skip != 'true'
         run: |
           python -m ytecon run \
             -n "${{ github.event.inputs.count || 1 }}" \
             ${{ github.event.inputs.upload == 'false' && '--no-upload' || '' }} | tee run-report.txt
-          { echo '## 生成結果'; echo '```'; tail -30 run-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          { echo "## 生成結果（${{ matrix.channel }}）"; echo '```'; tail -30 run-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
       # 寝かせた動画のテーマが日本で話題化していないか毎日照合する
       - name: 寝かせた動画の掘り起こし
-        if: always()
+        if: always() && steps.gate.outputs.skip != 'true'
         run: python -m ytecon revive | tee revive-report.txt || true
 
       - name: 掘り起こしレポートをサマリに出す
-        if: always()
+        if: always() && steps.gate.outputs.skip != 'true'
         run: |
-          { echo '## 掘り起こし'; echo '```'; cat revive-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          { echo "## 掘り起こし（${{ matrix.channel }}）"; echo '```'; cat revive-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: 状態を保存
-        if: always()
+        if: always() && steps.gate.outputs.skip != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
-            yt-econ/output/state.sqlite3
-            yt-econ/output/goal
-          key: ytecon-state-${{ github.run_id }}
+            yt-econ/${{ matrix.workdir }}/state.sqlite3
+            yt-econ/${{ matrix.workdir }}/goal
+          key: ${{ matrix.state_key }}-${{ github.run_id }}
 
       # 投稿しない設定のときは、できた mp4 をここからダウンロードできる
       - name: 成果物を残す
-        if: always()
+        if: always() && steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ytecon-${{ github.run_id }}
+          name: ytecon-${{ matrix.channel }}-${{ github.run_id }}
           retention-days: 7
           path: |
-            yt-econ/output/finals/*
-            yt-econ/output/**/video.mp4
-            yt-econ/output/**/script.json
-            yt-econ/output/**/story.json
-            yt-econ/output/**/metadata.json
-            yt-econ/output/**/subtitles.srt
-            yt-econ/output/**/thumbnail.jpg
+            yt-econ/${{ matrix.workdir }}/finals/*
+            yt-econ/${{ matrix.workdir }}/**/video.mp4
+            yt-econ/${{ matrix.workdir }}/**/script.json
+            yt-econ/${{ matrix.workdir }}/**/story.json
+            yt-econ/${{ matrix.workdir }}/**/metadata.json
+            yt-econ/${{ matrix.workdir }}/**/subtitles.srt
+            yt-econ/${{ matrix.workdir }}/**/thumbnail.jpg

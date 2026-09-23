@@ -54,6 +54,15 @@ _FONT_CANDIDATES = {
         "assets/fonts/MPLUSRounded1c-Black.ttf",
         "assets/fonts/NotoSansJP-Black.ttf",
     ],
+    # 明朝（サムネの framed スタイル）。scripts/install_fonts.py --serif で入る。無ければ bold に落ちる
+    "serif": [
+        "assets/fonts/NotoSerifJP-Bold.ttf",
+        "assets/fonts/NotoSerifJP.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJKjp-Bold.otf",
+        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+        "C:/Windows/Fonts/YuMincho.ttc",
+    ],
 }
 # 大きな見出し・キーワードは black（太くて遠目に効く）、それ以外は body
 _DISPLAY_ROLES = ("display_xl", "display_l", "display_s", "numeral_xl", "headline_l")
@@ -1296,9 +1305,57 @@ def render_flow(cfg: Config, title: str, items: list[str], note: str, out: Path,
     return _save(img, out)
 
 
+def _fit_cell(cfg: Config, d: ImageDraw.ImageDraw, text: str, role: str, box_w: int, box_h: int,
+              max_lines: int = 2, min_size: int = 24, weight: str | None = None, spacing: float = 1.15
+              ) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    """セルの『幅にも高さにも』収まるフォントと行を返す。表の文字は枠からはみ出させない.
+
+    fit_text は幅しか見ないので、行が増えて縦にあふれることがあった。ここでは
+    1 行で入る → 2 行で入る → 縮める、の順に試し、最後は「…」で切る。
+    """
+    text = (text or "").strip()
+    weight = weight or weight_for(role)
+    if not text:
+        return load_font(cfg, min_size, weight), []
+    size = ts(cfg, role)
+    lines_cap = max(1, min(max_lines, int(box_h // max(1, int(min_size * spacing)))))
+    while True:
+        font = load_font(cfg, size, weight)
+        safe = _safe_for_font(font, text)
+        if d.textlength(safe, font=font) <= box_w:
+            lines: list[str] | None = [safe]
+        else:
+            lines = _wrap(d, text, font, box_w, strict=True)
+        if lines is not None and len(lines) <= lines_cap and all(d.textlength(ln, font=font) <= box_w for ln in lines):
+            bb = d.textbbox((0, 0), "".join(lines), font=font)
+            need_h = int(font.size * spacing) * (len(lines) - 1) + (bb[3] - bb[1])
+            if need_h <= box_h:
+                return font, lines
+        if size <= min_size:
+            lines = (_wrap(d, text, font, box_w) or [safe])[:lines_cap]
+            if len(lines) == lines_cap and (len(_wrap(d, text, font, box_w) or []) > lines_cap):
+                while lines[-1] and d.textlength(lines[-1] + "…", font=font) > box_w:
+                    lines[-1] = lines[-1][:-1]
+                lines[-1] = lines[-1] + "…"
+            return font, lines
+        size = max(min_size, int(size * 0.92))
+
+
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _cell_role(text: str, base: str = "body_l") -> tuple[str, str]:
+    """数字を含むセルは太く（数字は表の主役）、言葉のセルは本文の字体で."""
+    return ("title", "black") if _DIGIT_RE.search(text or "") else (base, "body")
+
+
+def _hairline(d, x0: int, y: int, x1: int, color: str, width: int = 2) -> None:
+    d.line([(x0, y), (x1, y)], fill=color, width=width)
+
+
 def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Path,
                    active: int | None = None) -> Path:
-    """A vs B。行ごとに 見出し | 左 | 右."""
+    """A vs B。行ごとに 見出し | 左 | 右。1 枚のカードの中に、色つきの列見出し・細い罫・縞で組む."""
     from . import design
 
     left_name, right_name = "", ""
@@ -1317,34 +1374,56 @@ def render_compare(cfg: Config, title: str, items: list[str], note: str, out: Pa
             rows.append(["", cells[0], cells[1]])
     if not rows:
         rows = [["", title, ""]]
-    label_w = min(300, int((cw - m * 2) * 0.22))
-    col_w = (cw - m * 2 - label_w - 40) // 2
+    has_label = any(r[0] for r in rows)
+    pad = 22
+    label_w = min(300, int((cw - m * 2) * 0.24)) if has_label else 0
+    col_w = (cw - m * 2 - label_w) // 2
     y = y0 + 10
-    head_h = 96
-    r = design.radius(cfg, "m")
+    top = y
+    head_h = 92 if left_name else 0
+    r = design.radius(cfg, "l")
+    avail = h - 128 - y - 20 - head_h
+    row_h = max(96, min(150, avail // max(len(rows), 1)))
+    bottom = y + head_h + row_h * len(rows)
+
+    # カード本体
+    _rounded(d, [m, top, cw - m, bottom], pal["surface"], pal["outline"], r, 2)
+    # 列見出し: 色つきの文字と、その列の幅いっぱいの下線（塗りつぶしの札より軽い）
     if left_name:
-        for k, (name, fill) in enumerate(((left_name, pal["accent"]), (right_name, pal["accent2"]))):
-            x = m + label_w + 20 + k * (col_w + 20)
-            _rounded(d, [x, y, x + col_w, y + head_h], fill, None, r)
-            fh, hl = fit_text(cfg, d, name, "title", col_w - 30, 1, min_size=36)
-            _text_block(d, hl[:1], fh, (x, y, x + col_w, y + head_h), "#0B1120")
-        y += head_h + 20
-    row_h = min(150, (h - 128 - y - 20) // max(len(rows), 1))
+        for k, (name, color) in enumerate(((left_name, pal["accent"]), (right_name, pal["accent2"]))):
+            x = m + label_w + k * col_w
+            fh, hl = _fit_cell(cfg, d, name, "title", col_w - pad * 2, head_h - 24, max_lines=1, min_size=30, weight="black")
+            _text_block(d, hl, fh, (x, top, x + col_w, top + head_h - 8), color)
+            d.rounded_rectangle([x + pad, top + head_h - 8, x + col_w - pad, top + head_h - 2], radius=3, fill=color)
+        y += head_h
+    # 行
     for i, (label, lval, rval) in enumerate(rows):
-        fill, outline, width, color = _row_style(pal, i, active)
-        _rounded(d, [m, y, cw - m, y + row_h - 14], fill, outline, r, width)
-        _reserve_marker(d, m - 34, y + (row_h - 14) // 2)
-        if i == active:
-            _marker(d, m - 34, y + (row_h - 14) // 2, pal["accent"])
-        if label:
-            fl, ll = fit_text(cfg, d, label, "body_m", label_w - 30, 1, min_size=30, weight="bold")
-            _text_block(d, ll[:1], fl, (m + 24, y, m + label_w, y + row_h - 14),
-                        pal["text"] if i == active else pal["text_secondary"], align="left")
+        y1 = y + row_h
+        is_active = active is not None and i == active
+        if i % 2 == 1:
+            d.rectangle([m + 2, y, cw - m - 2, y1], fill=_mix(pal["surface"], pal["surface_high"], 0.6))
+        if is_active:
+            _rounded(d, [m + 8, y + 6, cw - m - 8, y1 - 6], _mix(pal["surface"], pal["accent"], 0.18), pal["accent"],
+                     design.radius(cfg, "m"), 4)
+        _reserve_marker(d, m - 34, y + row_h // 2)
+        if is_active:
+            _marker(d, m - 34, y + row_h // 2, pal["accent"])
+        if label_w:
+            fl, ll = _fit_cell(cfg, d, label, "body_m", label_w - pad * 2 - 8, row_h - pad, max_lines=2, min_size=26, weight="bold")
+            _text_block(d, ll, fl, (m + pad + 8, y, m + label_w, y1), pal["text"] if is_active else pal["text_secondary"], align="left")
+            # 見出し列と値のあいだの縦罫
+            d.line([(m + label_w, y + 14), (m + label_w, y1 - 14)], fill=pal["outline"], width=2)
         for k, val in enumerate((lval, rval)):
-            x = m + label_w + 20 + k * (col_w + 20)
-            fv, vl = fit_text(cfg, d, val, "title", col_w - 30, 2, min_size=32)
-            _text_block(d, vl, fv, (x, y, x + col_w, y + row_h - 14), color)
-        y += row_h
+            x = m + label_w + k * col_w
+            role, wt = _cell_role(val)
+            fv, vl = _fit_cell(cfg, d, val, role, col_w - pad * 2, row_h - pad, max_lines=2, min_size=26, weight=wt)
+            _text_block(d, vl, fv, (x + pad, y, x + col_w - pad, y1), pal["text"])
+        if k == 1:
+            xm = m + label_w + col_w
+            d.line([(xm, y + 14), (xm, y1 - 14)], fill=pal["outline"], width=2)
+        if i < len(rows) - 1:
+            _hairline(d, m + 16, y1, cw - m - 16, pal["outline"])
+        y = y1
     return _save(img, out)
 
 
@@ -1423,28 +1502,50 @@ def render_balance(cfg: Config, title: str, items: list[str], note: str, out: Pa
 
 def render_table(cfg: Config, title: str, items: list[str], note: str, out: Path,
                  active: int | None = None) -> Path:
-    """2 列の表（項目 | 値）."""
+    """2 列の表（項目 | 値）。1 枚のカードに、項目と値を点線でつなぐ（値が主役）."""
     from . import design
 
     img, d, pal, cw, h, m, y0 = _diagram_base(cfg, title, note)
     rows = [[c.strip() for c in it.split("|", 1)] for it in items[:5] if it]
     rows = [r if len(r) == 2 else [r[0], ""] for r in rows] or [["…", ""]]
+    pad = 24
     avail = h - 128 - y0 - 20
-    row_h = min(120, avail // len(rows))
+    row_h = max(92, min(124, avail // len(rows)))
     y = y0 + 10
-    r = design.radius(cfg, "s")
+    top = y
+    bottom = y + row_h * len(rows)
+    r = design.radius(cfg, "l")
+    _rounded(d, [m, top, cw - m, bottom], pal["surface"], pal["outline"], r, 2)
+    inner_w = cw - m * 2 - pad * 2
+    key_w = int(inner_w * 0.50)
+    val_w = inner_w - key_w - 40
     for i, (k, v) in enumerate(rows):
-        base = pal["surface_high"] if i % 2 == 0 else pal["surface"]
-        fill, outline, width, color = _row_style(pal, i, active, base)
-        _rounded(d, [m, y, cw - m, y + row_h - 10], fill, outline if i == active else None, r, width)
-        _reserve_marker(d, m - 34, y + (row_h - 10) // 2)
-        if i == active:
-            _marker(d, m - 34, y + (row_h - 10) // 2, pal["accent"])
-        fk, kl = fit_text(cfg, d, k, "title", (cw - m * 2) * 0.55, 1, min_size=34)
-        _text_block(d, kl[:1], fk, (m + 36, y, cw - m, y + row_h - 10), color, align="left")
-        fv, vl = fit_text(cfg, d, v, "title", (cw - m * 2) * 0.35, 1, min_size=34)
-        _text_block(d, vl[:1], fv, (m, y, cw - m - 36, y + row_h - 10), pal["positive"], align="right")
-        y += row_h
+        y1 = y + row_h
+        is_active = active is not None and i == active
+        if i % 2 == 1:
+            d.rectangle([m + 2, y, cw - m - 2, y1], fill=_mix(pal["surface"], pal["surface_high"], 0.6))
+        if is_active:
+            _rounded(d, [m + 8, y + 6, cw - m - 8, y1 - 6], _mix(pal["surface"], pal["accent"], 0.18), pal["accent"],
+                     design.radius(cfg, "m"), 4)
+        _reserve_marker(d, m - 34, y + row_h // 2)
+        if is_active:
+            _marker(d, m - 34, y + row_h // 2, pal["accent"])
+        fk, kl = _fit_cell(cfg, d, k, "body_l", key_w, row_h - pad, max_lines=2, min_size=26, weight="bold")
+        _text_block(d, kl, fk, (m + pad + 8, y, m + pad + 8 + key_w, y1), pal["text"] if is_active else pal["text_secondary"], align="left")
+        role, wt = _cell_role(v, "body_l")
+        fv, vl = _fit_cell(cfg, d, v, role, val_w, row_h - pad, max_lines=2, min_size=26, weight=wt)
+        _text_block(d, vl, fv, (cw - m - pad - val_w, y, cw - m - pad, y1), pal["positive"] if v else pal["muted"], align="right")
+        # 項目と値をつなぐ点線（目が迷わない）
+        kx = m + pad + 8 + max((d.textlength(ln, font=fk) for ln in kl), default=0) + 18
+        vx = cw - m - pad - max((d.textlength(ln, font=fv) for ln in vl), default=0) - 18
+        cy = y + row_h // 2
+        x = int(kx)
+        while x < vx - 6:
+            d.ellipse([x, cy - 3, x + 6, cy + 3], fill=pal["outline"])
+            x += 16
+        if i < len(rows) - 1:
+            _hairline(d, m + 16, y1, cw - m - 16, pal["outline"])
+        y = y1
     return _save(img, out)
 
 

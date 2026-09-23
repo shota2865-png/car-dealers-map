@@ -1,0 +1,191 @@
+# ============================================================
+#  2 チャンネル目: 心理学 — 本体（config/channel.yaml）を継承して、違うところだけ書く
+#
+#  動かし方:  python -m ytecon --channel psych run     （環境変数 YTECON_CHANNEL=psych でも同じ）
+#  鍵:        PSY_YOUTUBE_CLIENT_ID / PSY_YOUTUBE_CLIENT_SECRET / PSY_YOUTUBE_REFRESH_TOKEN
+#             （無ければ本体の YOUTUBE_* に落ちる = 同じアカウント・同じクォータで動く）
+#  ここに無い設定はすべて本体と同じ（深いマージ。リストは丸ごと置き換え）。
+# ============================================================
+extends: ../../channel.yaml
+
+channel:
+  key: "psych"
+  env_prefix: "PSY_"
+  # 名前の候補は docs/2チャンネル目_心理学.md。決まったらここを書き換えるだけ（タイトルカードと Shorts の上部に出る）
+  name: "こころの図書室"
+  audience: "20代前半の大学生と新社会人。人間関係・やる気・自己肯定感・SNS 疲れが気になり、心理学の本を買っては最後まで読めていない層"
+  # 昼に聴く（本体の sleep と違い、テンポを保ち、各節の終わりに「今日試す 1 つ」を置く）
+  listening_mode: "daytime"
+  speech_style: "zundamon"
+  # --- 分野の言葉（台本・企画・Shorts・概要欄のプロンプトに入る） ---
+  field: "心理学"
+  lens: "心理学"
+  topic_words: "心理学・人間関係・習慣・感情・自己理解"
+  term_examples: "認知的不協和 / 確証バイアス / 自己効力感 / 内発的動機づけ / 損失回避 / 帰属のエラー"
+  pitch: "通勤や昼休みに聴く、人の心のしくみの話。"
+  disclaimer: |-
+    この動画は心理学の研究や理論を一般向けに紹介するもので、医学的な診断や治療の代わりにはなりません。
+    つらさが続くときは、医療機関や相談窓口（こころの健康相談統一ダイヤル 0570-064-556 など）にご相談ください。
+  hook_examples:
+    question: "なんで言い返せない？ / 三日坊主、また？"
+    gap: "決意9割、続くのは1割"
+    claim: "やる気は待っても来ない / 褒めると下手になる"
+  hashtags: ["#心理学", "#人間関係", "#メンタル"]
+  generic_words: ["心理", "心理学", "心", "人間", "感情", "性格", "行動"]
+
+  tone: |
+    - 中学生でも分かる言葉に言い換える。専門用語は必ず初出で1文の言い換えを添える
+    - 上から目線で教えない。「一緒に観察する」トーン。視聴者の行動を笑わない
+    - 研究は「◯◯の研究では」と出典を言い、再現されていない有名な実験（例: 一部の権威実験や刷り込み系）はそう断る
+    - 診断しない。「あなたは◯◯型」「これは◯◯障害」のような言い方をしない
+    - 不安を煽らない。「ヤバい」「終わった」「知らないと損」は使わない
+    - 1文は20〜30字。長いと合成音声の抑揚が単調になり、聞き手が迷子になる
+    - 体言止めを多用しない
+    - 各セクションの終わりに、今日その場で試せる 1 つのことか、自分に当てはめる 1 つの問いを置く
+    - 「性格を変えろ」と言わない。環境と手順を変える案を出す
+  banned_topics:
+    - 精神疾患の診断・治療法の断定、薬の推奨や中止の助言
+    - 自殺・自傷の方法や具体的な描写
+    - 特定の個人・企業・集団への誹謗中傷、性格の決めつけ
+    - 血液型性格診断・MBTI の断定的な扱いなど、科学的根拠の薄いものを事実として語ること
+    - 出典不明の実験・統計、再現に失敗した研究を定説として話すこと
+    - 恋愛・対人の「操作テクニック」（相手を思いどおりに動かす類）
+
+video:
+  # 本体と別の見た目: 墨色 × 琥珀（config/design_tokens.yaml の ink）
+  design: "ink"
+  target_minutes_min: 13.0
+  target_minutes_max: 16.0
+
+script:
+  # 構成の 9 ブロックは本体と同じスタイルバイブルを使う（identity の「経済学のレンズ」は台本プロンプト側で心理学に置き換わる）
+  style_bible_file: ""
+
+topics:
+  schedule_file: "config/channels/psych/schedule.yaml"
+  frontier_seeds:
+    - "米国で広がった『セラピー用語の日常化』（gaslighting / boundaries）が日本の会話に入ってくる経路"
+    - "海外の『ドーパミン断ち』ブームの科学的な裏づけと、日本での受け止め方"
+    - "欧米の職場で定着した心理的安全性が、日本の新人研修に降りてくるまで"
+    - "米国 Z 世代の『静かな退職』と、日本の若手のやる気の測り方"
+    - "海外の SNS 年齢制限の議論と、10 代・20 代のメンタルの研究"
+    - "米国で流行した『マニフェステーション（引き寄せ）』を心理学はどう見ているか"
+    - "海外の学校で広がる感情教育（SEL）と日本の道徳"
+    - "海外で研究が進む『孤独』の健康影響と、日本の一人暮らし"
+    - "米国の大学で問題化した完璧主義の増加と、日本の就活"
+    - "海外の企業で使われる性格検査の妥当性の議論と、日本の適性検査"
+  rss_sources:
+    - name: "Yahoo!ニュース ライフ"
+      url: "https://news.yahoo.co.jp/rss/topics/life.xml"
+    - name: "Yahoo!ニュース 科学"
+      url: "https://news.yahoo.co.jp/rss/topics/science.xml"
+    - name: "ScienceDaily Psychology"
+      url: "https://www.sciencedaily.com/rss/mind_brain/psychology.xml"
+    - name: "PsyPost"
+      url: "https://www.psypost.org/feed"
+  evergreen_seeds:
+    - "なぜ人は言い返せなかった夜に限って、布団の中で名文句を思いつくのか"
+    - "三日坊主は意志が弱いからではない。習慣の研究が言う「続く仕組み」"
+    - "褒められると伸びる人と、崩れる人の差（内発的動機づけ）"
+    - "SNS を見ると疲れるのに、やめられないのはなぜか（社会的比較と変動報酬）"
+    - "『自分はダメだ』が頭から離れないときに起きていること（反すう）"
+    - "初対面で相手に好かれる人がやっている、たった 1 つのこと（返報性と自己開示）"
+    - "怒りは 6 秒で消えるは本当か。感情の研究で確かめる"
+    - "やる気が出るのを待つと一生出ない理由（行動活性化）"
+    - "人はなぜ自分の失敗だけ運のせいにするのか（帰属のエラー）"
+    - "『みんなやってる』に弱いのは性格ではない（同調の実験と、その後の再検証）"
+    - "先延ばしは時間管理の問題ではなく、感情の問題である"
+    - "断れない人が断れるようになる、順番（アサーション）"
+    - "不安なときほど悪いニュースを探してしまうのはなぜか（確証バイアス）"
+    - "『損したくない』が判断を狂わせる（損失回避と現状維持）"
+    - "自分を励ます言葉が効かない人へ。セルフコンパッションの研究"
+
+cast:
+  mode: dialogue
+  characters:
+    - key: metan
+      name: 四国めたん
+      tag: めたん
+      role: teacher
+      voicevox_speaker: 2
+      side: left
+      dir: assets/character/四国めたん立ち絵素材2.1
+      flip: true
+      subtitle_outline: "#8A4B1F"
+      parts: {服: "白ロリ服", 右腕: "普通", 左腕: "普通", 顔色: "普通2", 眉: "太眉ごきげん"}
+      mouth: {base: "ほほえみ", mouth_half: "ゆ", mouth_open: "わあー"}
+      blink: "目閉じ"
+      skip_groups: ["その他の服", "記号など"]
+      expressions:
+        通常: {}
+        笑: {眉: "太眉ごきげん", 顔色: "赤面"}
+        驚: {目セット: "見開き白目", 眉: "太眉ごきげん"}
+        困: {眉: "太眉こまり"}
+        考: {眉: "太眉こまり", 左腕: "口元に指"}
+        指: {右腕: "指差す"}
+        怒: {眉: "太眉おこ"}
+      persona: >-
+        心理学を専攻した大学院生。人の行動を「良い悪い」ではなく「仕組み」として面白がる。
+        昼休みに隣で話してくれる先輩のような、軽くて速いテンポ。語尾は「〜よ」「〜ね」「〜かしら」「〜なの」。
+        研究の出典は必ず自分が言い、再現されていない話は「有名だけど怪しいの」とはっきり言う。
+        励まし方は「性格を変えろ」ではなく「環境と手順を変える」。締めは「今日ひとつ試してみて」
+    - key: zundamon
+      name: ずんだもん
+      tag: ずんだもん
+      role: student
+      voicevox_speaker: 3
+      side: right
+      dir: assets/character/ずんだもん立ち絵素材2.3
+      flip: false
+      subtitle_outline: "#1E7F3C"
+      persona: >-
+        入社 1 年目の新社会人。会議で言い返せない、LINE の既読が気になる、三日坊主、
+        SNS で同期と比べて落ち込む、を全部やっている。心理学は「メンタリストの動画で見た」程度。
+        語尾は「〜のだ」「〜なのだ」。視聴者の本音・言い訳・照れをそのまま口にし、たまに極端な結論に飛ぶ。
+        一人称は「ぼく」
+  height_ratio: 0.34
+
+render:
+  bgm:
+    enabled: true
+    # 本体（Up to No Good）と別の曲。素材 zip の assets/bgm/ に入れておくこと（無ければ置いてある曲に落ちる）
+    file: "Yair Cohen - Rise Within.mp3"
+    volume_db: -9
+    ducking: true
+    mood_timeline: true
+  sfx:
+    enabled: false
+
+upload:
+  privacy: "public"
+  thumbnail_dir: "thumbnails/psych"
+  finals_dir: "finals/psych"
+  # 完成品の名前: ps_001_20260929（本体の yt_ と分ける）
+  finals_prefix: "ps"
+  # 本体の 19:00 とずらす（同じ人が両方見に来ても重ならないように）
+  publish_times_jst: ["20:00"]
+  category_id: "27"      # Education
+  playlist_title: "人の心のしくみ"
+  title_hook_tag: true
+  title_suffix: "【ずんだもん&めたんの心理学】"
+
+shorts:
+  per_video: 3
+  mode: story
+  cta:
+    - "【ずんだもん】続きは本編で聞くのだ。"
+    - "【めたん】本編は毎日20時。下のリンクから飛べるわ。"
+  # 朝の通勤・昼休み・夜のくつろぎ時間
+  publish_times_jst: ["07:30", "12:30", "21:30"]
+
+thumbnail:
+  # 自動サムネは「写真 + 細い枠 + 明朝 2 行」（本体は bar）。手で作ったものが thumbnails/psych/ にあればそちら
+  style: "framed"
+
+goal:
+  file: "config/channels/psych/goals.yaml"
+
+pipeline:
+  videos_per_day: 1
+  workdir: "output/psych"
+  retries: 2

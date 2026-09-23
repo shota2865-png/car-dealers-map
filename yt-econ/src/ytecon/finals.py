@@ -23,20 +23,30 @@ from .state import Store
 
 log = logging.getLogger(__name__)
 
-NAME_RE = re.compile(r"^yt_(\d{3,})_(\d{8})$")
+NAME_RE = re.compile(r"^([a-z][a-z0-9]{0,7})_(\d{3,})_(\d{8})$")
+DEFAULT_PREFIX = "yt"
 JST = dt.timezone(dt.timedelta(hours=9))
 
 
-def name_for(number: int, day: dt.date) -> str:
-    return f"yt_{number:03d}_{day:%Y%m%d}"
+def prefix(cfg: Config | None) -> str:
+    """完成品の名前の接頭辞。本体は yt、2 つ目以降は upload.finals_prefix（例 ps）."""
+    if cfg is None:
+        return DEFAULT_PREFIX
+    p = str(cfg.get("upload.finals_prefix", "") or "").strip().lower()
+    return p if re.fullmatch(r"[a-z][a-z0-9]{0,7}", p or "") else DEFAULT_PREFIX
 
 
-def parse_name(name: str) -> tuple[int, dt.date] | None:
+def name_for(number: int, day: dt.date, pfx: str = DEFAULT_PREFIX) -> str:
+    return f"{pfx}_{number:03d}_{day:%Y%m%d}"
+
+
+def parse_name(name: str, pfx: str | None = None) -> tuple[int, dt.date] | None:
+    """yt_001_20260922 → (1, 2026-09-22)。pfx を渡すとその接頭辞のものだけ受ける."""
     m = NAME_RE.match(Path(name).stem)
-    if not m:
+    if not m or (pfx is not None and m.group(1) != pfx):
         return None
     try:
-        return int(m.group(1)), dt.datetime.strptime(m.group(2), "%Y%m%d").date()
+        return int(m.group(2)), dt.datetime.strptime(m.group(3), "%Y%m%d").date()
     except ValueError:
         return None
 
@@ -58,15 +68,16 @@ def output_dir(cfg: Config) -> Path:
 
 def used_numbers(cfg: Config, store: Store | None) -> set[int]:
     nums: set[int] = set()
-    for p in list(finals_dir(cfg).glob("yt_*.json")) + list(output_dir(cfg).glob("yt_*.mp4")):
-        got = parse_name(p.stem)
+    pfx = prefix(cfg)
+    for p in list(finals_dir(cfg).glob(f"{pfx}_*.json")) + list(output_dir(cfg).glob(f"{pfx}_*.mp4")):
+        got = parse_name(p.stem, pfx)
         if got:
             nums.add(got[0])
     if store is not None:
         from .state import STATUSES
         for r in store.videos_by_status(*STATUSES):          # 途中の回に付けた番号も飛ばさない
             fn = (r.stage or {}).get("final_name")
-            got = parse_name(fn) if fn else None
+            got = parse_name(fn, pfx) if fn else None
             if got:
                 nums.add(got[0])
     return nums
@@ -78,7 +89,7 @@ def next_number(cfg: Config, store: Store | None) -> int:
 
 
 def assign(cfg: Config, store: Store | None, day: dt.date) -> str:
-    return name_for(next_number(cfg, store), day)
+    return name_for(next_number(cfg, store), day, prefix(cfg))
 
 
 def keep(cfg: Config, name: str, video: Path, thumb: Path | None = None) -> dict[str, str]:
@@ -124,7 +135,11 @@ def fetch(source: str, dest: Path) -> Path:
     if "drive.google.com" in source or "docs.google.com" in source:
         import gdown                                 # 大きいファイルの「ウイルススキャンできません」確認を越えるため
         dest.parent.mkdir(parents=True, exist_ok=True)
-        got = gdown.download(url=source, output=str(dest), quiet=False, fuzzy=True)
+        m = re.search(r"(?:/d/|[?&]id=)([A-Za-z0-9_-]{20,})", source)
+        if m:                                        # gdown 6 系は fuzzy= を受け付けないので ID を自分で抜く
+            got = gdown.download(id=m.group(1), output=str(dest), quiet=False)
+        else:
+            got = gdown.download(url=source, output=str(dest), quiet=False)
         if not got or not dest.exists() or dest.stat().st_size < 1024:
             raise RuntimeError("Google Drive から取得できませんでした。共有設定が「リンクを知っている全員」になっているか確認してください")
         return dest
@@ -150,9 +165,9 @@ def publish_file(cfg: Config, store: Store, source: str, name: str, *, privacy: 
     from . import youtube
     from .thumbnail import prepare
 
-    parsed = parse_name(name)
+    parsed = parse_name(name, prefix(cfg))
     if not parsed:
-        raise ValueError(f"名前は yt_001_20260922 の形にしてください: {name}")
+        raise ValueError(f"名前は {prefix(cfg)}_001_20260922 の形にしてください: {name}")
     video = fetch(source, output_dir(cfg) / f"{name}.mp4")
     meta = load_meta(cfg, name) or Metadata(title=title or name, description="",
                                               category_id=str(cfg.get("upload.category_id", "25")),

@@ -133,7 +133,7 @@ def _isolated_cfg(tmp_path):
     cfg = copy.deepcopy(load_config())
     (tmp_path / "config").mkdir()
     for p in (cfg.root / "config").glob("*"):
-        if p.name != "style.yaml":
+        if p.is_file() and p.name != "style.yaml":      # channels/ などのサブフォルダは要らない
             shutil.copy(p, tmp_path / "config" / p.name)
     cfg.root = tmp_path
     return cfg

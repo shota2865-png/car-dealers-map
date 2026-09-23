@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import copy
 import pytest
 
 from ytecon.config import load_config
@@ -18,7 +19,7 @@ from ytecon.tts import Line, VoiceTrack
 
 @pytest.fixture
 def cfg():
-    c = load_config()
+    c = copy.deepcopy(load_config())      # 共有インスタンスを書き換えると他のテストに漏れる
     c.raw.setdefault("visuals", {})["ai_image_provider"] = ""   # ネットに出ない
     c.raw["visuals"]["motion_backgrounds"] = False            # 背景ループの合成（数十秒）は別テストで
     return c

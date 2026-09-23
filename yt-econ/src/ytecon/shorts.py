@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import domain
 from .config import Config
 from .script import Diagram, Section, VideoScript, Visual, plain_heading, strip_tags
 from .tts import Line, VoiceTrack
@@ -230,7 +231,7 @@ def refine_hooks(cfg: Config, script: VideoScript, windows: list[Window]) -> Non
             for i, w in enumerate(windows)
         )
         out = llm.complete_json(
-            "あなたは YouTube Shorts の編集者です。寝る前に聴く落ち着いた経済チャンネルなので、煽らない。",
+            f"あなたは YouTube Shorts の編集者です。落ち着いた{domain.field(cfg)}チャンネルなので、煽らない。",
             "次の各会話に、画面上部に出す見出し（14 字以内、名詞止め、数字があれば入れる）と、"
             "Shorts のタイトル（28 字以内、疑問形か数字入り）を付けてください。順番どおりに返すこと。\n\n" + body,
             schema, model=str(cfg.get("shorts.model", cfg.get("topics.model", "claude-sonnet-5"))), effort="low",
@@ -290,7 +291,7 @@ def shorts_config(cfg: Config) -> Config:
     vv["speed"] = float(sc.get("tts_speed", 1.25))
     vv["pause_sentence"] = float(sc.get("pause_sentence", 0.22))
     vv["pause_section"] = float(sc.get("pause_section", 0.45))
-    return Config(raw=raw, root=cfg.root)
+    return Config(raw=raw, root=cfg.root, path=cfg.path)
 
 
 # ----------------------------------------------------------------------
@@ -366,14 +367,15 @@ def shorts_metadata(cfg: Config, script: VideoScript, w: Window, parent_url: str
         parts.append("▶ 本編はチャンネルの最新動画から")
     # 画面下の「関連動画」リンクは API から付けられない。YouTube Studio で本編を関連動画に設定する
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
-    parts.append(f"寝る前に聴く、お金と就活とAIの話。毎日{times[0] if times else '夜'}に本編を更新しています。")
+    parts.append(f"{domain.pitch(cfg)}毎日{times[0] if times else '夜'}に本編を更新しています。")
     parts.append("■ 音声\n" + md._voice_credit(cfg))
     credits = [c for c in detect_credits(cfg) + [str(cfg.get("render.bgm.credit", "") or "").strip()] if c]
     if credits:
         parts.append("■ 素材\n" + "\n".join(credits))
-    hashtags = ["#Shorts", "#ずんだもん", "#四国めたん", "#経済", "#就活"]
+    names = domain.cast_names(cfg) or ["ずんだもん", "四国めたん"]
+    hashtags = ["#Shorts"] + ["#" + n for n in names] + domain.hashtags(cfg)
     parts.append(" ".join(hashtags))
-    tags = ["Shorts", "ずんだもん", "四国めたん"] + [t for t in script.tags if t][:10]
+    tags = ["Shorts"] + names + [t for t in script.tags if t][:10]
     return md.Metadata(
         title=title, description="\n\n".join(parts)[:5000], tags=tags,
         category_id=str(cfg.get("upload.category_id", "25")),
@@ -446,7 +448,7 @@ class Story:
                 "beats": [{"role": b.role, "lines": b.lines, "visual": b.visual} for b in self.beats]}
 
 
-_STORY_SYSTEM = """あなたは YouTube Shorts の構成作家です。経済・お金・就活・AI を扱う、2 人の掛け合いのチャンネルの
+_STORY_SYSTEM = """あなたは YouTube Shorts の構成作家です。{topic_words} を扱う、2 人の掛け合いのチャンネルの
 本編（15 分）から、単体で成立する 45〜55 秒の Shorts を書きます。
 
 Shorts の視聴者は最初の 1 秒で指を止めるかを決め、退屈した瞬間に次へ送ります。
@@ -535,7 +537,7 @@ def write_stories(cfg: Config, script: VideoScript, n: int) -> list[Story]:
     sources = "\n".join(f"- {s.get('name', '')} {s.get('url', '')}".rstrip() for s in (script.sources or [])) or "（なし）"
     import datetime as _dt
     out = llm.complete_json(
-        _STORY_SYSTEM.format(cast=cast, today=_dt.date.today().isoformat()),
+        _STORY_SYSTEM.format(cast=cast, today=_dt.date.today().isoformat(), topic_words=domain.topic_words(cfg)),
         _STORY_USER.format(title=strip_tags(script.topic_title), body=_script_body(script), sources=sources, n=n),
         _story_schema(),
         model=str(cfg.get("shorts.model", cfg.get("script.model", "claude-sonnet-5"))),

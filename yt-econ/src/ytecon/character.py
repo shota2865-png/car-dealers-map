@@ -94,7 +94,7 @@ def char_cfg(cfg: Config, entry: dict | None) -> Config:
     if hr and "height_ratio" not in entry:
         ch["height_ratio"] = float(hr)
     raw["character"] = ch
-    return _Config(raw=raw, root=cfg.root)
+    return _Config(raw=raw, root=cfg.root, path=cfg.path)
 
 
 def characters(cfg: Config) -> list[Config]:

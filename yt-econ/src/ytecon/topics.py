@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
-from . import llm
+from . import domain, llm
 from .config import Config
 from .state import HORIZONS, Store
 
@@ -111,8 +111,8 @@ def is_duplicate(title: str, history: list[str], threshold: float) -> bool:
 # ----------------------------------------------------------------------
 # Claude による選定
 # ----------------------------------------------------------------------
-_SELECT_SYSTEM = """あなたは日本語の経済解説YouTubeチャンネルの企画担当ディレクターです。
-視聴者は{audience}。彼らは経済の予備知識が乏しく、しかし「自分の生活や給料に
+_SELECT_SYSTEM = """あなたは日本語の{field}解説YouTubeチャンネルの企画担当ディレクターです。
+視聴者は{audience}。彼らは{field}の予備知識が乏しく、しかし「自分の生活や給料に
 どう効くのか」には強い関心があります。
 
 # このチャンネルの前提：日本は海外に遅れて追いつく市場
@@ -140,7 +140,7 @@ stock の評価軸は今日の再生数ではなく、「日本で話題化し�
 - horizon: stage 0〜1 かつ lag が6ヶ月超なら stock、
            stage 1〜2 または lag が6ヶ月以内なら bridge、stage 3 なら flow
 - watch_keywords: **日本のニュース見出しに出たら「来た」と判断できる日本語の語**を
-  3〜6個。固有名詞・制度名・カタカナ語を優先し、「経済」のような一般語は入れない。
+  3〜6個。固有名詞・制度名・カタカナ語を優先し、「{field}」のような一般語は入れない。
   これは後日この動画を掘り起こすトリガーとして機械的に使われます
 - japan_bridge: 海外の話を日本の視聴者が自分ごと化するための接続を一文で。
   「アメリカで起きた→日本ではこう来る→だから今あなたに関係がある」の橋渡し
@@ -205,12 +205,12 @@ def _normalize_horizon(item: dict[str, Any]) -> str:
     return "bridge"
 
 
-def _clean_keywords(words: list[str]) -> list[str]:
+def _clean_keywords(words: list[str], extra_generic: set[str] | frozenset[str] = frozenset()) -> list[str]:
     """掘り起こしのトリガー語。一般語が混ざると毎日誤検知するので落とす."""
     out = []
     for w in words:
         w = unicodedata.normalize("NFKC", str(w)).strip()
-        if len(w) < 3 or w in _TOO_GENERIC:
+        if len(w) < 3 or w in _TOO_GENERIC or w in extra_generic:
             continue
         if w not in out:
             out.append(w)
@@ -352,6 +352,7 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
     plan = plan_portfolio(cfg, store, count, has_news=bool(news), has_seeds=bool(seeds))
 
     system = _SELECT_SYSTEM.format(
+        field=domain.field(cfg),
         audience=cfg.get("channel.audience", "20代の社会人"),
         banned="\n".join(f"- {b}" for b in cfg.get("channel.banned_topics", []) or []),
     )
@@ -374,7 +375,7 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
 
     user = f"""今日は {dt.date.today().isoformat()} です。
 
-# 収集した経済ニュース見出し（日本国内。主に flow の材料）
+# 収集した{domain.field(cfg)}ニュース見出し（日本国内。主に flow の材料）
 {news_block}
 
 # 常設テーマの種（ニュース性はないが需要が安定している）
@@ -429,7 +430,7 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
             horizon=_normalize_horizon(item),
             diffusion_stage=int(item.get("diffusion_stage", 3) or 0),
             lag_months=float(item.get("lag_months", 0) or 0),
-            watch_keywords=_clean_keywords(item.get("watch_keywords", []) or []),
+            watch_keywords=_clean_keywords(item.get("watch_keywords", []) or [], domain.generic_words(cfg)),
             japan_bridge=item.get("japan_bridge", ""),
         )
         topic.id = store.add_topic(

@@ -9,6 +9,7 @@
 #    material3      : Google Material Design 3（色の「役割」、surface の段差、
 #                     形の尺度 4/8/12/16/28、強調イージング）
 #    hybrid         : 上の3つのいい所を1本に。**動画の既定はこれ**
+#    ink            : 墨色 × 琥珀の温かい配色。2 チャンネル目（心理学）が使う
 #
 #  使い方: config/channel.yaml の video.design でプリセットを選ぶ。
 #  値は UI 用の px を 1080p の動画（視聴距離が遠い）向けに約 2.5 倍している。
@@ -126,6 +127,41 @@ presets:
     stroke: {card: 0, text_outline: 4}
     motion:
       fade_ms: 300
+      easing: "ease_in_out"
+
+  ink:
+    label: "インク（温かみのある墨色 × 琥珀。2 チャンネル目・心理学向け）"
+    colors:
+      bg: "#14110F"               # 墨色。青みの無い黒で、本体（紺）と一目で区別がつく
+      surface: "#1F1A17"
+      surface_high: "#2B241F"
+      outline: "#4A3F36"
+      text: "#F6F0E6"             # 生成りの白
+      text_secondary: "#D2C6B6"
+      muted: "#9C9081"
+      accent: "#E9A93F"           # 琥珀。見出し・強調
+      accent2: "#86C9AA"          # セージ。オチ・対比
+      positive: "#86C9AA"
+      negative: "#E26D5A"
+      warning: "#E9A93F"
+    type:
+      display_xl: 150
+      display_l: 118
+      display_m: 96
+      display_s: 84
+      headline_l: 88
+      headline_m: 76
+      title: 62
+      body_l: 50
+      body_m: 44
+      label: 36
+      label_s: 30
+      numeral_xl: 200
+      subtitle: 110
+    radius: {s: 6, m: 10, l: 16}    # 角丸は控えめ（紙・カードの印象）
+    stroke: {card: 2, text_outline: 5}
+    motion:
+      fade_ms: 360
       easing: "ease_in_out"
 
   material3:

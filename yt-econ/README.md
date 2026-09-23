@@ -14,7 +14,11 @@
 python -m ytecon learn <参考動画のURL>...   # 語り口を参照動画から取り込む
 python -m ytecon run                        # 当日分を作って予約投稿まで
 python -m ytecon revive                     # 寝かせた動画が日本で話題化したか照合
+python -m ytecon --channel psych run        # 2 つ目のチャンネル（心理学）。設定は config/channels/psych/
 ```
+
+複数チャンネルは `config/channels/<key>/channel.yaml` に `extends: ../../channel.yaml` で本体を継承して作ります。
+2 つ目（心理学）の作り方と、あなたがやる 7 手順は [`docs/2チャンネル目_心理学.md`](docs/2チャンネル目_心理学.md)。
 
 ---
 

@@ -1,9 +1,18 @@
-"""設定の読み込み。channel.yaml + .env をひとつのオブジェクトにまとめる."""
+"""設定の読み込み。channel.yaml + .env をひとつのオブジェクトにまとめる.
+
+チャンネルは複数持てる。2 つ目以降は config/channels/<key>/channel.yaml に置き、
+先頭の `extends: ../../channel.yaml` で本体を継承して、違うところだけ書く（深いマージ）。
+選び方は `ytecon --channel <key>` か環境変数 YTECON_CHANNEL。
+
+鍵（YOUTUBE_* など）はチャンネルごとに別の値を使えるように、`channel.env_prefix`（例 PSY_）が
+あれば `PSY_YOUTUBE_REFRESH_TOKEN` を先に見て、無ければ素の名前に落ちる。
+"""
 
 from __future__ import annotations
 
+import copy
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +27,16 @@ except ImportError:  # pragma: no cover
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = PROJECT_ROOT / "config" / "channel.yaml"
+CHANNELS_DIR = PROJECT_ROOT / "config" / "channels"
+# 継承の深さの上限（循環の保険）
+_MAX_EXTENDS = 5
 
 
 @dataclass
 class Config:
     raw: dict[str, Any]
     root: Path = PROJECT_ROOT
+    path: Path = field(default=DEFAULT_CONFIG)
 
     # --- 辞書アクセスの糖衣 ---
     def get(self, path: str, default: Any = None) -> Any:
@@ -42,6 +55,11 @@ class Config:
         return value
 
     # --- よく使う派生値 ---
+    @property
+    def channel_key(self) -> str:
+        """チャンネルの短い識別子（既定のチャンネルは 'main'）。キャッシュ名やログに使う."""
+        return str(self.get("channel.key", "") or "main")
+
     @property
     def workdir(self) -> Path:
         d = self.root / self.get("pipeline.workdir", "output")
@@ -64,7 +82,18 @@ class Config:
         )
 
     def env(self, key: str, default: str = "") -> str:
+        """環境変数。channel.env_prefix があれば <prefix><key> を先に見る（チャンネルごとの鍵）."""
+        prefix = str(self.get("channel.env_prefix", "") or "").strip()
+        if prefix:
+            v = os.environ.get(prefix + key, "")
+            if v:
+                return v
         return os.environ.get(key, default) or default
+
+    def env_name(self, key: str) -> str:
+        """このチャンネルで実際に参照される環境変数名（doctor の表示用）."""
+        prefix = str(self.get("channel.env_prefix", "") or "").strip()
+        return (prefix + key) if prefix and os.environ.get(prefix + key) else key
 
 
 _MISSING = object()
@@ -72,21 +101,81 @@ _MISSING = object()
 _cache: dict[str, Config] = {}
 
 
-def load_config(path: str | Path | None = None) -> Config:
-    """channel.yaml と .env を読み込む（プロセス内でキャッシュ）."""
-    cfg_path = Path(path) if path else DEFAULT_CONFIG
+def deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """辞書は再帰的に、それ以外（リストや値）は上書きで合成する。base は変えない."""
+    out = copy.deepcopy(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def _read_yaml(path: Path, depth: int = 0) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"設定ファイルが見つかりません: {path}\n"
+            f"config/channel.yaml を用意してください。"
+        )
+    with path.open(encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh) or {}
+    parent = raw.pop("extends", None)
+    if not parent:
+        return raw
+    if depth >= _MAX_EXTENDS:
+        raise ValueError(f"extends が深すぎます（循環していませんか）: {path}")
+    pp = Path(str(parent))
+    pp = pp if pp.is_absolute() else (path.parent / pp).resolve()
+    return deep_merge(_read_yaml(pp, depth + 1), raw)
+
+
+def channel_config_path(channel: str | None) -> Path:
+    """--channel の値から設定ファイルの場所を出す。'main'/空なら既定."""
+    key = (channel or "").strip()
+    if not key or key == "main":
+        return DEFAULT_CONFIG
+    p = Path(key)
+    if p.suffix in (".yaml", ".yml"):
+        return p if p.is_absolute() else PROJECT_ROOT / p
+    cand = CHANNELS_DIR / key / "channel.yaml"
+    if cand.exists():
+        return cand
+    raise FileNotFoundError(
+        f"チャンネル {key} の設定がありません: {cand}\n"
+        f"config/channels/{key}/channel.yaml を作ってください（extends: ../../channel.yaml で本体を継承できます）"
+    )
+
+
+def list_channels() -> list[str]:
+    """設定のあるチャンネル一覧（main + config/channels/*）."""
+    keys = ["main"]
+    if CHANNELS_DIR.exists():
+        keys += sorted(d.name for d in CHANNELS_DIR.iterdir() if (d / "channel.yaml").exists())
+    return keys
+
+
+def load_config(path: str | Path | None = None, channel: str | None = None) -> Config:
+    """channel.yaml と .env を読み込む（プロセス内でキャッシュ）.
+
+    優先順: path 引数 → channel 引数 → 環境変数 YTECON_CONFIG → YTECON_CHANNEL → 既定。
+    """
+    if path:
+        cfg_path = Path(path)
+    elif channel:
+        cfg_path = channel_config_path(channel)
+    elif os.environ.get("YTECON_CONFIG"):
+        cfg_path = Path(os.environ["YTECON_CONFIG"])
+    else:
+        cfg_path = channel_config_path(os.environ.get("YTECON_CHANNEL", ""))
+    if not cfg_path.is_absolute():
+        cfg_path = PROJECT_ROOT / cfg_path
     key = str(cfg_path)
     if key in _cache:
         return _cache[key]
 
     load_dotenv(PROJECT_ROOT / ".env")
-    if not cfg_path.exists():
-        raise FileNotFoundError(
-            f"設定ファイルが見つかりません: {cfg_path}\n"
-            f"config/channel.yaml を用意してください。"
-        )
-    with cfg_path.open(encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
-    cfg = Config(raw=raw)
+    raw = _read_yaml(cfg_path)
+    cfg = Config(raw=raw, path=cfg_path)
     _cache[key] = cfg
     return cfg
