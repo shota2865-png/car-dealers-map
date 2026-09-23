@@ -91,3 +91,74 @@ def test_run_daily_skips_when_the_day_already_has_an_episode(tmp_path, monkeypat
     assert pipe.run_daily(count=1, upload=True, force=True) == [] and called      # --force なら作る
     monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: day + dt.timedelta(days=1))
     assert pipe.run_daily(count=1, upload=True) == []                              # 翌日は空いている（Shorts は数えない）
+
+
+def test_wide_scenes_render_in_16x9_and_stay_in_safe_area(cfg):
+    from PIL import ImageChops
+    from ytecon import wide
+    th = wide.theme_wide(cfg)
+    assert (th.W, th.H) == (1920, 1080)
+    scenes = [
+        {"kind": "question", "options": ["動画を見て気をそらす", "布団で返す言葉を考える"], "lead": "会議で言い返せなかった夜"},
+        {"kind": "chapter", "label": "第1章", "heading": "その場で言葉が出ない理由", "heading_hl": "言葉が出ない", "sub": "頭の回転とは関係がない"},
+        {"kind": "point", "heading": "作業記憶ってなに？", "term": "作業記憶", "plain": "頭の中のメモ帳", "note": "考えるための小さな置き場"},
+        {"kind": "meter", "heading": "緊張したときのメモ帳", "slots": 5, "fill": [{"text": "どう思われる？"}, {"text": "失敗したら？"}, {"text": "早く言わなきゃ"}, {"text": "上司の顔"}], "label_left": "言葉を考える場所は、これだけ"},
+        {"kind": "flow", "heading": "流れ", "boxes": [{"text": "緊張する"}, {"text": "メモ帳がうまる", "state": "active", "up": True}, {"text": "言葉が出ない", "note": "頭のせいじゃない"}]},
+        {"kind": "branch", "heading": "研究", "source": "先延ばす人", "targets": [{"text": "課題"}, {"text": "嫌な気分", "avoided": True}]},
+        {"kind": "versus", "heading": "一言目", "left": {"text": "完璧な言い返しを探す", "caption": "間に合わない"}, "right": {"text": "「確認させてください」", "caption": "時間ができる"}},
+        {"kind": "steps", "items": ["紙を出す", "書く", "閉じる"]},
+    ]
+    for sc in scenes:
+        s = wide.build_scene_wide(cfg, th, sc)
+        img = s.render(s.last_step(), 99.0)
+        if sc["kind"] == "question":
+            s.extra(ImageDraw.Draw(img), 1.0, 3)
+        assert img.size == (1920, 1080)
+        dy = quiz._content_offset(s, th, with_extra=sc["kind"] == "question")
+        body = quiz._shift(img, dy, th).crop((0, th.body_top, 1920, 1080))
+        bb = ImageChops.difference(body, Image.new("RGB", body.size, th.bg)).getbbox()
+        assert bb and bb[3] + th.body_top <= 1080 - 20 and bb[0] >= th.M - 12 and bb[2] <= 1920 - th.M + 12, (sc["kind"], bb)
+
+
+def test_unbreakable_labels_stay_on_one_line(cfg):
+    P = quiz.Parts(cfg, quiz.theme(cfg))
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    f, lines = P.fit(d, "どう思われる？", 280, 60)
+    assert lines == ["どう思われる？"] and d.textlength(lines[0], font=f) <= 280
+
+
+def test_retry_resumes_same_slug_and_never_reuploads(tmp_path, monkeypatch):
+    """失敗して再試行しても最初から作り直さない（同じ slug で続きから）。投稿済みの本編は二度上げない."""
+    import datetime as dt
+    from ytecon import topics as topics_mod
+    from ytecon.pipeline import Pipeline
+    from ytecon.state import Store
+    cfg = copy.deepcopy(load_config())
+    cfg.raw["pipeline"]["workdir"] = str(tmp_path)
+    cfg.raw.setdefault("shorts", {})["per_video"] = 0
+    store = Store(tmp_path / "s.sqlite3")
+    pipe = Pipeline(cfg, store=store)
+    monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: dt.date(2026, 9, 24))
+    topic = topics_mod.Topic(title="テスト回", angle="", kind="evergreen")
+    monkeypatch.setattr("ytecon.topics.select_topics", lambda *a, **k: [topic])
+    slugs, published = [], []
+    monkeypatch.setattr(pipe, "stage_script", lambda slug, t: slugs.append(slug) or type("S", (), {"topic_title": "テスト回"})())
+    monkeypatch.setattr(pipe, "stage_voice", lambda slug, s: None)
+    monkeypatch.setattr(pipe, "stage_visuals", lambda slug, s, tr: ([], {}))
+    monkeypatch.setattr(pipe, "stage_render", lambda *a: None)
+    calls = {"n": 0}
+
+    def publish(slug, s, track, slot_index, horizon="flow"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("一時的な失敗")
+        published.append(slug)
+        store.update_video(slug, status="uploaded", youtube_id="vid1", stage={"url": "u"})
+        return {"video_id": "vid1", "url": "u"}
+    monkeypatch.setattr(pipe, "stage_publish", publish)
+    res = pipe.run_daily(count=1, upload=True, force=True)
+    assert len(set(slugs)) == 1 and len(slugs) == 2        # 再試行も同じ slug（作り直さない）
+    assert res[0]["video_id"] == "vid1" and published == [slugs[0]]
+    # 同じ slug でもう一度回しても、投稿済みの本編は上げ直さない
+    again = pipe.produce(topic, upload=True, slug=slugs[0])
+    assert again["video_id"] == "vid1" and calls["n"] == 2

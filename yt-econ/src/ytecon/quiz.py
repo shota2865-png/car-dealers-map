@@ -136,13 +136,13 @@ def write_quiz(cfg: Config, topic: str, angle: str = "") -> dict[str, Any]:
     return normalize(data)
 
 
-def normalize(q: dict[str, Any]) -> dict[str, Any]:
+def normalize(q: dict[str, Any], add_cta: bool = True) -> dict[str, Any]:
     """LLM の出力を整える: countdown と cta を保証し、文節を 25 字前後に、段階を 0 からの連番に."""
     scenes = [s for s in (q.get("scenes") or []) if isinstance(s, dict) and s.get("kind")]
     kinds = [s["kind"] for s in scenes]
     if "question" in kinds and "countdown" not in kinds:
         scenes.insert(kinds.index("question") + 1, {"kind": "countdown"})
-    if "cta" not in [s["kind"] for s in scenes]:
+    if add_cta and "cta" not in [s["kind"] for s in scenes]:
         scenes.append({"kind": "cta"})
     for s in scenes:
         nar = []
@@ -181,6 +181,11 @@ class Theme:
     brand: str = ""
     safe_top: int = 300          # Shorts の UI に隠れない縦の範囲
     safe_bottom: int = 1560
+    header_y: int = 152          # ブランド名の位置と、その下の罫線
+    header_line: int = 208
+    body_top: int = 230          # これより下が中身（縦中央に寄せる対象）
+    brand_size: int = 28
+    chip: str = ""               # 右上の小さなラベル（本編の章など）
 
 
 def theme(cfg: Config) -> Theme:
@@ -262,8 +267,12 @@ class Scene:
         img = Image.new("RGBA", (th.W, th.H), th.bg)
         d = ImageDraw.Draw(img)
         if th.brand:
-            d.text((th.M, 152), th.brand, font=font(self.cfg, 28, 700), fill=th.text)
-            d.line([(th.M, 208), (th.W - th.M, 208)], fill=th.line, width=2)
+            d.text((th.M, th.header_y), th.brand, font=font(self.cfg, th.brand_size, 700), fill=th.text)
+            d.line([(th.M, th.header_line), (th.W - th.M, th.header_line)], fill=th.line, width=2)
+        if th.chip:
+            fch = font(self.cfg, th.brand_size, 700)
+            tw = d.textlength(th.chip, font=fch)
+            d.text((th.W - th.M - tw, th.header_y), th.chip, font=fch, fill=th.blue)
         for st, fn, slide, delay in self.items:
             if st > step:
                 continue
@@ -308,6 +317,13 @@ class Parts:
         cands = [i + 1 for i, ch in enumerate(text[:-1]) if ch in self._BREAK_AFTER]
         cands += [i for i, ch in enumerate(text) if ch == "「" and i > 0]
         if not cands:
+            # 自然に割れる場所が無い語（「どう思われる？」など）は、途中で割らずに 1 行のまま縮める
+            s3 = int(size * 0.8)
+            while s3 >= min_size:
+                f = self.f(s3, weight)
+                if d.textlength(text, font=f) <= max_w:
+                    return f, [text]
+                s3 -= 2
             cands = list(range(1, len(text)))
         f0 = self.f(size, weight)
         best = min(cands, key=lambda i: max(d.textlength(text[:i], font=f0), d.textlength(text[i:], font=f0)))
@@ -393,27 +409,31 @@ class Parts:
         d.rectangle([th.M, y, th.M + 72, y + 8], fill=th.blue)
         return y + 56
 
-    def option(self, d, y: int, key: str, text: str, state: str = "normal", h: int = 220) -> int:
+    def option(self, d, y: int, key: str, text: str, state: str = "normal", h: int = 220,
+               x0: int | None = None, x1: int | None = None, size: int | None = None) -> int:
         th = self.th
         tab_h = 52
         sel, dim = state == "selected", state == "dim"
-        d.rounded_rectangle([th.M, y, th.M + 96, y + tab_h + 12], radius=8, fill=th.blue if not dim else th.muted)
-        self.text_mm(d, th.M + 48, y + tab_h / 2 + 2, key, self.f(34), "#FFFFFF")
+        x0 = th.M if x0 is None else x0
+        x1 = th.W - th.M if x1 is None else x1
+        d.rounded_rectangle([x0, y, x0 + 96, y + tab_h + 12], radius=8, fill=th.blue if not dim else th.muted)
+        self.text_mm(d, x0 + 48, y + tab_h / 2 + 2, key, self.f(34), "#FFFFFF")
         by0 = y + tab_h
-        d.rounded_rectangle([th.M, by0, th.W - th.M, by0 + h], radius=10,
+        d.rounded_rectangle([x0, by0, x1, by0 + h], radius=10,
                             fill=th.blue_light if sel else (th.surface if dim else th.bg),
                             outline=th.blue if sel else th.line, width=5 if sel else 3)
-        f, lines = self.fit(d, text, th.W - th.M * 2 - 72, 60 if sel else 56, 700 if sel else 500)
+        f, lines = self.fit(d, text, (x1 - x0) - 72, size or (60 if sel else 56), 700 if sel else 500)
         lh = int(f.size * 1.25)
         cy = by0 + h / 2 - lh * (len(lines) - 1) / 2
         for ln in lines:
-            self.text_mm(d, th.W / 2, cy, ln, f, th.muted if dim else (th.blue if sel else th.text))
+            self.text_mm(d, (x0 + x1) / 2, cy, ln, f, th.muted if dim else (th.blue if sel else th.text))
             cy += lh
         return by0 + h
 
     def caption_under(self, d, cx: int, y: int, text: str, f, color, p: float = 1.0, hl: bool = False) -> None:
         tw = d.textlength(text, font=f)
-        x = int(cx - tw / 2)
+        th = self.th
+        x = int(min(max(cx - tw / 2, th.M), th.W - th.M - tw))     # 左右の余白からはみ出さない
         if hl:
             self.marker_text(d, x, y, text, f, color=color, p=p)
         else:
@@ -609,11 +629,12 @@ def _content_offset(scene: Scene, th: Theme, with_extra: bool = False) -> int:
     img = scene.render(scene.last_step(), 99.0)
     if with_extra and scene.extra:
         scene.extra(ImageDraw.Draw(img), 1.0, 3)
-    body = img.crop((0, 230, th.W, th.H))
+    bt = th.body_top
+    body = img.crop((0, bt, th.W, th.H))
     bbox = ImageChops.difference(body, Image.new("RGB", body.size, th.bg)).getbbox()
     if not bbox:
         return 0
-    top, bottom = bbox[1] + 230, bbox[3] + 230
+    top, bottom = bbox[1] + bt, bbox[3] + bt
     target_top = max(th.safe_top, (th.safe_top + th.safe_bottom) // 2 - (bottom - top) // 2)
     return target_top - top
 
@@ -621,10 +642,11 @@ def _content_offset(scene: Scene, th: Theme, with_extra: bool = False) -> int:
 def _shift(img: Image.Image, dy: int, th: Theme) -> Image.Image:
     if dy == 0:
         return img
-    body = img.crop((0, 230, th.W, th.H))
+    bt = th.body_top
+    body = img.crop((0, bt, th.W, th.H))
     out = img.copy()
-    out.paste(Image.new("RGB", body.size, th.bg), (0, 230))
-    out.paste(body, (0, 230 + dy))
+    out.paste(Image.new("RGB", body.size, th.bg), (0, bt))
+    out.paste(body, (0, bt + dy))
     return out
 
 
@@ -636,13 +658,22 @@ class Built:
     quiz: dict[str, Any] = field(default_factory=dict)
 
 
-def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None) -> Built:
-    """JSON → mp4。文節ごとに音声を合成し、場面を段階・遅延つきで描いて繋ぐ."""
+def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, wide: bool = False) -> Built:
+    """JSON → mp4。文節ごとに音声を合成し、場面を段階・遅延つきで描いて繋ぐ.
+
+    wide=True なら本編（16:9）。場面の組み方は wide.build_scene_wide。
+    """
     from . import bgm as bgm_mod
     from . import tts
 
-    quiz = normalize(dict(quiz))
-    th = theme(cfg)
+    quiz = normalize(dict(quiz), add_cta=not wide)
+    if wide:
+        from . import wide as wide_mod
+        th = wide_mod.theme_wide(cfg)
+        builder = wide_mod.build_scene_wide
+    else:
+        th = theme(cfg)
+        builder = build_scene
     outdir = Path(outdir)
     fr = outdir / "frames"
     fr.mkdir(parents=True, exist_ok=True)
@@ -690,7 +721,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None) 
     for sc in scenes:
         kind = sc.get("kind")
         if kind == "countdown":
-            base = build_scene(cfg, th, dict(q_scene or {}, kind="countdown"))
+            base = builder(cfg, th, dict(q_scene or {}, kind="countdown"))
             if shared_dy is None:
                 shared_dy = _content_offset(base, th, with_extra=True)
             for num in (3, 2, 1):
@@ -700,10 +731,10 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None) 
                 silence(COUNT_TICK)
                 total += COUNT_TICK
             continue
-        scene = build_scene(cfg, th, sc)
+        scene = builder(cfg, th, sc)
         nar = sc.get("narration") or (cta_narration(cfg) if kind == "cta" else [])
         if kind == "question":
-            cd = build_scene(cfg, th, dict(sc, kind="countdown"))
+            cd = builder(cfg, th, dict(sc, kind="countdown"))
             shared_dy = _content_offset(cd, th, with_extra=True)
             dy = shared_dy
         else:

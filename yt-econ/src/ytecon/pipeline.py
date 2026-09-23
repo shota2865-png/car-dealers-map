@@ -260,9 +260,13 @@ class Pipeline:
 
     # --- 1本ぶんの通し ---------------------------------------------------
     def produce(self, topic: topics_mod.Topic, slot_index: int = 0,
-                upload: bool = True) -> dict[str, Any]:
-        slug = slugify(topic.title)
-        self.store.create_video(slug, topic.id, topic.title)
+                upload: bool = True, slug: str | None = None) -> dict[str, Any]:
+        # 再試行では同じ slug を渡す。台本・音声・動画は出来ている所から続きをやる（毎回最初から作り直さない）
+        slug = slug or slugify(topic.title)
+        if self.store.get_video(slug) is None:
+            self.store.create_video(slug, topic.id, topic.title)
+        else:
+            log.info("=== [%s] 前回の続きから再開します ===", slug)
         self.store.update_video(slug, horizon=topic.horizon)
         if topic.id:
             self.store.mark_topic_used(topic.id)
@@ -276,7 +280,13 @@ class Pipeline:
 
             result: dict[str, Any] = {"slug": slug, "title": s.topic_title,
                                       "dir": str(self.art(slug).dir)}
-            if upload and str(self.cfg.get("render.backend")) == "ffmpeg":
+            rec = self.store.get_video(slug)
+            if rec and rec.youtube_id:
+                # 本編はもう上がっている（後段の Shorts で失敗して再試行した）→ 二重に上げない
+                log.info("[%s] 本編は投稿済み: %s", slug, rec.youtube_id)
+                result.update({"video_id": rec.youtube_id, "publish_at": rec.publish_at,
+                               "url": (rec.stage or {}).get("url", "")})
+            elif upload and str(self.cfg.get("render.backend")) == "ffmpeg":
                 result.update(self.stage_publish(slug, s, track, slot_index,
                                                  horizon=topic.horizon))
             else:
@@ -321,9 +331,10 @@ class Pipeline:
         results = []
         retries = int(self.cfg.get("pipeline.retries", 2))
         for i, topic in enumerate(chosen):
+            slug = slugify(topic.title)
             for attempt in range(retries + 1):
                 try:
-                    results.append(self.produce(topic, slot_index=i, upload=upload))
+                    results.append(self.produce(topic, slot_index=i, upload=upload, slug=slug))
                     break
                 except Exception as exc:
                     if attempt >= retries:
