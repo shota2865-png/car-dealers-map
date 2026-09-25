@@ -270,6 +270,8 @@ class Pipeline:
                 upload: bool = True, slug: str | None = None) -> dict[str, Any]:
         # 再試行では同じ slug を渡す。台本・音声・動画は出来ている所から続きをやる（毎回最初から作り直さない）
         slug = slug or slugify(topic.title)
+        if str(self.cfg.get("pipeline.format", "")) == "honpen":
+            return self.produce_honpen(topic, slot_index=slot_index, upload=upload, slug=slug)
         if self.store.get_video(slug) is None:
             self.store.create_video(slug, topic.id, topic.title)
         else:
@@ -306,6 +308,126 @@ class Pipeline:
             self.store.update_video(slug, status="failed",
                                     error=f"{exc}\n{traceback.format_exc()[-1500:]}")
             raise
+
+    # --- 心理学まくら: 寝落ち向け 30 分の本編 + 参加型テストの Shorts ---------------
+    def produce_honpen(self, topic: topics_mod.Topic, slot_index: int = 0,
+                       upload: bool = True, slug: str | None = None) -> dict[str, Any]:
+        """台本（honpen.py）→ 16:9 の本編（quiz.build wide）→ 投稿 → 章から Shorts 3 本 → 本編の公開後に予約.
+
+        どの段階も出来ていれば読み込んで続きから（再試行で作り直さない）。
+        """
+        import dataclasses
+        from . import finals
+        from . import honpen as honpen_mod
+        from . import quiz as quiz_mod
+
+        slug = slug or slugify(topic.title)
+        if self.store.get_video(slug) is None:
+            self.store.create_video(slug, topic.id, topic.title)
+        self.store.update_video(slug, horizon=topic.horizon, stage={"kind": "long"})
+        if topic.id:
+            self.store.mark_topic_used(topic.id)
+        log.info("=== [%s] %s（本編 30 分）===", slug, topic.title)
+        art = self.art(slug)
+        tdict = dataclasses.asdict(topic) if dataclasses.is_dataclass(topic) else dict(topic)
+        try:
+            hp = art.dir / "honpen.json"
+            if hp.exists():
+                data = json.loads(hp.read_text(encoding="utf-8"))
+            else:
+                data = honpen_mod.write_honpen(self.cfg, tdict)
+                hp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            self.store.update_video(slug, status="scripted", title=data.get("title") or topic.title)
+
+            chp = art.dir / "chapters.json"
+            if not (art.video.exists() and chp.exists()):
+                quiz_mod.build(self.cfg, data, art.dir, wide=True)
+            chapters = json.loads(chp.read_text(encoding="utf-8"))
+            self.store.update_video(slug, status="rendered", stage={"video": str(art.video)})
+            result: dict[str, Any] = {"slug": slug, "title": data.get("title", ""), "dir": str(art.dir)}
+
+            rec = self.store.get_video(slug)
+            if rec and rec.youtube_id:
+                log.info("[%s] 本編は投稿済み: %s", slug, rec.youtube_id)
+                result.update({"video_id": rec.youtube_id, "publish_at": rec.publish_at, "url": (rec.stage or {}).get("url", "")})
+            elif upload:
+                day = self._publish_day(slot_index)
+                final_name = (rec.stage or {}).get("final_name") if rec else None
+                if not final_name:
+                    final_name = finals.assign(self.cfg, self.store, day)
+                    self.store.update_video(slug, stage={"final_name": final_name})
+                manual = thumbnail.pick_manual(self.cfg, slug, day, extra=[final_name])
+                if manual is not None:
+                    log.info("[%s] 手で用意したサムネイルを使います: %s", slug, manual.name)
+                    thumbnail.prepare(manual, art.thumb)
+                else:
+                    honpen_mod.thumbnail(self.cfg, data, art.thumb)
+                meta = honpen_mod.honpen_metadata(self.cfg, data, chapters, tdict)
+                art.meta.write_text(json.dumps(meta.__dict__, ensure_ascii=False, indent=2), encoding="utf-8")
+                res = youtube.publish(self.cfg, self.store, art.video, meta, thumbnail=art.thumb,
+                                      srt=art.dir / "subtitles.srt", slot_index=slot_index)
+                self.store.update_video(slug, status="uploaded", title=meta.title, youtube_id=res["video_id"],
+                                        publish_at=res["publish_at"], stage={"url": res["url"]})
+                kept = finals.keep(self.cfg, final_name, art.video, art.thumb)
+                result.update(res)
+                result.update({"final_name": final_name, "final_video": kept["video"]})
+            else:
+                log.info("[%s] アップロードはスキップしました", slug)
+
+            n = int(self.cfg.get("shorts.per_video", 0))
+            if n > 0:
+                result["shorts"] = self._honpen_shorts(slug, data, n, parent_url=result.get("url", ""), upload=upload)
+            return result
+        except Exception as exc:
+            self.store.update_video(slug, status="failed", error=f"{exc}\n{traceback.format_exc()[-1500:]}")
+            raise
+
+    def _honpen_shorts(self, parent_slug: str, data: dict[str, Any], n: int,
+                       parent_url: str = "", upload: bool = True) -> list[dict[str, Any]]:
+        from . import honpen as honpen_mod
+        from . import quiz as quiz_mod
+        art = self.art(parent_slug)
+        parent = self.store.get_video(parent_slug)
+        after = None
+        if parent and parent.publish_at:
+            try:
+                after = dt.datetime.fromisoformat(str(parent.publish_at).replace("Z", "+00:00"))
+            except ValueError:
+                after = None
+        times = self.cfg.get("shorts.publish_times_jst") or None
+        out = []
+        for k, (theme, angle) in enumerate(honpen_mod.short_angles(data, n)):
+            qdir = art.dir / "shorts" / f"short_{k + 1:02d}"
+            qdir.mkdir(parents=True, exist_ok=True)
+            sslug = f"{parent_slug}-short{k + 1}"
+            try:
+                srec = self.store.get_video(sslug)
+                if srec and srec.youtube_id:
+                    out.append({"slug": sslug, "video_id": srec.youtube_id, "publish_at": srec.publish_at})
+                    continue
+                qp = qdir / "quiz.json"
+                if (qdir / "video.mp4").exists() and qp.exists():
+                    q = json.loads(qp.read_text(encoding="utf-8"))
+                else:
+                    q = quiz_mod.write_quiz(self.cfg, theme, angle)
+                    q = quiz_mod.build(self.cfg, q, qdir).quiz
+                meta = quiz_mod.quiz_metadata(self.cfg, q, parent_url=parent_url)
+                (qdir / "metadata.json").write_text(json.dumps(meta.__dict__, ensure_ascii=False, indent=1), encoding="utf-8")
+                if not upload:
+                    out.append({"video": str(qdir / "video.mp4"), "title": meta.title})
+                    continue
+                if not srec:
+                    self.store.create_video(sslug, parent.topic_id if parent else None, meta.title)
+                self.store.update_video(sslug, stage={"kind": "short", "parent": parent_slug})
+                res = youtube.publish(self.cfg, self.store, qdir / "video.mp4", meta, thumbnail=None,
+                                      srt=None, slot_index=k, publish_times=times, playlist=False, after=after)
+                self.store.update_video(sslug, status="uploaded", youtube_id=res["video_id"],
+                                        publish_at=res["publish_at"], stage={"url": res["url"]})
+                out.append({"slug": sslug, **res})
+            except Exception as exc:              # Shorts の失敗で本編の結果は壊さない
+                log.error("Shorts %d の作成・投稿に失敗: %s", k + 1, exc)
+                out.append({"error": str(exc)})
+        return out
 
     # --- 当日分をまとめて ------------------------------------------------
     def scheduled_long_on(self, day: dt.date) -> list[Any]:
