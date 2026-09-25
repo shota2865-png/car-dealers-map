@@ -150,12 +150,32 @@ def outline(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
         f"視聴者: {cfg.get('channel.audience', '')}\n"
         + ("聴く人の疑問:\n" + "\n".join(f"- {q}" for q in topic.get("key_questions") or []) + "\n" if topic.get("key_questions") else "")
         + ("参考にできる出典:\n" + "\n".join(f"- {s.get('name', '')}" for s in topic.get("sources") or []) + "\n" if topic.get("sources") else "")
+        + (f"次回のテーマは決まっている: 「{topic['next_title']}」。next にはこれを 12 字以内に縮めて書く。\n" if topic.get("next_title") else "")
         + f"\n{n_parts(cfg)} 部の骨組みを JSON で。"
     )
     system = _OUTLINE_SYSTEM.format(field=domain.field(cfg), parts=n_parts(cfg), rules=_rules(cfg), minutes=_minutes(cfg))
     data = llm.complete_json(system, user, _OUTLINE_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
     data["parts"] = (data.get("parts") or [])[:n_parts(cfg)]
     return data
+
+
+def next_title(cfg: Config, day) -> str:
+    """schedule.yaml で day の翌日に予定しているテーマ（締めの「次回は」を実際の予定と合わせる）."""
+    import datetime as _dt
+    import yaml
+    path = str(cfg.get("topics.schedule_file", "") or "")
+    if not path:
+        return ""
+    try:
+        q = (yaml.safe_load((cfg.root / path).read_text(encoding="utf-8")) or {}).get("queue") or []
+    except (OSError, yaml.YAMLError):
+        return ""
+    want = day + _dt.timedelta(days=1)
+    for item in q:
+        d = item.get("date")
+        if d and str(d) == want.isoformat():
+            return str(item.get("title") or "")
+    return ""
 
 
 def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] = (1600, 1900)) -> list[dict[str, Any]]:

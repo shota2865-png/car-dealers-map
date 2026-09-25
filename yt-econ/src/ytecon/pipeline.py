@@ -335,6 +335,7 @@ class Pipeline:
             if hp.exists():
                 data = json.loads(hp.read_text(encoding="utf-8"))
             else:
+                tdict.setdefault("next_title", honpen_mod.next_title(self.cfg, self._publish_day(slot_index)))
                 data = honpen_mod.write_honpen(self.cfg, tdict)
                 hp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
             self.store.update_video(slug, status="scripted", title=data.get("title") or topic.title)

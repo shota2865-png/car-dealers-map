@@ -19,6 +19,19 @@ queue:
       - {name: "Verduyn et al. 2015 Passive Facebook usage undermines affective well-being（Journal of Experimental Psychology: General）", url: "https://doi.org/10.1037/xge0000057"}
       - {name: "総務省 情報通信白書", url: "https://www.soumu.go.jp/johotsusintokei/whitepaper/"}
   - date: 2026-09-26
+    title: 急にキレる人の頭の中で、何が起きているのか
+    angle: 相手の行動を「わざとだ」と受け取りやすいくせ（敵意帰属バイアス）と、感情が周りにうつる仕組み（感情伝染）で説明する。キレる人を責めたり診断したりせず、巻き込まれないための距離の取り方と、自分がカッとなったときの最初の一手を渡す
+    horizon: flow
+    why_now: 職場・家庭・ネットで「急に感情が爆発する人」への疲れが話題になりやすい
+    audience_hook: 上司や家族が急に怒りだして、自分のせいかと思ってしまう人
+    key_questions:
+      - 同じことをされても、怒る人と怒らない人がいるのはなぜか
+      - 感情的な人のそばにいると、なぜこちらまで疲れるのか
+      - 巻き込まれないために、その場でできることは
+    sources:
+      - {name: "Dodge 1980 Social cognition and children's aggressive behavior（Child Development）", url: "https://doi.org/10.2307/1129603"}
+      - {name: "Hatfield, Cacioppo & Rapson 1993 Emotional contagion（Current Directions in Psychological Science）", url: "https://doi.org/10.1111/1467-8721.ep10770953"}
+  - date: 2026-09-27
     title: AI に聞くほど、自分で考えなくなる？
     angle: 機械の答えを人より信じてしまう「自動化バイアス」と、覚えることを道具に任せる「認知的オフロード（頭の外に置くこと）」を分けて説明する。任せてよい場面と、まず自分で考えたほうがいい場面の見分け方を渡す。検索と記憶の有名な研究は、再現されにくかった点もきちんと言う
     horizon: flow
@@ -32,19 +45,6 @@ queue:
       - {name: "Parasuraman & Manzey 2010 Complacency and bias in human use of automation（Human Factors）", url: "https://doi.org/10.1177/0018720810376055"}
       - {name: "Risko & Gilbert 2016 Cognitive offloading（Trends in Cognitive Sciences）", url: "https://doi.org/10.1016/j.tics.2016.07.002"}
       - {name: "Sparrow et al. 2011 Google effects on memory（Science）と、その後の再現研究", url: "https://doi.org/10.1126/science.1207745"}
-  - date: 2026-09-27
-    title: 急にキレる人の頭の中で、何が起きているのか
-    angle: 相手の行動を「わざとだ」と受け取りやすいくせ（敵意帰属バイアス）と、感情が周りにうつる仕組み（感情伝染）で説明する。キレる人を責めたり診断したりせず、巻き込まれないための距離の取り方と、自分がカッとなったときの最初の一手を渡す
-    horizon: flow
-    why_now: 職場・家庭・ネットで「急に感情が爆発する人」への疲れが話題になりやすい
-    audience_hook: 上司や家族が急に怒りだして、自分のせいかと思ってしまう人
-    key_questions:
-      - 同じことをされても、怒る人と怒らない人がいるのはなぜか
-      - 感情的な人のそばにいると、なぜこちらまで疲れるのか
-      - 巻き込まれないために、その場でできることは
-    sources:
-      - {name: "Dodge 1980 Social cognition and children's aggressive behavior（Child Development）", url: "https://doi.org/10.2307/1129603"}
-      - {name: "Hatfield, Cacioppo & Rapson 1993 Emotional contagion（Current Directions in Psychological Science）", url: "https://doi.org/10.1111/1467-8721.ep10770953"}
   - date: 2026-09-28
     title: 倍速で見ているのに、いつも時間が足りないのはなぜか
     angle: タイパ（時間の効率）を求めるほど疲れる理由を、選ぶものが多すぎると決められなくなる話（選択のパラドックス）と、先に結論だけ知りたくなる気持ちで説明する。有名な「ジャムの実験」は、その後の研究で効果がはっきりしなかったことも伝える。時間を取り戻すための「やらないことリスト」を渡す
