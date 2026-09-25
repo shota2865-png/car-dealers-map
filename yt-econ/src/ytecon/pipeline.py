@@ -447,6 +447,13 @@ class Pipeline:
 
     def run_daily(self, count: int | None = None, upload: bool = True, force: bool = False) -> list[dict[str, Any]]:
         count = count or int(self.cfg.get("pipeline.videos_per_day", 2))
+        # 開始日より前は作らない（鍵を先に登録しておいても、初回の日までは投稿しない）
+        start = str(self.cfg.get("pipeline.start_date", "") or "").strip()
+        if upload and start:
+            day = self._publish_day(0)
+            if day < dt.date.fromisoformat(start):
+                log.warning("%s は開始日 %s より前なので作りません（pipeline.start_date）", day, start)
+                return [{"skipped": True, "title": f"開始日 {start} より前", "slug": "", "url": "", "publish_at": ""}]
         # 同じ日の本編がもう予約済みなら作らない（予約実行が遅れて手動実行と重なったときの二重投稿を防ぐ）
         if upload and not force:
             day = self._publish_day(0)

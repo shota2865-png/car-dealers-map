@@ -191,6 +191,8 @@ goal:
 pipeline:
   # honpen = 寝落ち向け 30 分の本編（honpen.py + wide.py）と、章から作る参加型テストの Shorts
   format: "honpen"
+  # 初回の公開日。これより前の日の分は作らない（鍵を先に GitHub に入れておいてよい）
+  start_date: "2026-09-29"
   videos_per_day: 1
   workdir: "output/psych"
   retries: 2
