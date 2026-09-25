@@ -121,6 +121,7 @@ def test_caption_cues_split_by_sentence_and_keep_timing():
 def test_nothing_is_made_before_the_start_date(cfg, tmp_path, monkeypatch):
     from ytecon.pipeline import Pipeline
     from ytecon.state import Store
+    cfg.raw["pipeline"]["start_date"] = "2026-09-29"
     pipe = Pipeline(cfg, store=Store(tmp_path / "s.sqlite3"))
     called = []
     monkeypatch.setattr("ytecon.topics.select_topics", lambda *a, **k: called.append(1) or [])

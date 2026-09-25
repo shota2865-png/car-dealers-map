@@ -117,7 +117,7 @@ render:
   bgm:
     enabled: true
     # 本体（Up to No Good）と別の曲。素材 zip の assets/bgm/ に入れておくこと（無ければ置いてある曲に落ちる）
-    file: "Yair Cohen - Rise Within.mp3"
+    file: "Roie Shpigler - Hush Move.mp3"
     volume_db: -9
     ducking: true
     mood_timeline: true
@@ -192,7 +192,7 @@ pipeline:
   # honpen = 寝落ち向け 30 分の本編（honpen.py + wide.py）と、章から作る参加型テストの Shorts
   format: "honpen"
   # 初回の公開日。これより前の日の分は作らない（鍵を先に GitHub に入れておいてよい）
-  start_date: "2026-09-29"
+  start_date: "2026-09-25"
   videos_per_day: 1
   workdir: "output/psych"
   retries: 2

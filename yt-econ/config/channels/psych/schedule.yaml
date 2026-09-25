@@ -4,7 +4,7 @@
 #   AI / コスパ・タイパ / 感情が爆発する人（ヒステリック系） / SNS・スマホ / 仕事・職場 / 人間関係
 # 「ヒステリー」という言葉は歴史的に偏見を含むので、タイトルや台本では使わず「急にキレる」「感情が爆発する」と言う。
 queue:
-  - date: 2026-09-29
+  - date: 2026-09-25
     title: SNS を見ると疲れるのに、やめられないのはなぜか
     angle: 疲れる理由を「他人と比べてしまう心のくせ（社会的比較）」、やめられない理由を「いつ来るかわからないごほうび（変動報酬）」で分ける。見るだけの使い方と、やりとりする使い方で気分が変わるという研究を紹介し、今日からできる「見る時間」の区切り方を渡す
     horizon: flow
@@ -18,7 +18,7 @@ queue:
       - {name: "Festinger 1954 A theory of social comparison processes（Human Relations）", url: "https://doi.org/10.1177/001872675400700202"}
       - {name: "Verduyn et al. 2015 Passive Facebook usage undermines affective well-being（Journal of Experimental Psychology: General）", url: "https://doi.org/10.1037/xge0000057"}
       - {name: "総務省 情報通信白書", url: "https://www.soumu.go.jp/johotsusintokei/whitepaper/"}
-  - date: 2026-09-30
+  - date: 2026-09-26
     title: AI に聞くほど、自分で考えなくなる？
     angle: 機械の答えを人より信じてしまう「自動化バイアス」と、覚えることを道具に任せる「認知的オフロード（頭の外に置くこと）」を分けて説明する。任せてよい場面と、まず自分で考えたほうがいい場面の見分け方を渡す。検索と記憶の有名な研究は、再現されにくかった点もきちんと言う
     horizon: flow
@@ -32,7 +32,7 @@ queue:
       - {name: "Parasuraman & Manzey 2010 Complacency and bias in human use of automation（Human Factors）", url: "https://doi.org/10.1177/0018720810376055"}
       - {name: "Risko & Gilbert 2016 Cognitive offloading（Trends in Cognitive Sciences）", url: "https://doi.org/10.1016/j.tics.2016.07.002"}
       - {name: "Sparrow et al. 2011 Google effects on memory（Science）と、その後の再現研究", url: "https://doi.org/10.1126/science.1207745"}
-  - date: 2026-10-01
+  - date: 2026-09-27
     title: 急にキレる人の頭の中で、何が起きているのか
     angle: 相手の行動を「わざとだ」と受け取りやすいくせ（敵意帰属バイアス）と、感情が周りにうつる仕組み（感情伝染）で説明する。キレる人を責めたり診断したりせず、巻き込まれないための距離の取り方と、自分がカッとなったときの最初の一手を渡す
     horizon: flow
@@ -45,7 +45,7 @@ queue:
     sources:
       - {name: "Dodge 1980 Social cognition and children's aggressive behavior（Child Development）", url: "https://doi.org/10.2307/1129603"}
       - {name: "Hatfield, Cacioppo & Rapson 1993 Emotional contagion（Current Directions in Psychological Science）", url: "https://doi.org/10.1111/1467-8721.ep10770953"}
-  - date: 2026-10-02
+  - date: 2026-09-28
     title: 倍速で見ているのに、いつも時間が足りないのはなぜか
     angle: タイパ（時間の効率）を求めるほど疲れる理由を、選ぶものが多すぎると決められなくなる話（選択のパラドックス）と、先に結論だけ知りたくなる気持ちで説明する。有名な「ジャムの実験」は、その後の研究で効果がはっきりしなかったことも伝える。時間を取り戻すための「やらないことリスト」を渡す
     horizon: flow
@@ -59,7 +59,7 @@ queue:
       - {name: "稲田豊史『映画を早送りで観る人たち』（光文社新書 2022）", url: ""}
       - {name: "Iyengar & Lepper 2000 When choice is demotivating（Journal of Personality and Social Psychology）", url: "https://doi.org/10.1037/0022-3514.79.6.995"}
       - {name: "Scheibehenne et al. 2010 Can there ever be too many options?（メタ分析。Journal of Consumer Research）", url: "https://doi.org/10.1086/651235"}
-  - date: 2026-10-03
+  - date: 2026-09-29
     title: 会議で言い返せなかった夜に、布団の中で名文句を思いつくのはなぜか
     angle: 緊張すると言葉が出ないのは頭の中のメモ帳（作業記憶）が心配でうまるから。夜に浮かぶのは緊張がほどけてメモ帳が空くから。夜に何度も考え直す（反すう）と気分が重くなる研究を紹介し、次の会議の「一言目」を先に決めておく方法と、夜のうちに紙に書いて終わらせる手順を渡す
     horizon: flow
@@ -73,7 +73,7 @@ queue:
       - {name: "Beilock & Carr 2005 When high-powered people fail（Psychological Science）", url: "https://doi.org/10.1111/j.0956-7976.2005.00789.x"}
       - {name: "Nolen-Hoeksema & Morrow 1993 Effects of rumination and distraction on naturally occurring depressed mood（Cognition and Emotion）", url: "https://doi.org/10.1080/02699939308409189"}
       - {name: "Gollwitzer 1999 Implementation intentions（American Psychologist）", url: "https://doi.org/10.1037/0003-066X.54.7.493"}
-  - date: 2026-10-04
+  - date: 2026-09-30
     title: 断れない人が、断れるようになる順番
     angle: 断れないのは性格ではなく「嫌われるかも」の見積もりが大きすぎるから。頼まれた人は断られたときの相手の気持ちを、実際より悪く想像しがちだという研究を紹介し、自分も相手も大事にする言い方（アサーション）を、いちばん小さな「一言」から練習する順番を渡す
     horizon: flow
@@ -86,7 +86,7 @@ queue:
     sources:
       - {name: "平木典子『アサーション入門』（講談社現代新書 2012）", url: ""}
       - {name: "Bohns 2016 (Mis)Understanding our influence over others（Current Directions in Psychological Science）", url: "https://doi.org/10.1177/0963721416635544"}
-  - date: 2026-10-05
+  - date: 2026-10-01
     title: 元を取ろうとして、かえって損をするのはなぜか
     angle: もう払ったお金や時間を取り返そうとして、やめられなくなる心のくせ（サンクコスト）と、損をとても大きく感じる心のくせ（損失回避）で説明する。サブスク・食べ放題・つまらない映画を例に、「今からの損と得だけで決める」練習を渡す
     horizon: flow

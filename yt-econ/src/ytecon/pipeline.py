@@ -327,7 +327,7 @@ class Pipeline:
         self.store.update_video(slug, horizon=topic.horizon, stage={"kind": "long"})
         if topic.id:
             self.store.mark_topic_used(topic.id)
-        log.info("=== [%s] %s（本編 30 分）===", slug, topic.title)
+        log.info("=== [%s] %s（本編）===", slug, topic.title)
         art = self.art(slug)
         tdict = dataclasses.asdict(topic) if dataclasses.is_dataclass(topic) else dict(topic)
         try:
