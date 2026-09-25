@@ -11,8 +11,8 @@ extends: ../../channel.yaml
 channel:
   key: "psych"
   env_prefix: "PSY_"
-  # 名前の候補は docs/2チャンネル目_心理学.md。決まったらここを書き換えるだけ（タイトルカードと Shorts の上部に出る）
-  name: "こころの図書室"
+  # 画面の左上・Shorts の上部・冒頭のあいさつ（「こんばんは。心理学まくらです。」）に出る
+  name: "心理学まくら"
   audience: "20代前半の大学生と新社会人。人間関係・やる気・自己肯定感・SNS 疲れが気になり、心理学の本を買っては最後まで読めていない層"
   # 寝る前に聴く（寝落ちしながら・画面を見ずに聴く人がいる前提。本編は約 30 分、声だけで全部わかるように話す）
   listening_mode: "sleep"
@@ -150,9 +150,9 @@ upload:
   # 本体の 19:00 とずらす（同じ人が両方見に来ても重ならないように）
   publish_times_jst: ["20:00"]
   category_id: "27"      # Education
-  playlist_title: "人の心のしくみ"
+  playlist_title: "寝る前に聴く心理学"
   title_hook_tag: true
-  title_suffix: "【めたんの心理学】"
+  title_suffix: "【心理学まくら】"
 
 shorts:
   per_video: 3
