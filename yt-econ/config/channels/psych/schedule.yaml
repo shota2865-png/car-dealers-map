@@ -1,97 +1,101 @@
-# 2 チャンネル目（心理学）の手動スケジュール。書き方は本体の config/schedule.yaml と同じ。
+# 2 チャンネル目（現代人のための心理学）の手動スケジュール。書き方は本体の config/schedule.yaml と同じ。
 # date を書けばその日だけ、書かなければ順番に消化する。日付は初回投稿日に合わせて書き換える。
-# コンセプト: 通勤・昼休みに聴く 13〜16 分。人間関係 × 習慣 × 感情。ずんだもん＝言い返せない・三日坊主の新社会人。
+# コンセプト: 通勤・家事・作業中に「ながら聴き」する 15〜20 分。テーマの軸は
+#   AI / コスパ・タイパ / 感情が爆発する人（ヒステリック系） / SNS・スマホ / 仕事・職場 / 人間関係
+# 「ヒステリー」という言葉は歴史的に偏見を含むので、タイトルや台本では使わず「急にキレる」「感情が爆発する」と言う。
 queue:
   - date: 2026-09-29
-    title: 会議で言い返せなかった夜に、布団の中で名文句を思いつくのはなぜか
-    angle: 「あのとき言えばよかった」が寝る前に来る仕組みを、覚醒度と作業記憶（緊張すると言葉が出ない）、反すう（終わった出来事を繰り返し考える）、ツァイガルニク効果（未完了の記憶は残る）で分解し、次に同じ場面が来たときの「一言目のテンプレ」と、その夜の反すうを止める書き出しの手順を渡す
+    title: SNS を見ると疲れるのに、やめられないのはなぜか
+    angle: 疲れる理由を「他人と比べてしまう心のくせ（社会的比較）」、やめられない理由を「いつ来るかわからないごほうび（変動報酬）」で分ける。見るだけの使い方と、やりとりする使い方で気分が変わるという研究を紹介し、今日からできる「見る時間」の区切り方を渡す
     horizon: flow
-    why_now: 新社会人が配属から半年、会議で発言を求められ始める時期。SNS で「言い返せなかった」投稿が増える
-    audience_hook: 会議や LINE で言い返せず、あとで一人反省会をしてしまう新社会人
+    why_now: スマホの利用時間が増え続け、「SNS 疲れ」という言葉が当たり前になった
+    audience_hook: 寝る前にタイムラインを見て、なぜか気分が沈む人
     key_questions:
-      - 緊張すると言葉が出ないのは、頭が悪いからではなく何が起きているのか
-      - 「一人反省会」はなぜ夜に来て、なぜ止まらないのか
-      - 次の会議で使える、いちばん短い「一言目」は何か
+      - SNS を見ると疲れるのは、何と比べているからなのか
+      - 疲れるのに、指が勝手に開いてしまうのはなぜか
+      - やめなくていいから、疲れにくい使い方はあるのか
     sources:
-      - {name: 日本心理学会 心理学ワールド（反すうの解説）, url: https://psych.or.jp/publication/world/}
-      - {name: 厚生労働省 こころの耳（ストレスと反すう）, url: https://kokoro.mhlw.go.jp/}
-      - {name: 国立精神・神経医療研究センター, url: https://www.ncnp.go.jp/}
+      - {name: "Festinger 1954 A theory of social comparison processes（Human Relations）", url: "https://doi.org/10.1177/001872675400700202"}
+      - {name: "Verduyn et al. 2015 Passive Facebook usage undermines affective well-being（Journal of Experimental Psychology: General）", url: "https://doi.org/10.1037/xge0000057"}
+      - {name: "総務省 情報通信白書", url: "https://www.soumu.go.jp/johotsusintokei/whitepaper/"}
   - date: 2026-09-30
-    title: 三日坊主は意志が弱いからではない。習慣の研究が言う「続く仕組み」
-    angle: 「習慣化に 21 日」の俗説と、ロンドン大学の研究（平均 66 日、行動によって 18〜254 日）を対比し、続かない原因を意志力ではなく「きっかけ・行動の小ささ・報酬の速さ」の設計に置き換える。ずんだもんの筋トレ・英語・日記の失敗を実例に、今日から 2 分でできる版に縮める手順を渡す
+    title: AI に聞くほど、自分で考えなくなる？
+    angle: 機械の答えを人より信じてしまう「自動化バイアス」と、覚えることを道具に任せる「認知的オフロード（頭の外に置くこと）」を分けて説明する。任せてよい場面と、まず自分で考えたほうがいい場面の見分け方を渡す。検索と記憶の有名な研究は、再現されにくかった点もきちんと言う
     horizon: flow
-    why_now: 下半期の始まりで「10 月から始める」宣言が増え、月末に脱落が出る
-    audience_hook: 手帳と本を買っては 3 日で止まり、自分を責めている人
+    why_now: 仕事でも勉強でも、生成 AI に聞くのが当たり前になりつつある
+    audience_hook: AI の答えをそのまま使って、あとで「あれ、なんでこうなるんだっけ」となった人
     key_questions:
-      - 「21 日で習慣になる」はどこから来た数字で、本当のところは何日か
-      - 続く人と続かない人の差は、性格ではなくどこにあるのか
-      - 今日から始めるなら、どこまで小さくすればいいのか
+      - AI の答えを、つい信じてしまうのはなぜか
+      - 道具に任せると、本当に頭は弱くなるのか
+      - 任せていいことと、自分で考えたほうがいいことの境目は
     sources:
-      - {name: Lally et al. 2010 European Journal of Social Psychology（習慣形成の日数）, url: https://onlinelibrary.wiley.com/doi/10.1002/ejsp.674}
-      - {name: 日本心理学会 心理学ワールド, url: https://psych.or.jp/publication/world/}
+      - {name: "Parasuraman & Manzey 2010 Complacency and bias in human use of automation（Human Factors）", url: "https://doi.org/10.1177/0018720810376055"}
+      - {name: "Risko & Gilbert 2016 Cognitive offloading（Trends in Cognitive Sciences）", url: "https://doi.org/10.1016/j.tics.2016.07.002"}
+      - {name: "Sparrow et al. 2011 Google effects on memory（Science）と、その後の再現研究", url: "https://doi.org/10.1126/science.1207745"}
   - date: 2026-10-01
-    title: SNS を見ると疲れるのに、やめられない。社会的比較と「たまに当たる」報酬の話
-    angle: フェスティンガーの社会的比較理論（人は近い他人と比べる）と、上方比較が自己評価を下げる研究、そしてスキナーの変動比率強化（いつ当たるか分からない報酬ほどやめにくい）で「同期の投稿を見て落ち込むのに開いてしまう」を説明する。アプリを消せとは言わず、比較の相手と時間帯を変える 2 つの設定を渡す
-    horizon: bridge
-    why_now: 海外では SNS の年齢制限と若者のメンタルの議論が法制化まで進み、日本でも報道が増えている
-    audience_hook: 同期や友人の投稿を見て落ち込むのに、通知が来ると開いてしまう人
+    title: 急にキレる人の頭の中で、何が起きているのか
+    angle: 相手の行動を「わざとだ」と受け取りやすいくせ（敵意帰属バイアス）と、感情が周りにうつる仕組み（感情伝染）で説明する。キレる人を責めたり診断したりせず、巻き込まれないための距離の取り方と、自分がカッとなったときの最初の一手を渡す
+    horizon: flow
+    why_now: 職場・家庭・ネットで「急に感情が爆発する人」への疲れが話題になりやすい
+    audience_hook: 上司や家族が急に怒りだして、自分のせいかと思ってしまう人
     key_questions:
-      - なぜ「知らない有名人」より「同期」の投稿のほうが効くのか
-      - やめられないのは依存症なのか、それとも設計のせいなのか
-      - 消さずに疲れを減らすなら、何をどう変えるのか
+      - 同じことをされても、怒る人と怒らない人がいるのはなぜか
+      - 感情的な人のそばにいると、なぜこちらまで疲れるのか
+      - 巻き込まれないために、その場でできることは
     sources:
-      - {name: 総務省 情報通信白書（SNS 利用時間）, url: https://www.soumu.go.jp/johotsusintokei/whitepaper/}
-      - {name: Festinger 1954 A Theory of Social Comparison Processes, url: https://journals.sagepub.com/doi/10.1177/001872675400700202}
-      - {name: 日本心理学会 心理学ワールド, url: https://psych.or.jp/publication/world/}
+      - {name: "Dodge 1980 Social cognition and children's aggressive behavior（Child Development）", url: "https://doi.org/10.2307/1129603"}
+      - {name: "Hatfield, Cacioppo & Rapson 1993 Emotional contagion（Current Directions in Psychological Science）", url: "https://doi.org/10.1111/1467-8721.ep10770953"}
   - date: 2026-10-02
-    title: やる気が出るのを待つと一生出ない。先に体を動かすと気分が付いてくる研究
-    angle: 「やる気→行動」ではなく「行動→やる気」の順であること（行動活性化、作業興奮）を、うつの治療で使われる行動活性化療法の研究と、着手後に集中が立ち上がる実感の説明で示す。ずんだもんの「気分が乗ったらやる」を、5 分だけ着手する・場所を変える・最初の 1 手を前夜に決めるの 3 手に置き換える
+    title: 倍速で見ているのに、いつも時間が足りないのはなぜか
+    angle: タイパ（時間の効率）を求めるほど疲れる理由を、選ぶものが多すぎると決められなくなる話（選択のパラドックス）と、先に結論だけ知りたくなる気持ちで説明する。有名な「ジャムの実験」は、その後の研究で効果がはっきりしなかったことも伝える。時間を取り戻すための「やらないことリスト」を渡す
     horizon: flow
-    why_now: 10 月は資格試験・昇格試験の申し込みが多く、「やる気が出ない」相談が増える
-    audience_hook: やる気が出るのを待って、気づけば夜になっている人
+    why_now: 動画の倍速視聴や「ネタバレを先に見る」視聴が広がっている
+    audience_hook: 倍速で見て、見終わったのに何も残っていない感じがする人
     key_questions:
-      - 「やる気が出たらやる」はなぜ順番が逆なのか
-      - 行動活性化はどんな研究で、どこまで効くと分かっているのか
-      - 5 分だけ、のあとに止めたくなくなるのはなぜか
+      - なぜ急いで見るほど、時間が足りなく感じるのか
+      - 選ぶものが多いと、なぜ疲れるのか
+      - タイパを気にしすぎないための、小さな工夫は
     sources:
-      - {name: 厚生労働省 こころの耳（行動活性化）, url: https://kokoro.mhlw.go.jp/}
-      - {name: 認知行動療法センター（国立精神・神経医療研究センター）, url: https://www.ncnp.go.jp/cbt/}
+      - {name: "稲田豊史『映画を早送りで観る人たち』（光文社新書 2022）", url: ""}
+      - {name: "Iyengar & Lepper 2000 When choice is demotivating（Journal of Personality and Social Psychology）", url: "https://doi.org/10.1037/0022-3514.79.6.995"}
+      - {name: "Scheibehenne et al. 2010 Can there ever be too many options?（メタ分析。Journal of Consumer Research）", url: "https://doi.org/10.1086/651235"}
   - date: 2026-10-03
-    title: 褒められると伸びる人と、崩れる人。内発的動機づけの研究が教える褒め方
-    angle: 「ご褒美でやる気は増える」を疑う。デシの実験（報酬が内発的な興味を下げることがある）とドゥエックの研究（能力を褒めると挑戦を避け、過程を褒めると挑戦する）を対比し、再現性の議論にも触れる。新社会人が上司に褒められたとき、後輩を褒めるとき、自分を褒めるときの 3 場面で「何を褒めると崩れないか」を渡す
-    horizon: stock
-    why_now: 海外では「褒めて育てる」の反動として過程重視の育成が広がり、日本の新人研修にも降りてきている
-    audience_hook: 褒められると逆にプレッシャーで動けなくなる人
-    key_questions:
-      - ご褒美がやる気を下げることがあるのは、どんなときか
-      - 「頭がいいね」と「工夫したね」で、そのあとの行動はどう変わるのか
-      - 自分を褒めるとき、何を褒めればいいのか
-    sources:
-      - {name: Deci 1971 Journal of Personality and Social Psychology, url: https://psycnet.apa.org/record/1971-22190-001}
-      - {name: Mueller & Dweck 1998 Journal of Personality and Social Psychology, url: https://psycnet.apa.org/record/1998-04530-003}
-  - date: 2026-10-04
-    title: 断れない人が断れるようになる順番。アサーションの研究
-    angle: 「断る＝関係が壊れる」という予測がどれほど外れているかを、頼みごとの実験（人は他人の拒否を過大に恐れる）と、攻撃的・受け身・アサーティブの 3 分類で示す。断れない理由を性格ではなく「断り方の型を持っていない」ことに置き、DESC 法（描写・表現・提案・結果）で、飲み会・残業・友人の頼みの 3 例の台詞を実際に作って渡す
+    title: 会議で言い返せなかった夜に、布団の中で名文句を思いつくのはなぜか
+    angle: 緊張すると言葉が出ないのは頭の中のメモ帳（作業記憶）が心配でうまるから。夜に浮かぶのは緊張がほどけてメモ帳が空くから。夜に何度も考え直す（反すう）と気分が重くなる研究を紹介し、次の会議の「一言目」を先に決めておく方法と、夜のうちに紙に書いて終わらせる手順を渡す
     horizon: flow
-    why_now: 歓迎会シーズンが落ち着き、誘いや頼みごとを断れない疲れが出る時期
+    why_now: 下半期のはじめで、会議や面談で意見を求められる場面が増える
+    audience_hook: 会議や LINE で言い返せず、あとで一人反省会をしてしまう人
+    key_questions:
+      - 緊張すると言葉が出ないのは、何が起きているのか
+      - 一人反省会は、なぜ夜に来て、なぜ止まらないのか
+      - 次の会議で使える、いちばん短い一言目は
+    sources:
+      - {name: "Beilock & Carr 2005 When high-powered people fail（Psychological Science）", url: "https://doi.org/10.1111/j.0956-7976.2005.00789.x"}
+      - {name: "Nolen-Hoeksema & Morrow 1993 Effects of rumination and distraction on naturally occurring depressed mood（Cognition and Emotion）", url: "https://doi.org/10.1080/02699939308409189"}
+      - {name: "Gollwitzer 1999 Implementation intentions（American Psychologist）", url: "https://doi.org/10.1037/0003-066X.54.7.493"}
+  - date: 2026-10-04
+    title: 断れない人が、断れるようになる順番
+    angle: 断れないのは性格ではなく「嫌われるかも」の見積もりが大きすぎるから。頼まれた人は断られたときの相手の気持ちを、実際より悪く想像しがちだという研究を紹介し、自分も相手も大事にする言い方（アサーション）を、いちばん小さな「一言」から練習する順番を渡す
+    horizon: flow
+    why_now: 年末に向けて頼まれごと・飲み会の誘いが増える時期
     audience_hook: 頼まれると断れず、あとで自分に腹が立つ人
     key_questions:
-      - 断ったときに相手がどう思うか、私たちはどれくらい読み違えているのか
-      - 「断る」と「攻撃する」はどう違うのか
-      - 明日使える断りの台詞を、型から作るとどうなるか
+      - 断ると嫌われる、は本当か
+      - 相手も自分も大事にする言い方とは
+      - 今日から練習できる、いちばん小さな断り方は
     sources:
-      - {name: 日本アサーション協会, url: https://www.japan-assertion.org/}
-      - {name: Flynn & Lake 2008 Journal of Personality and Social Psychology（援助要請の過小評価）, url: https://psycnet.apa.org/record/2008-08177-007}
+      - {name: "平木典子『アサーション入門』（講談社現代新書 2012）", url: ""}
+      - {name: "Bohns 2016 (Mis)Understanding our influence over others（Current Directions in Psychological Science）", url: "https://doi.org/10.1177/0963721416635544"}
   - date: 2026-10-05
-    title: 「自分はダメだ」が頭から離れない夜に起きていること。反すうとセルフコンパッション
-    angle: 失敗のあとに同じ考えが回り続ける「反すう」がなぜ止まらないか（問題解決のつもりで感情だけ増える）を研究で示し、自己批判が行動を改善しないこと、ネフのセルフコンパッション研究（自分に友人と同じ言葉をかける人のほうが立ち直りが速い）を紹介する。甘やかしとの違いを整理し、今夜できる「友人に言う言葉に置き換える」1 分の手順で終える
-    horizon: bridge
-    why_now: 海外では自己批判より自己への思いやりを重視する流れが企業研修にも入り、日本でも書籍が増えている
-    audience_hook: 失敗を何度も思い返し、自分を責めることで頑張ろうとしてしまう人
+    title: 元を取ろうとして、かえって損をするのはなぜか
+    angle: もう払ったお金や時間を取り返そうとして、やめられなくなる心のくせ（サンクコスト）と、損をとても大きく感じる心のくせ（損失回避）で説明する。サブスク・食べ放題・つまらない映画を例に、「今からの損と得だけで決める」練習を渡す
+    horizon: flow
+    why_now: サブスクの数が増え、「元を取らなきゃ」で時間を使ってしまう人が多い
+    audience_hook: 食べ放題で苦しくなるまで食べたり、つまらない映画を最後まで見てしまう人
     key_questions:
-      - 反すうは考えているようで、なぜ何も解決しないのか
-      - 自分に厳しくすると成長する、は本当か
-      - 甘やかしにならないセルフコンパッションとは何か
+      - もう払ったお金に、なぜ引っぱられてしまうのか
+      - 損は、得よりどれくらい大きく感じるのか
+      - 「やめる」を決めるための、かんたんな質問は
     sources:
-      - {name: Neff 2003 Self and Identity（セルフコンパッション）, url: https://self-compassion.org/wp-content/uploads/publications/SCtheoryarticle.pdf}
-      - {name: 厚生労働省 こころの耳, url: https://kokoro.mhlw.go.jp/}
+      - {name: "Arkes & Blumer 1985 The psychology of sunk cost（Organizational Behavior and Human Decision Processes）", url: "https://doi.org/10.1016/0749-5978(85)90049-4"}
+      - {name: "Kahneman & Tversky 1979 Prospect theory（Econometrica）", url: "https://doi.org/10.2307/1914185"}
