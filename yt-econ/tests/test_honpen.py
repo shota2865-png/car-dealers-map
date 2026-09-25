@@ -1,4 +1,4 @@
-"""心理学まくらの本編（寝落ち向け 30 分）: 台本の組み立て・概要欄・毎日の流れ（投稿と Shorts の予約）."""
+"""現代人のための心理学の本編（ながら聴き 15〜20 分）: 台本の組み立て・概要欄・毎日の流れ（投稿と Shorts の予約）."""
 from __future__ import annotations
 
 import copy
@@ -23,15 +23,24 @@ OUTLINE = {
 }
 
 
-def test_assemble_adds_greeting_and_closing_for_sleep_listeners(cfg):
-    parts = [[{"kind": "chapter", "heading": f"章{i}", "narration": [["はなし", 0]]}] for i in range(5)]
+def test_assemble_adds_greeting_and_closing_for_listeners(cfg):
+    parts = [[{"kind": "chapter", "heading": f"章{i}", "narration": [["はなし", 0]]}] for i in range(4)]
     data = honpen.assemble(cfg, OUTLINE, parts)
     kinds = [s["kind"] for s in data["scenes"]]
     assert kinds[0] == "opening" and kinds[-2:] == ["steps", "ending"]
     first = " ".join(t for t, _ in data["scenes"][0]["narration"])
-    assert "声だけ" in first and "眠" in first and OUTLINE["title"] in first and "長い説明文" not in first
+    assert "現代人のための心理学" in first and "声だけ" in first and "ながら" not in first or "家事" in first
+    assert OUTLINE["title"] in first and "長い説明文" not in first and "眠" not in first
     last = " ".join(t for t, _ in data["scenes"][-1]["narration"])
-    assert "静かな音楽" in last and "休んで" in last
+    assert "一言を書いて寝る" in last and "三日坊主" in last and "20:00" in last and "静かな音楽" not in last
+
+
+def test_sleep_style_can_be_restored_from_config(cfg):
+    cfg.raw["honpen"]["greeting"] = [["こんばんは。{name}です。", 0], ["{theme}のお話です。", 1]]
+    cfg.raw["honpen"]["closing"] = [["{one}。ゆっくり休んでくださいね。", 0]]
+    data = honpen.assemble(cfg, dict(OUTLINE, next=""), [])
+    assert data["scenes"][0]["narration"][0][0] == "こんばんは。現代人のための心理学です。"
+    assert "休んで" in data["scenes"][-1]["narration"][0][0]
 
 
 def test_every_question_gets_its_own_countdown():
@@ -43,14 +52,14 @@ def test_every_question_gets_its_own_countdown():
 def test_metadata_has_chapters_from_zero_and_sleep_tags(cfg):
     data = {"title": "テスト回", "outline": OUTLINE}
     m = honpen.honpen_metadata(cfg, data, [[3.2, "はじめに"], [40, "第1章 a"], [400, "第2章 b"], [1600, "今日のまとめ"]])
-    assert m.title.startswith("【寝ながら聴ける】テスト回") and "心理学まくら" in m.title
+    assert m.title == "テスト回【現代人のための心理学】"
     assert "0:00 はじめに" in m.description and "26:40 今日のまとめ" in m.description
-    assert "睡眠用" in m.tags and len(m.tags) == len(set(m.tags))
+    assert "聞き流し" in m.tags and "睡眠用" not in m.tags and len(m.tags) == len(set(m.tags))
 
 
 def test_short_angles_spread_over_chapters():
     got = honpen.short_angles({"title": "t", "outline": OUTLINE}, 3)
-    assert [g[0] for g in got] == ["第1の話", "第3の話", "第5の話"]
+    assert [g[0] for g in got] == ["第1の話", "第3の話", "第5の話"]      # 5 章なら 1・3・5 章
     assert "A: A案 / B: B案" in got[0][1]
 
 
@@ -95,7 +104,7 @@ def test_daily_flow_uploads_long_then_shorts_after_it_and_resumes(cfg, tmp_path,
     res = pipe.produce(topic, upload=True, slug="ep1")
     assert calls["write"] == 1 and res["video_id"] == "v1"
     long_, shorts = calls["publish"][0], calls["publish"][1:]
-    assert "心理学まくら" in long_["title"] and long_["after"] is None
+    assert "現代人のための心理学" in long_["title"] and long_["after"] is None
     assert len(shorts) == 3 and all(s["after"] is not None for s in shorts)     # Shorts は本編の公開後の枠
     assert store.get_video("ep1").stage.get("kind") == "long"
     # 同じ slug で回し直しても、台本も投稿もやり直さない

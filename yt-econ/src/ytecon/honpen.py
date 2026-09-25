@@ -1,11 +1,12 @@
-"""心理学チャンネルの本編（16:9・約 30 分・寝ながら聴く人向け）の台本を LLM に書かせる.
+"""心理学チャンネルの本編（16:9・15〜20 分・ながら聴き向け）の台本を LLM に書かせる.
 
 画面は wide.py の場面（Shorts と同じ部品を横に並べたもの）。字幕は出さず、めたんの声だけ。
-寝落ちしながら聴く人・画面を見ない人がいる前提で、画面に出るものは全部ナレーションでも言う。
+通勤・家事・作業をしながら聴く人（画面を見ない人）がいる前提で、画面に出るものは全部ナレーションでも言う。
+聴かれ方・あいさつ・長さは config の honpen.*（listener / greeting / closing / minutes / parts）で変えられる。
 
 流れ:
   outline(cfg, topic)        5 部の骨組み（各部の 2 択クイズ・話す要点・研究）と、まとめ・今日のひとつ
-  write_part(cfg, ...)       1 部ずつ場面の JSON を書く（1 回で 30 分ぶんを書かせると質と長さが崩れるため）
+  write_part(cfg, ...)       1 部ずつ場面の JSON を書く（1 回で全部を書かせると質と長さが崩れるため）
   assemble(cfg, ...)         冒頭のあいさつ + 5 部 + まとめ + 締めのあいさつ をつなぐ
   write_honpen(cfg, topic)   上の 3 つをまとめて呼ぶ。quiz.build(cfg, data, out, wide=True) でそのまま動画になる
 """
@@ -21,12 +22,16 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-PARTS = 5
+PARTS = 4          # 既定の章の数（config の honpen.parts で変える）
+
+# 聴かれ方の既定（ながら聴き）。config の honpen.listener / honpen.tone で差し替えられる
+LISTENER = "通勤・家事・作業をしながら、画面を見ずに聴いている人が多い"
+TONE = "落ち着いて、でもテンポよく。責めない。煽らない（ヤバい・終わった・知らないと損 は禁止）。診断しない"
 
 _RULES = """# 聴く人
-- 寝る前に、目を閉じて聴いている人が多い。**画面を見なくても、声だけで全部わかる**ように話す
+- {listener}。**画面を見なくても、声だけで全部わかる**ように話す
 - 画面に出す言葉・選択肢・図の中身は、必ずナレーションでも言う。「画面を見てください」「この図」「ここに」「こちら」は使わない
-- ゆっくり、やさしく、責めない。煽らない（ヤバい・終わった・知らないと損 は禁止）。診断しない
+- {tone}
 
 # 言葉づかい（いちばん大事）
 - 小学 5 年生が聞いて分かる言葉で話す。です・ます調の、落ち着いた話し言葉
@@ -53,7 +58,7 @@ _KINDS = """# 場面の種類（段階 = narration の 2 つ目の数字。そ�
 - versus   : 対比。heading, heading_hl, left/right（{"text": 14 字以内, "caption": 10 字以内}）。段階 0 = left、1 = left に ✕ と caption、2 = right に ✓ と caption
 - steps    : 手順。heading（12 字以内）, heading_hl, items（3 つ、各 10 字以内）, final（10 字以内）。段階 0 = 見出し、1..3 = items、4 = final"""
 
-_OUTLINE_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作家です。寝る前に聴く、約 30 分の本編の骨組みを作ります。
+_OUTLINE_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作家です。約 {minutes} 分の本編の骨組みを作ります。
 全体は {parts} 部。各部は「2 択クイズ → 答え合わせ → 研究と説明」で進み、最後に全体のまとめと「今日のひとつ」を置きます。
 
 {rules}
@@ -61,7 +66,7 @@ _OUTLINE_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作�
 # 骨組みの決まり
 - 部ごとに、違う問いと違う研究を扱う。前の部の話を繰り返さない。部の順番は、聴いている人の疑問が自然に進む順に
 - 各部のクイズは、どちらも「自分もそうだ」と思える日常の行動にする（どちらかが明らかに正解、にしない）
-- 最後の部は「じゃあ、どうすればいいか」（今夜・明日から試せること）にする
+- 最後の部は「じゃあ、どうすればいいか」（今日・明日から試せること）にする
 - recap は 3 つ（各 10 字以内）。today_one は 14 字以内の一言
 - next は次回のテーマ（12 字以内）
 
@@ -86,7 +91,7 @@ _OUTLINE_SCHEMA = {
     "required": ["title", "theme", "parts", "recap", "today_one"],
 }
 
-_PART_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作家です。寝る前に聴く約 30 分の本編のうち、1 つの部（約 5〜6 分）の場面を書きます。
+_PART_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作家です。約 {minutes} 分の本編のうち、1 つの部（約 {part_minutes} 分）の場面を書きます。
 画面は白地に短い言葉の箱・矢印・黄色いマーカーだけ。字幕は出ません。1 人のナレーター（落ち着いた女性の声）が話します。
 
 {rules}
@@ -126,6 +131,18 @@ def _model(cfg: Config) -> str:
     return str(cfg.get("honpen.model", cfg.get("script.model", llm.DEFAULT_MODEL)))
 
 
+def n_parts(cfg: Config) -> int:
+    return int(cfg.get("honpen.parts", PARTS))
+
+
+def _minutes(cfg: Config) -> int:
+    return int(cfg.get("honpen.minutes", 18))
+
+
+def _rules(cfg: Config) -> str:
+    return _RULES.format(listener=str(cfg.get("honpen.listener", LISTENER)), tone=str(cfg.get("honpen.tone", TONE)))
+
+
 def outline(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
     user = (
         f"テーマ: {topic.get('title', '')}\n"
@@ -133,11 +150,11 @@ def outline(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
         f"視聴者: {cfg.get('channel.audience', '')}\n"
         + ("聴く人の疑問:\n" + "\n".join(f"- {q}" for q in topic.get("key_questions") or []) + "\n" if topic.get("key_questions") else "")
         + ("参考にできる出典:\n" + "\n".join(f"- {s.get('name', '')}" for s in topic.get("sources") or []) + "\n" if topic.get("sources") else "")
-        + f"\n{PARTS} 部の骨組みを JSON で。"
+        + f"\n{n_parts(cfg)} 部の骨組みを JSON で。"
     )
-    system = _OUTLINE_SYSTEM.format(field=domain.field(cfg), parts=PARTS, rules=_RULES)
+    system = _OUTLINE_SYSTEM.format(field=domain.field(cfg), parts=n_parts(cfg), rules=_rules(cfg), minutes=_minutes(cfg))
     data = llm.complete_json(system, user, _OUTLINE_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
-    data["parts"] = (data.get("parts") or [])[:PARTS]
+    data["parts"] = (data.get("parts") or [])[:n_parts(cfg)]
     return data
 
 
@@ -149,10 +166,11 @@ def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] =
         f"視聴者: {cfg.get('channel.audience', '')}\n\n"
         f"# この部（第{k + 1}章）\n{json.dumps(part, ensure_ascii=False, indent=1)}\n\n"
         "# ほかの部で話すこと（ここでは繰り返さない）\n" + "\n".join(f"- {o}" for o in others) + "\n\n"
-        + ("この部が最後なので、今夜・明日から試せることを中心に。\n" if k == len(ol["parts"]) - 1 else "")
+        + ("この部が最後なので、今日・明日から試せることを中心に。\n" if k == len(ol["parts"]) - 1 else "")
         + "形の例（内容は使わない。形だけ真似る）:\n" + json.dumps(_EXAMPLE_PART, ensure_ascii=False, indent=1)
     )
-    system = _PART_SYSTEM.format(field=domain.field(cfg), rules=_RULES, kinds=_KINDS, chars_min=chars[0], chars_max=chars[1])
+    system = _PART_SYSTEM.format(field=domain.field(cfg), rules=_rules(cfg), kinds=_KINDS, chars_min=chars[0], chars_max=chars[1],
+                                 minutes=_minutes(cfg), part_minutes=max(3, round(_minutes(cfg) / n_parts(cfg))))
     data = llm.complete_json(system, user, _PART_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
     scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict) and s.get("kind")]
     for s in scenes:
@@ -161,17 +179,44 @@ def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] =
     return scenes
 
 
+# 冒頭と締めのあいさつ（既定はながら聴き）。{name} {theme} {one} {next} {when} を差し込める
+GREETING = [
+    ["{name}へ、ようこそ。", 0],
+    ["この動画は、通勤や家事をしながらでも聴けるように作っています。", 0],
+    ["画面を見なくても、声だけでわかるように、お話ししますね。", 1],
+    ["今日のテーマは、{theme}、です。", 2],
+    ["さっそく、始めていきましょう。", 2],
+]
+GREETING_LINES = ["声だけで、わかるようにお話しします", "ながら聴きで大丈夫です"]
+CLOSING = [
+    ["今日のひとつは、{one}、でした。", 0],
+    ["次回は、{next}のお話です。毎日{when}に更新しています。", 1],
+    ["ここまで聴いてくださって、ありがとうございました。", 2],
+    ["気になったところだけ、明日ひとつ試してみてください。", 2],
+]
+
+
+def _fill(lines: list, **kw) -> list[list]:
+    out = []
+    for t, st in lines:
+        text = str(t)
+        if "{next}" in text and not kw.get("next"):
+            text = text.split("次回は")[0] + (f"毎日{kw.get('when', '')}に更新しています。" if "{when}" in text else "")
+        try:
+            text = text.format(**kw)
+        except (KeyError, IndexError):
+            pass
+        if text.strip():
+            out.append([text, int(st)])
+    return out
+
+
 def opening(cfg: Config, ol: dict[str, Any]) -> dict[str, Any]:
     name = str(cfg.get("channel.name", ""))
     theme = str(ol.get("title") or ol.get("theme") or "")      # theme は長い説明文になりがちなので、声と画面はタイトルで
-    return {"kind": "opening", "lines": ["声だけで、わかるようにお話しします", "眠くなったら、目を閉じたままで大丈夫です"], "theme": theme,
-            "narration": [[f"こんばんは。{name}です。", 0],
-                          ["この動画は、寝る前に、目を閉じたまま聴けるように作っています。", 0],
-                          ["画面を見なくても、声だけでわかるように、お話ししますね。", 0],
-                          ["途中で眠くなったら、そのまま眠ってしまって大丈夫です。", 1],
-                          ["部屋の明かりを少し落として、楽な姿勢になってください。", 1],
-                          [f"今日のテーマは、{theme}、です。", 2],
-                          ["ゆっくり、始めていきましょう。", 2]]}
+    lines = cfg.get("honpen.greeting") or GREETING
+    return {"kind": "opening", "lines": list(cfg.get("honpen.greeting_lines") or GREETING_LINES), "theme": theme,
+            "narration": _fill(lines, name=name, theme=theme)}
 
 
 def closing(cfg: Config, ol: dict[str, Any]) -> list[dict[str, Any]]:
@@ -180,17 +225,13 @@ def closing(cfg: Config, ol: dict[str, Any]) -> list[dict[str, Any]]:
     nxt = str(ol.get("next") or "")
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
     when = times[0] if times else "20:00"
-    rec_nar = [["最後に、今日のお話を、ゆっくり振り返りますね。", 0]]
+    rec_nar = [["最後に、今日のお話を振り返りますね。", 0]]
     rec_nar += [[f"{['ひとつめ', 'ふたつめ', 'みっつめ'][i]}は、{t}。", i + 1] for i, t in enumerate(recap)]
-    rec_nar += [["ここまで覚えていなくても、大丈夫です。", len(recap) + 1]]
-    end_nar = [[f"今日のひとつは、{one}、でした。", 0]]
-    end_nar += [[f"次回は、{nxt}のお話です。毎日{when}に更新しています。", 1]] if nxt else [[f"毎日{when}に更新しています。", 1]]
-    end_nar += [["ここまで聴いてくださって、ありがとうございます。", 2],
-                ["このあとは、静かな音楽だけが、少しのあいだ流れます。", 2],
-                ["今日も一日、おつかれさまでした。ゆっくり休んでくださいね。", 2]]
+    end_nar = _fill(cfg.get("honpen.closing") or CLOSING, one=one, next=nxt, when=when)
     return [
-        {"kind": "steps", "heading": "今日のまとめ", "heading_hl": "まとめ", "items": recap, "final": "今日はここまで", "narration": rec_nar},
-        {"kind": "ending", "one": one, "next": nxt, "rest": "このあとは、静かな音楽だけが流れます", "narration": end_nar},
+        {"kind": "steps", "heading": "今日のまとめ", "heading_hl": "まとめ", "items": recap,
+         "final": str(cfg.get("honpen.recap_final", "今日はここまで")), "narration": rec_nar},
+        {"kind": "ending", "one": one, "next": nxt, "rest": str(cfg.get("honpen.ending_rest", "")), "narration": end_nar},
     ]
 
 
@@ -207,7 +248,7 @@ def narration_chars(data: dict[str, Any]) -> int:
 
 
 def write_honpen(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
-    """約 30 分の本編 JSON（quiz.build(..., wide=True) にそのまま渡せる形）."""
+    """本編 JSON（quiz.build(..., wide=True) にそのまま渡せる形）."""
     ol = outline(cfg, topic)
     log.info("本編の骨組み: %s / %d 部", ol.get("title"), len(ol.get("parts") or []))
     lo, hi = int(cfg.get("honpen.part_chars_min", 1600)), int(cfg.get("honpen.part_chars_max", 1900))
@@ -235,12 +276,12 @@ def honpen_metadata(cfg: Config, data: dict[str, Any], chapters: list, topic: di
     """本編のタイトル・概要欄（チャプター付き）・タグ."""
     from .metadata import Metadata, _voice_credit
     ol = data.get("outline") or {}
-    prefix = str(cfg.get("honpen.title_prefix", "【寝ながら聴ける】"))
+    prefix = str(cfg.get("honpen.title_prefix", ""))
     suffix = str(cfg.get("upload.title_suffix", ""))
     title = f"{prefix}{data.get('title', '')}{suffix}"[:100]
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
     parts = [str(ol.get("theme") or data.get("title") or ""),
-             "寝る前に、目を閉じたまま聴けるように作っています。画面を見なくても、声だけでわかるようにお話しします。途中で眠ってしまっても大丈夫です。"]
+             str(cfg.get("honpen.desc_note", "通勤や家事をしながらでも聴けるように、画面を見なくても声だけでわかるようにお話ししています。"))]
     # YouTube のチャプターは 0:00 から始まり、3 つ以上・各 10 秒以上で有効になる
     ch = [(float(t), str(n)) for t, n in chapters if n]
     if len(ch) >= 3:
@@ -254,9 +295,9 @@ def honpen_metadata(cfg: Config, data: dict[str, Any], chapters: list, topic: di
     parts.append(f"{domain.pitch(cfg)}毎日{times[0] if times else '20:00'}に更新しています。")
     parts.append("■ 音声\n" + _voice_credit(cfg))
     parts.append("■ ご注意\n" + domain.disclaimer(cfg))
-    tags_h = domain.hashtags(cfg) + [str(t) for t in (cfg.get("honpen.extra_hashtags", ["#睡眠用", "#聞き流し"]) or [])]
+    tags_h = domain.hashtags(cfg) + [str(t) for t in (cfg.get("honpen.extra_hashtags", ["#聞き流し"]) or [])]
     parts.append(" ".join(tags_h))
-    tags = [t.lstrip("#") for t in tags_h] + ["寝る前", "睡眠用", "聞き流し", "作業用"] + [str(cfg.get("channel.name", ""))]
+    tags = [t.lstrip("#") for t in tags_h] + [str(t) for t in (cfg.get("honpen.extra_tags", ["聞き流し", "作業用", "ながら聴き"]) or [])] + [str(cfg.get("channel.name", ""))]
     return Metadata(title=title, description="\n\n".join(p for p in parts if p)[:5000], tags=list(dict.fromkeys(t for t in tags if t))[:15],
                     category_id=str(cfg.get("upload.category_id", "27")), language=str(cfg.get("upload.language", "ja")))
 
@@ -299,7 +340,7 @@ def thumbnail(cfg: Config, data: dict[str, Any], out) -> Any:
     for ln in lines:
         P.marker_text(d, M, y, ln, f, p=1.0)
         y += int(f.size * 1.4)
-    d.text((M, H - 110), "寝ながら聴ける・声だけでわかる", font=quiz_mod.font(cfg, 40, 500), fill=th.sec)
+    d.text((M, H - 110), str(cfg.get("honpen.thumb_note", "ながら聴きOK・声だけでわかる")), font=quiz_mod.font(cfg, 40, 500), fill=th.sec)
     out = Path(out)
     img.save(out, quality=92)
     return out
