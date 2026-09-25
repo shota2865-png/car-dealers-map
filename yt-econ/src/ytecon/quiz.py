@@ -685,6 +685,20 @@ def _srt_time(t: float) -> str:
     return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
 
 
+def _split_cue(start: float, dur: float, text: str) -> list[tuple[float, float, str]]:
+    """1 段階ぶんの文を句点で分け、字数に比例して時間を割り振る（字幕が 1 行に長く出続けないように）."""
+    parts = [p for p in re.split(r"(?<=[。？！?!])", text) if p.strip()]
+    if len(parts) <= 1:
+        return [(start, start + dur, text)]
+    total = sum(len(p) for p in parts)
+    out, t = [], start
+    for p in parts:
+        d = dur * len(p) / total
+        out.append((t, t + d, p.strip()))
+        t += d
+    return out
+
+
 def write_srt(cues: list[tuple[float, float, str]], path: Path) -> Path:
     lines = []
     for i, (a, b, text) in enumerate(cues, 1):
@@ -818,7 +832,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 p = fr / f"a{len(wavs):03d}.wav"
                 p.write_bytes(data)
                 voice = _wav_seconds(data)
-                cues.append((total, total + voice, text))
+                cues.extend(_split_cue(total, voice, text))
             else:
                 p = None
                 voice = 1.2
@@ -878,7 +892,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     (outdir / "chapters.json").write_text(json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
     for old in fr.glob("*.png"):                     # コマ画像は大きいので消す（frames.txt と音声は残す）
         old.unlink()
-    log.info("参加型テスト Shorts: %s (%.1f 秒, %d コマ)", dst, total, n)
+    log.info("%s: %s (%.1f 秒, %d コマ)", "本編" if wide else "参加型テスト Shorts", dst, total, n)
     return Built(video=dst, seconds=total, frames=n, quiz=quiz, cues=cues, chapters=chapters)
 
 

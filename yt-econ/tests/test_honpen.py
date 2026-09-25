@@ -101,3 +101,9 @@ def test_daily_flow_uploads_long_then_shorts_after_it_and_resumes(cfg, tmp_path,
     # 同じ slug で回し直しても、台本も投稿もやり直さない
     pipe.produce(topic, upload=True, slug="ep1")
     assert calls["write"] == 1 and len(calls["publish"]) == 4
+
+
+def test_caption_cues_split_by_sentence_and_keep_timing():
+    cues = quiz._split_cue(10.0, 6.0, "ひとつめです。ふたつめの文は長めです。")
+    assert [c[2] for c in cues] == ["ひとつめです。", "ふたつめの文は長めです。"]
+    assert cues[0][0] == 10.0 and abs(cues[-1][1] - 16.0) < 1e-6 and cues[0][1] == cues[1][0]
