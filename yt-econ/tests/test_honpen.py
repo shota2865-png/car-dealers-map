@@ -116,3 +116,15 @@ def test_caption_cues_split_by_sentence_and_keep_timing():
     cues = quiz._split_cue(10.0, 6.0, "ひとつめです。ふたつめの文は長めです。")
     assert [c[2] for c in cues] == ["ひとつめです。", "ふたつめの文は長めです。"]
     assert cues[0][0] == 10.0 and abs(cues[-1][1] - 16.0) < 1e-6 and cues[0][1] == cues[1][0]
+
+
+def test_nothing_is_made_before_the_start_date(cfg, tmp_path, monkeypatch):
+    from ytecon.pipeline import Pipeline
+    from ytecon.state import Store
+    pipe = Pipeline(cfg, store=Store(tmp_path / "s.sqlite3"))
+    called = []
+    monkeypatch.setattr("ytecon.topics.select_topics", lambda *a, **k: called.append(1) or [])
+    monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: dt.date(2026, 9, 28))
+    assert pipe.run_daily(count=1, upload=True)[0]["skipped"] and not called
+    monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: dt.date(2026, 9, 29))
+    assert pipe.run_daily(count=1, upload=True) == [] and called
