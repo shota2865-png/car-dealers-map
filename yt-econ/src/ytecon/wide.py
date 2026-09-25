@@ -189,7 +189,7 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
             text = str(item.get("text") if isinstance(item, dict) else item)
             bad = bool(item.get("bad", True)) if isinstance(item, dict) else True
             x0 = M + i * (sw + gap)
-            color = "#FDE8E6" if bad else th.blue_light
+            color = th.bad_fill if bad else th.blue_light
             outline = th.red if bad else th.blue
             tcolor = th.red if bad else th.blue
 

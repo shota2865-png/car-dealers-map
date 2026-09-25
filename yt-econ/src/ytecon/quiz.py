@@ -182,6 +182,8 @@ class Theme:
     yellow: str = "#FFE97A"
     green: str = "#197A4B"
     red: str = "#EC0000"
+    on_accent: str = "#FFFFFF"   # 青の面の上の文字（A/B のタブ・ボタン）
+    bad_fill: str = "#FDE8E6"    # 「よくないもの」の升の面
     brand: str = ""
     safe_top: int = 300          # Shorts の UI に隠れない縦の範囲
     safe_bottom: int = 1560
@@ -201,6 +203,7 @@ def theme(cfg: Config) -> Theme:
         muted=pal.get("muted", "#949497"), line=pal.get("outline", "#D8D8DB"), surface=pal.get("surface", "#F1F1F4"),
         blue=pal.get("accent", "#0017C1"), blue_light=pal.get("surface_high", "#E8F1FE"), yellow=pal.get("accent2", "#FFE97A"),
         green=pal.get("positive", "#197A4B"), red=pal.get("negative", "#EC0000"),
+        on_accent=pal.get("on_accent", "#FFFFFF"), bad_fill=pal.get("negative_surface", "#FDE8E6"),
         brand=str(cfg.get("channel.name", "") or ""),
     )
 
@@ -434,7 +437,7 @@ class Parts:
         x0 = th.M if x0 is None else x0
         x1 = th.W - th.M if x1 is None else x1
         d.rounded_rectangle([x0, y, x0 + 96, y + tab_h + 12], radius=8, fill=th.blue if not dim else th.muted)
-        self.text_mm(d, x0 + 48, y + tab_h / 2 + 2, key, self.f(34), "#FFFFFF")
+        self.text_mm(d, x0 + 48, y + tab_h / 2 + 2, key, self.f(34), th.on_accent)
         by0 = y + tab_h
         d.rounded_rectangle([x0, by0, x1, by0 + h], radius=10,
                             fill=th.blue_light if sel else (th.surface if dim else th.bg),
@@ -608,7 +611,7 @@ def build_scene(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
             tw = d.textlength("本編を見る", font=f)
             x0 = (W - tw) / 2 - 80
             d.rounded_rectangle([x0, cy0 + 360, x0 + tw + 160, cy0 + 520], radius=12, fill=th.blue)
-            P.text_mm(d, W / 2, cy0 + 440, "本編を見る", f, "#FFFFFF")
+            P.text_mm(d, W / 2, cy0 + 440, "本編を見る", f, th.on_accent)
         s.add(0, btn, delay=0.3)
         s.add(1, lambda d, p: P.arrow(d, (W // 2, cy0 + 560), (W // 2, cy0 + 700), p=p), slide=False, delay=0.4)
         s.add(1, lambda d, p: P.caption_under(d, W // 2, cy0 + 730, "下のリンクから", P.f(52), th.text), delay=0.7)

@@ -198,6 +198,78 @@ presets:
     motion:
       fade_ms: 400
       easing: "ease_in_out"
+  dads_night:
+    label: "デジタル庁デザインの夜版・紺（寝る前に見てもまぶしくない。心理学まくら）"
+    colors:
+      bg: "#0F1826"
+      surface: "#18233A"
+      surface_high: "#1C3157"
+      outline: "#2E3D58"
+      text: "#E9EDF4"
+      text_secondary: "#A8B2C6"
+      muted: "#6C788D"
+      accent: "#8FB6FF"
+      accent2: "#5E4C1A"
+      on_accent: "#0F1826"
+      positive: "#6CC593"
+      negative: "#FF8A80"
+      negative_surface: "#3A2026"
+      warning: "#E9A93F"
+    type:
+      display_xl: 150
+      display_l: 118
+      display_m: 96
+      display_s: 84
+      headline_l: 88
+      headline_m: 76
+      title: 62
+      body_l: 50
+      body_m: 44
+      label: 36
+      label_s: 30
+      numeral_xl: 200
+      subtitle: 110
+    radius: {s: 8, m: 8, l: 12}
+    stroke: {card: 2, text_outline: 0}
+    motion:
+      fade_ms: 400
+      easing: "ease_in_out"
+  dads_sumi:
+    label: "デジタル庁デザインの夜版・墨（暖かい黒と琥珀。心理学まくら）"
+    colors:
+      bg: "#151413"
+      surface: "#1F1D1B"
+      surface_high: "#2E2A22"
+      outline: "#3A3530"
+      text: "#EFE9DF"
+      text_secondary: "#B8B0A4"
+      muted: "#7F786F"
+      accent: "#EDBE7A"
+      accent2: "#5A4424"
+      on_accent: "#151413"
+      positive: "#86C79F"
+      negative: "#F29282"
+      negative_surface: "#3A2420"
+      warning: "#E9A93F"
+    type:
+      display_xl: 150
+      display_l: 118
+      display_m: 96
+      display_s: 84
+      headline_l: 88
+      headline_m: 76
+      title: 62
+      body_l: 50
+      body_m: 44
+      label: 36
+      label_s: 30
+      numeral_xl: 200
+      subtitle: 110
+    radius: {s: 8, m: 8, l: 12}
+    stroke: {card: 2, text_outline: 0}
+    motion:
+      fade_ms: 400
+      easing: "ease_in_out"
 
   material3:
     label: "Material Design 3（ダーク baseline）"
