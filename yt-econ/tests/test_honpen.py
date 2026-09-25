@@ -121,6 +121,7 @@ def test_caption_cues_split_by_sentence_and_keep_timing():
 def test_nothing_is_made_before_the_start_date(cfg, tmp_path, monkeypatch):
     from ytecon.pipeline import Pipeline
     from ytecon.state import Store
+    cfg.raw["pipeline"]["start_date"] = "2026-09-29"
     pipe = Pipeline(cfg, store=Store(tmp_path / "s.sqlite3"))
     called = []
     monkeypatch.setattr("ytecon.topics.select_topics", lambda *a, **k: called.append(1) or [])
@@ -128,3 +129,11 @@ def test_nothing_is_made_before_the_start_date(cfg, tmp_path, monkeypatch):
     assert pipe.run_daily(count=1, upload=True)[0]["skipped"] and not called
     monkeypatch.setattr(pipe, "_publish_day", lambda slot_index=0: dt.date(2026, 9, 29))
     assert pipe.run_daily(count=1, upload=True) == [] and called
+
+
+def test_next_title_comes_from_the_schedule(cfg):
+    import yaml
+    q = yaml.safe_load((cfg.root / cfg.get("topics.schedule_file")).read_text(encoding="utf-8"))["queue"]
+    d0 = dt.date.fromisoformat(str(q[0]["date"]))
+    assert honpen.next_title(cfg, d0) == q[1]["title"]
+    assert honpen.next_title(cfg, dt.date(2030, 1, 1)) == ""
