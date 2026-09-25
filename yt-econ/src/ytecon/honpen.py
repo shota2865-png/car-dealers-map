@@ -219,3 +219,87 @@ def write_honpen(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
     data = assemble(cfg, ol, parts)
     log.info("本編の台本: %d 場面 / ナレーション %d 字", len(data["scenes"]), narration_chars(data))
     return data
+
+
+# ----------------------------------------------------------------------
+# 概要欄・Shorts の切り口・自動サムネ
+# ----------------------------------------------------------------------
+def _stamp(sec: float) -> str:
+    sec = int(sec)
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def honpen_metadata(cfg: Config, data: dict[str, Any], chapters: list, topic: dict[str, Any] | None = None):
+    """本編のタイトル・概要欄（チャプター付き）・タグ."""
+    from .metadata import Metadata, _voice_credit
+    ol = data.get("outline") or {}
+    prefix = str(cfg.get("honpen.title_prefix", "【寝ながら聴ける】"))
+    suffix = str(cfg.get("upload.title_suffix", ""))
+    title = f"{prefix}{data.get('title', '')}{suffix}"[:100]
+    times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
+    parts = [str(ol.get("theme") or data.get("title") or ""),
+             "寝る前に、目を閉じたまま聴けるように作っています。画面を見なくても、声だけでわかるようにお話しします。途中で眠ってしまっても大丈夫です。"]
+    # YouTube のチャプターは 0:00 から始まり、3 つ以上・各 10 秒以上で有効になる
+    ch = [(float(t), str(n)) for t, n in chapters if n]
+    if len(ch) >= 3:
+        ch[0] = (0.0, ch[0][1])
+        parts.append("■ もくじ\n" + "\n".join(f"{_stamp(t)} {n}" for t, n in ch))
+    if ol.get("today_one"):
+        parts.append(f"■ 今日のひとつ\n{ol['today_one']}")
+    srcs = [s for s in ((topic or {}).get("sources") or []) if s.get("name")]
+    if srcs:
+        parts.append("■ 参考\n" + "\n".join(f"・{s['name']} {s.get('url', '')}".rstrip() for s in srcs))
+    parts.append(f"{domain.pitch(cfg)}毎日{times[0] if times else '20:00'}に更新しています。")
+    parts.append("■ 音声\n" + _voice_credit(cfg))
+    parts.append("■ ご注意\n" + domain.disclaimer(cfg))
+    tags_h = domain.hashtags(cfg) + [str(t) for t in (cfg.get("honpen.extra_hashtags", ["#睡眠用", "#聞き流し"]) or [])]
+    parts.append(" ".join(tags_h))
+    tags = [t.lstrip("#") for t in tags_h] + ["寝る前", "睡眠用", "聞き流し", "作業用"] + [str(cfg.get("channel.name", ""))]
+    return Metadata(title=title, description="\n\n".join(p for p in parts if p)[:5000], tags=list(dict.fromkeys(t for t in tags if t))[:15],
+                    category_id=str(cfg.get("upload.category_id", "27")), language=str(cfg.get("upload.language", "ja")))
+
+
+def short_angles(data: dict[str, Any], n: int = 3) -> list[tuple[str, str]]:
+    """本編の章から Shorts の（テーマ, 切り口）を n 個。章が 5 つなら 1・3・5 章のように散らす."""
+    ol = data.get("outline") or {}
+    parts = ol.get("parts") or []
+    if not parts:
+        return [(str(data.get("title") or ""), "")] * n
+    idx = sorted({round(i * (len(parts) - 1) / max(1, n - 1)) for i in range(n)}) if n > 1 else [0]
+    out = []
+    for i in idx[:n]:
+        p = parts[i]
+        qz = p.get("quiz") or {}
+        opts = qz.get("options") or []
+        angle = (f"{p.get('heading', '')}。状況: {qz.get('lead', '')}。"
+                 + (f"A: {opts[0]} / B: {opts[1]}。" if len(opts) >= 2 else "")
+                 + "要点: " + " ".join((p.get("points") or [])[:4]))
+        out.append((str(p.get("heading") or data.get("title") or ""), angle))
+    return out
+
+
+def thumbnail(cfg: Config, data: dict[str, Any], out) -> Any:
+    """手で作ったサムネが無い日の自動サムネ（白地・黒の太字・黄マーカー・青のチャンネル名）."""
+    from pathlib import Path
+    from PIL import Image, ImageDraw
+    from . import quiz as quiz_mod
+    th = quiz_mod.theme(cfg)
+    W, H, M = 1280, 720, 72
+    img = Image.new("RGB", (W, H), th.bg)
+    d = ImageDraw.Draw(img)
+    P = quiz_mod.Parts(cfg, th)
+    name = str(cfg.get("channel.name", ""))
+    d.text((M, 56), name, font=quiz_mod.font(cfg, 40, 700), fill=th.blue)
+    d.rectangle([M, 116, W - M, 120], fill=th.line)
+    title = str(data.get("title") or "")
+    f, lines = P.fit(d, title, W - M * 2, 96, 700, min_size=56)
+    y = 220 if len(lines) > 1 else 280
+    for ln in lines:
+        P.marker_text(d, M, y, ln, f, p=1.0)
+        y += int(f.size * 1.4)
+    d.text((M, H - 110), "寝ながら聴ける・声だけでわかる", font=quiz_mod.font(cfg, 40, 500), fill=th.sec)
+    out = Path(out)
+    img.save(out, quality=92)
+    return out

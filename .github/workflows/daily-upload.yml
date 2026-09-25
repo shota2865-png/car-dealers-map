@@ -244,6 +244,8 @@ jobs:
             yt-econ/${{ matrix.workdir }}/**/video.mp4
             yt-econ/${{ matrix.workdir }}/**/script.json
             yt-econ/${{ matrix.workdir }}/**/story.json
+            yt-econ/${{ matrix.workdir }}/**/honpen.json
+            yt-econ/${{ matrix.workdir }}/**/quiz.json
             yt-econ/${{ matrix.workdir }}/**/metadata.json
             yt-econ/${{ matrix.workdir }}/**/subtitles.srt
             yt-econ/${{ matrix.workdir }}/**/thumbnail.jpg

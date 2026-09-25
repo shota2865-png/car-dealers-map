@@ -673,6 +673,24 @@ class Built:
     seconds: float
     frames: int
     quiz: dict[str, Any] = field(default_factory=dict)
+    cues: list[tuple[float, float, str]] = field(default_factory=list)       # 字幕ファイル（CC）用: (開始秒, 終了秒, 文)
+    chapters: list[tuple[float, str]] = field(default_factory=list)          # 概要欄のチャプター用: (開始秒, 見出し)
+
+
+def _srt_time(t: float) -> str:
+    ms = int(round(t * 1000))
+    h, ms = divmod(ms, 3_600_000)
+    m, ms = divmod(ms, 60_000)
+    sec, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+
+
+def write_srt(cues: list[tuple[float, float, str]], path: Path) -> Path:
+    lines = []
+    for i, (a, b, text) in enumerate(cues, 1):
+        lines += [str(i), f"{_srt_time(a)} --> {_srt_time(b)}", text, ""]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, wide: bool = False) -> Built:
@@ -746,6 +764,8 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
         subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", f"{sec:.3f}", str(p)], check=True)
         wavs.append((p, 0.0))
 
+    cues: list[tuple[float, float, str]] = []
+    chapters: list[tuple[float, str]] = []
     scenes = quiz["scenes"]
     q_scene = None                      # カウントダウンは直前の question の画面で数える
     shared_dy = None
@@ -775,6 +795,12 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             continue
         scene = builder(cfg, th, sc)
         nar = sc.get("narration") or (cta_narration(cfg) if kind == "cta" else [])
+        if kind == "opening":
+            chapters.append((total, "はじめに"))
+        elif kind == "chapter":
+            chapters.append((total, f"{sc.get('label', '')} {sc.get('heading', '')}".strip()))
+        elif kind == "steps" and "まとめ" in str(sc.get("heading") or ""):
+            chapters.append((total, "今日のまとめ"))
         if kind == "question":
             cd = builder(cfg, th, dict(sc, kind="countdown"))
             shared_dy = _content_offset(cd, th, with_extra=True)
@@ -792,6 +818,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 p = fr / f"a{len(wavs):03d}.wav"
                 p.write_bytes(data)
                 voice = _wav_seconds(data)
+                cues.append((total, total + voice, text))
             else:
                 p = None
                 voice = 1.2
@@ -847,10 +874,12 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             "-c:a", "aac", "-b:a", "160k", "-t", f"{total:.2f}", "-movflags", "+faststart", str(dst)]
     subprocess.run(cmd, check=True)
     (outdir / "quiz.json").write_text(json.dumps(quiz, ensure_ascii=False, indent=1), encoding="utf-8")
+    write_srt(cues, outdir / "subtitles.srt")
+    (outdir / "chapters.json").write_text(json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
     for old in fr.glob("*.png"):                     # コマ画像は大きいので消す（frames.txt と音声は残す）
         old.unlink()
     log.info("参加型テスト Shorts: %s (%.1f 秒, %d コマ)", dst, total, n)
-    return Built(video=dst, seconds=total, frames=n, quiz=quiz)
+    return Built(video=dst, seconds=total, frames=n, quiz=quiz, cues=cues, chapters=chapters)
 
 
 # ----------------------------------------------------------------------
