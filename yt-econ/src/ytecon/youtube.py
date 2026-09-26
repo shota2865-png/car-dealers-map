@@ -239,6 +239,26 @@ def set_thumbnail(cfg: Config, store: Store, video_id: str,
         log.warning("サムネイル設定に失敗（チャンネルの確認が未完了かもしれません）: %s", exc)
 
 
+def post_comment(cfg: Config, store: Store, video_id: str, text: str) -> str | None:
+    """動画にコメントを 1 件投稿し、コメント ID を返す（Shorts に本編への導線を置く）.
+
+    公開前（予約中・非公開）の動画にはコメントできないので、失敗したら None（次の実行でもう一度）。
+    youtube.force-ssl の許可が要る。固定表示は API ではできない。
+    """
+    from googleapiclient.errors import HttpError
+    guard = QuotaGuard(store)
+    guard.check(COST_WRITE)
+    try:
+        res = build_service(cfg).commentThreads().insert(part="snippet", body={
+            "snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": text}}},
+        }).execute()
+        guard.spend(COST_WRITE)
+        return str(res.get("id") or "") or None
+    except HttpError as exc:
+        log.warning("コメントを投稿できませんでした（%s）: %s", video_id, str(exc)[:200])
+        return None
+
+
 def upload_caption(cfg: Config, store: Store, video_id: str,
                    srt_path: str | Path) -> None:
     from googleapiclient.errors import HttpError

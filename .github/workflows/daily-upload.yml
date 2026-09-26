@@ -40,6 +40,10 @@ on:
         description: "YouTube に投稿するか（false にすると mp4 を成果物として残すだけ）"
         type: boolean
         default: true
+      report:
+        description: "月曜でなくても週次レポートを作る"
+        type: boolean
+        default: false
 
 env:
   PYTHONPATH: src
@@ -202,6 +206,16 @@ jobs:
           python -m ytecon goal | tee goal-report.txt || true
           { echo "## 目標の進捗（${{ matrix.channel }}）"; echo '```'; cat goal-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
+      # 月曜だけ、先週の振り返り（再生・視聴率・30 秒の残り・Shorts からの流入・次の打ち手）。成果物の goal/reports に残る
+      - name: 週次レポート（月曜）
+        if: steps.gate.outputs.skip != 'true' && github.event.inputs.upload != 'false'
+        timeout-minutes: 15
+        run: |
+          if [ "$(TZ=Asia/Tokyo date +%u)" = "1" ] || [ "${{ github.event.inputs.report }}" = "true" ]; then
+            python -m ytecon report | tee weekly-report.txt || true
+            { echo "## 週次レポート（${{ matrix.channel }}）"; cat weekly-report.txt; } >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+
       # --- 生成して投稿（本編 → Shorts 3 本） ----------------------------------
       - name: 生成して投稿
         if: steps.gate.outputs.skip != 'true'
@@ -249,3 +263,4 @@ jobs:
             yt-econ/${{ matrix.workdir }}/**/metadata.json
             yt-econ/${{ matrix.workdir }}/**/subtitles.srt
             yt-econ/${{ matrix.workdir }}/**/thumbnail.jpg
+            yt-econ/${{ matrix.workdir }}/goal/reports/*

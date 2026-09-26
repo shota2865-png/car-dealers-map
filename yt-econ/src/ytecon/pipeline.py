@@ -248,7 +248,8 @@ class Pipeline:
         slug = f"{parent_slug}-short{n}"
         if not self.store.get_video(slug):
             self.store.create_video(slug, parent.topic_id if parent else None, made["meta"].title)
-        self.store.update_video(slug, stage={"kind": "short", "parent": parent_slug, "hook": made["window"].hook})
+        self.store.update_video(slug, stage={"kind": "short", "parent": parent_slug, "hook": made["window"].hook,
+                                             "parent_url": (parent.stage or {}).get("url", "") if parent else ""})
         times = self.cfg.get("shorts.publish_times_jst") or None
         # 本編の公開より後の枠に入れる（先に出すと、概要欄の本編リンクが「非公開」になる）
         after = None
@@ -419,7 +420,7 @@ class Pipeline:
                     continue
                 if not srec:
                     self.store.create_video(sslug, parent.topic_id if parent else None, meta.title)
-                self.store.update_video(sslug, stage={"kind": "short", "parent": parent_slug})
+                self.store.update_video(sslug, stage={"kind": "short", "parent": parent_slug, "parent_url": parent_url})
                 res = youtube.publish(self.cfg, self.store, qdir / "video.mp4", meta, thumbnail=None,
                                       srt=None, slot_index=k, publish_times=times, playlist=False, after=after)
                 self.store.update_video(sslug, status="uploaded", youtube_id=res["video_id"],
@@ -446,7 +447,50 @@ class Pipeline:
                 out.append(r)
         return out
 
+    # --- Shorts に本編への導線のコメント -----------------------------------
+    def short_comment_text(self, parent_url: str, minutes: float | None = None) -> str:
+        tmpl = str(self.cfg.get("shorts.comment", "") or "▶ 本編{length}はこちら\n{url}")
+        length = f"（{round(minutes)}分）" if minutes else ""
+        return tmpl.format(url=parent_url, length=length)
+
+    def post_pending_comments(self, now: dt.datetime | None = None) -> int:
+        """公開済みになった Shorts のうち、まだ本編リンクのコメントが無いものにコメントする.
+
+        予約中の動画にはコメントできないので、毎日の実行のはじめと終わりに拾い直す。
+        """
+        if not self.cfg.get("shorts.comment_link", True):
+            return 0
+        now = now or dt.datetime.now(dt.timezone.utc)
+        done = 0
+        for r in self.store.videos_by_status("uploaded"):
+            st = r.stage or {}
+            if st.get("kind") != "short" or st.get("comment_id") or not r.youtube_id:
+                continue
+            if r.publish_at:
+                try:
+                    if dt.datetime.fromisoformat(r.publish_at.replace("Z", "+00:00")) > now:
+                        continue
+                except ValueError:
+                    pass
+            parent = self.store.get_video(st.get("parent", "")) if st.get("parent") else None
+            url = st.get("parent_url") or ((parent.stage or {}).get("url") if parent else "")
+            if not url:
+                continue
+            minutes = ((parent.stage or {}).get("duration") or 0) / 60 if parent else None
+            cid = youtube.post_comment(self.cfg, self.store, r.youtube_id, self.short_comment_text(url, minutes or None))
+            if cid:
+                self.store.update_video(r.slug, stage={"comment_id": cid})
+                done += 1
+        if done:
+            log.info("Shorts %d 本に本編へのコメントを付けました", done)
+        return done
+
     def run_daily(self, count: int | None = None, upload: bool = True, force: bool = False) -> list[dict[str, Any]]:
+        if upload:
+            try:
+                self.post_pending_comments()
+            except Exception as exc:                 # 導線のコメントで本編づくりを止めない
+                log.warning("コメントの投稿でエラー: %s", exc)
         count = count or int(self.cfg.get("pipeline.videos_per_day", 2))
         # 開始日より前は作らない（鍵を先に登録しておいても、初回の日までは投稿しない）
         start = str(self.cfg.get("pipeline.start_date", "") or "").strip()

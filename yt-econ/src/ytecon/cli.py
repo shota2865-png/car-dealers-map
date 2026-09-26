@@ -514,6 +514,17 @@ def cmd_quiz(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """週 1 回の振り返り（YouTube Analytics）。<workdir>/goal/reports/ にも残す."""
+    from .config import load_config
+    from . import report as report_mod
+    cfg = load_config(args.config, channel=args.channel)
+    text, path = report_mod.weekly(cfg, days=args.days, with_advice=not args.no_advice)
+    print(text)
+    print(f"（保存先: {path}）")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ytecon", description="経済解説YouTubeチャンネルの自動運用")
@@ -607,6 +618,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("privacy", choices=["public", "private", "unlisted"])
     p.add_argument("--publish-at", help="この日時に公開予約（JST、例 2026-09-23 19:00）")
     p.set_defaults(func=cmd_visibility)
+
+    p = sub.add_parser("report", help="週 1 回の振り返り（再生・視聴率・30 秒の残り・Shorts からの流入・次の打ち手）")
+    p.add_argument("--days", type=int, default=7)
+    p.add_argument("--no-advice", action="store_true", help="LLM の打ち手を付けない")
+    p.set_defaults(func=cmd_report)
 
     p = sub.add_parser("goal", help="目標（config/goals.yaml）への進捗と打ち手")
     p.add_argument("--offline", action="store_true", help="API を叩かず、目標の分解だけ表示")

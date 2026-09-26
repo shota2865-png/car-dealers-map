@@ -137,3 +137,35 @@ def test_next_title_comes_from_the_schedule(cfg):
     d0 = dt.date.fromisoformat(str(q[0]["date"]))
     assert honpen.next_title(cfg, d0) == q[1]["title"]
     assert honpen.next_title(cfg, dt.date(2030, 1, 1)) == ""
+
+
+def test_link_comments_go_only_on_public_shorts_once(cfg, tmp_path, monkeypatch):
+    from ytecon.pipeline import Pipeline
+    from ytecon.state import Store
+    store = Store(tmp_path / "s.sqlite3")
+    pipe = Pipeline(cfg, store=store)
+    store.create_video("ep", None, "本編")
+    store.update_video("ep", status="uploaded", youtube_id="L1", publish_at="2026-09-26T11:00:00+00:00",
+                       stage={"kind": "long", "url": "https://youtu.be/L1", "duration": 1020})
+    for i, at in enumerate(["2026-09-26T12:30:00+00:00", "2026-09-27T12:30:00+00:00"]):
+        store.create_video(f"ep-short{i}", None, "s")
+        store.update_video(f"ep-short{i}", status="uploaded", youtube_id=f"S{i}", publish_at=at, stage={"kind": "short", "parent": "ep"})
+    posted = []
+    monkeypatch.setattr("ytecon.youtube.post_comment", lambda c, st, vid, text: posted.append((vid, text)) or f"c-{vid}")
+    now = dt.datetime(2026, 9, 26, 13, 0, tzinfo=dt.timezone.utc)
+    assert pipe.post_pending_comments(now) == 1
+    assert posted == [("S0", "▶ 本編（17分）はこちら\nhttps://youtu.be/L1")]
+    assert pipe.post_pending_comments(now) == 0                     # 二度付けない
+    assert pipe.post_pending_comments(now + dt.timedelta(days=2)) == 1 and posted[-1][0] == "S1"
+
+
+def test_weekly_report_renders_tables():
+    from ytecon import report
+    data = {"channel": "現代人のための心理学", "start": "2026-09-19", "end": "2026-09-25",
+            "now": {"views": 4468, "minutes": 776, "subs": 1}, "prev": {"views": 1000, "minutes": 100, "subs": 0},
+            "sources": [["SHORTS", 4304], ["YT_SEARCH", 70]],
+            "long": [{"title": "本編", "views": 17, "avg_seconds": 176, "avg_percent": 18.4, "kept_30s": 0.53, "from_shorts": 2}],
+            "short": [{"title": "S", "views": 1113, "avg_percent": 34.5}]}
+    text = report.render(data)
+    assert "+347%" in text and "Shorts のフィード: 4,304（98%）" in text and "2分56秒" in text and "53%" in text
+    assert report._iso_seconds("PT17M1S") == 1021 and report._iso_seconds("PT45S") == 45
