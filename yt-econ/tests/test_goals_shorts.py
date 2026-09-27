@@ -19,19 +19,61 @@ def cfg():
     return copy.deepcopy(load_config())
 
 
+_GOAL_YAML = """
+goal: {name: "30日で50万再生", start: 2026-09-22, days: 30, views: 500000, mix: {shorts: 0.85, long: 0.15}, per_day: {long: 1, shorts: 3}}
+ypp: {subscribers: 1000, watch_hours_12m: 4000, shorts_views_90d: 10000000}
+gates:
+  - {day: 7,  views: 20000,  subscribers: 100}
+  - {day: 14, views: 80000,  subscribers: 300}
+  - {day: 21, views: 220000, subscribers: 600}
+  - {day: 30, views: 500000, subscribers: 1000}
+rules:
+  long: {avg_view_pct_min: 0.30, views_7d_min: 300}
+  shorts: {avg_view_pct_min: 0.75, views_3d_min: 500}
+"""
+
+
 @pytest.fixture
-def goal(cfg):
-    return goals.load_goal(cfg)
+def goal(cfg, tmp_path):
+    """計算のテストは、設定ファイルの目標（運用で変わる）ではなく固定の目標で行う."""
+    f = tmp_path / "goals.yaml"
+    f.write_text(_GOAL_YAML, encoding="utf-8")
+    return goals.load_goal(cfg, f)
 
 
 # ----------------------------------------------------------------------
 # 目標
 # ----------------------------------------------------------------------
-def test_goal_file_is_consistent(goal):
-    assert goal.views == 500_000 and goal.days == 30
-    assert goal.gates[-1]["views"] == goal.views          # 最後の関門 = 目標
-    assert goal.gates == sorted(goal.gates, key=lambda g: g["day"])
-    assert abs(sum(goal.mix.values()) - 1.0) < 1e-6
+@pytest.mark.parametrize("channel", ["", "psych"])
+def test_goal_files_are_consistent(channel):
+    import datetime as _dt
+    g = goals.load_goal(load_config(channel=channel) if channel else load_config())
+    assert g.end == _dt.date(2026, 10, 31)                 # 10 月末が期限
+    assert g.targets == {"subscribers": 100, "long_watch_hours": 500, "shorts_avg_views": 10000}
+    assert g.gates[-1]["day"] == g.days and g.gates[-1]["views"] == g.views
+    assert g.gates[-1]["subscribers"] == g.targets["subscribers"] and g.gates[-1]["long_hours"] == g.targets["long_watch_hours"]
+    assert g.gates == sorted(g.gates, key=lambda x: x["day"])
+    assert abs(sum(g.mix.values()) - 1.0) < 1e-6
+
+
+def test_targets_status_and_lines(goal):
+    goal.targets = {"subscribers": 100, "long_watch_hours": 500, "shorts_avg_views": 10000}
+    vids = [{"id": "l1", "kind": "long", "views": 300, "watch_minutes": 900.0, "age_days": 5},
+            {"id": "l2", "kind": "long", "views": 100, "watch_minutes": 300.0, "age_days": 2}]
+    vids += [{"id": f"s{i}", "kind": "short", "views": 500 * (i + 1), "age_days": i} for i in range(12)]
+    p = goals.Progress(date=goal.start + dt.timedelta(days=14), subscribers=60, views=50_000, videos=vids)
+    rows = {r["key"]: r for r in goals.pace(goal, p)["targets"]}
+    assert rows["subscribers"]["status"] == "on_track"            # 15/30 日で 60 人（目安 50）
+    assert rows["long_watch_hours"]["now"] == 20.0 and rows["long_watch_hours"]["status"] == "behind"
+    # 公開 3 日未満の Shorts は平均に入れない。3〜11 日目の 9 本（2,000〜6,000）の平均
+    assert rows["shorts_avg_views"]["now"] == 4000 and rows["shorts_avg_views"]["n"] == 9
+    text = "\n".join(goals.targets_lines(list(rows.values())))
+    assert "登録者 60 / 100 人" in text and "本編の総再生時間 20 / 500 時間" in text and "直近 9 本" in text
+    acts = "\n".join(goals.recommend(goal, p, goals.pace(goal, p)))
+    assert "本編の総再生時間" in acts and "Shorts の平均" in acts
+    # 公開統計（Data API）では本編の再生時間が取れない → 数字なし
+    p2 = goals.Progress(date=p.date, subscribers=60, videos=[{"id": "l1", "kind": "long", "views": 3, "age_days": 5}])
+    assert {r["key"]: r for r in goals.pace(goal, p2)["targets"]}["long_watch_hours"]["status"] == "unknown"
 
 
 def test_pace_before_start_and_required_per_day(goal):
@@ -243,7 +285,14 @@ def _story() -> shorts.Story:
     ])
 
 
+def test_story_ends_without_call_when_end_cta_is_off(cfg):
+    assert cfg.get("shorts.end_cta") is False                  # 既定の運用: 誘導なし（ループで終える）
+    st = shorts.with_cta(cfg, _story())
+    assert [b.role for b in st.beats] == ["起", "承", "転", "結"]
+
+
 def test_story_always_ends_with_the_call_to_the_long_video(cfg):
+    cfg.raw["shorts"]["end_cta"] = True
     st = shorts.with_cta(cfg, _story())
     assert [b.role for b in st.beats] == ["起", "承", "転", "結", "誘導"]
     assert "本編" in st.beats[-1].lines[0]
@@ -253,6 +302,7 @@ def test_story_always_ends_with_the_call_to_the_long_video(cfg):
 
 
 def test_story_becomes_a_script_the_tts_and_subtitles_understand(cfg):
+    cfg.raw["shorts"]["end_cta"] = True
     st = shorts.with_cta(cfg, _story())
     mini = shorts.story_script(cfg, st, _script())
     blocks = dict(mini.narration_blocks)
@@ -362,8 +412,15 @@ def test_manual_final_metadata_and_thumbnail_are_found_by_name(cfg, tmp_path, mo
 def test_title_format_wraps_hook_and_channel_suffix(cfg):
     from ytecon.metadata import format_title, MAX_TITLE
     t = format_title(cfg, "なぜ給料が上がっても生活は楽にならないのか", "給料どこいった")
-    assert t == "【給料どこいった】なぜ給料が上がっても生活は楽にならないのか【ずんだもん&めたん解説】"
+    assert t == "なぜ給料が上がっても生活は楽にならないのか【給料どこいった】【ずんだもん&めたん解説】"   # 頭は本題（検索される語）
+    cfg.raw["upload"]["title_hook_position"] = "front"
+    assert format_title(cfg, "本題", "引き").startswith("【引き】本題")
+    cfg.raw["upload"]["title_hook_position"] = "back"
     assert format_title(cfg, "【本題】", "") == "本題【ずんだもん&めたん解説】"     # 引きが無ければ前は付けない
+    from ytecon.metadata import keyword_first
+    assert keyword_first("給料が上がっても楽にならない理由", "手取り") == "手取り｜給料が上がっても楽にならない理由"
+    assert keyword_first("手取りが増えない理由", "手取り") == "手取りが増えない理由"          # 既に頭にあれば触らない
+    assert keyword_first("タイトル", "") == "タイトル"
     long = format_title(cfg, "あ" * 120, "数字の落差")
     assert len(long) <= MAX_TITLE and long.endswith("【ずんだもん&めたん解説】") and "…" in long
 
