@@ -447,49 +447,22 @@ class Pipeline:
                 out.append(r)
         return out
 
-    # --- Shorts に本編への導線のコメント -----------------------------------
-    def short_comment_text(self, parent_url: str, minutes: float | None = None) -> str:
-        tmpl = str(self.cfg.get("shorts.comment", "") or "▶ 本編{length}はこちら\n{url}")
-        length = f"（{round(minutes)}分）" if minutes else ""
-        return tmpl.format(url=parent_url, length=length)
-
+    # --- 公開した動画に、要約を問いかけの形で 2 行のコメント ---------------------
     def post_pending_comments(self, now: dt.datetime | None = None) -> int:
-        """公開済みになった Shorts のうち、まだ本編リンクのコメントが無いものにコメントする.
+        """公開済みで、まだ要約のコメントが無い動画（本編・Shorts）に付ける（comments.py）.
 
-        予約中の動画にはコメントできないので、毎日の実行のはじめと終わりに拾い直す。
+        予約中の動画にはコメントできないので、毎日の実行のはじめに拾い直す。以前のリンクのコメントは消す。
         """
-        if not self.cfg.get("shorts.comment_link", True):
+        if not self.cfg.get("comments.summary", True):
             return 0
-        now = now or dt.datetime.now(dt.timezone.utc)
-        done = 0
-        for r in self.store.videos_by_status("uploaded"):
-            st = r.stage or {}
-            if st.get("kind") != "short" or st.get("comment_id") or not r.youtube_id:
-                continue
-            if r.publish_at:
-                try:
-                    if dt.datetime.fromisoformat(r.publish_at.replace("Z", "+00:00")) > now:
-                        continue
-                except ValueError:
-                    pass
-            parent = self.store.get_video(st.get("parent", "")) if st.get("parent") else None
-            url = st.get("parent_url") or ((parent.stage or {}).get("url") if parent else "")
-            if not url:
-                continue
-            minutes = ((parent.stage or {}).get("duration") or 0) / 60 if parent else None
-            cid = youtube.post_comment(self.cfg, self.store, r.youtube_id, self.short_comment_text(url, minutes or None))
-            if cid:
-                self.store.update_video(r.slug, stage={"comment_id": cid})
-                done += 1
-        if done:
-            log.info("Shorts %d 本に本編へのコメントを付けました", done)
-        return done
+        from . import comments
+        return comments.post_summaries(self.cfg, self.store, self.store.videos_by_status("uploaded"), now=now)
 
     def run_daily(self, count: int | None = None, upload: bool = True, force: bool = False) -> list[dict[str, Any]]:
         if upload:
             try:
                 self.post_pending_comments()
-            except Exception as exc:                 # 導線のコメントで本編づくりを止めない
+            except Exception as exc:                 # コメントで本編づくりを止めない
                 log.warning("コメントの投稿でエラー: %s", exc)
         count = count or int(self.cfg.get("pipeline.videos_per_day", 2))
         # 開始日より前は作らない（鍵を先に登録しておいても、初回の日までは投稿しない）

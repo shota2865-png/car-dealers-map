@@ -139,23 +139,38 @@ def test_next_title_comes_from_the_schedule(cfg):
     assert honpen.next_title(cfg, dt.date(2030, 1, 1)) == ""
 
 
-def test_link_comments_go_only_on_public_shorts_once(cfg, tmp_path, monkeypatch):
+def test_summary_comments_go_on_public_videos_once_without_links(cfg, tmp_path, monkeypatch):
+    from ytecon import comments
     from ytecon.pipeline import Pipeline
     from ytecon.state import Store
     store = Store(tmp_path / "s.sqlite3")
     pipe = Pipeline(cfg, store=store)
-    store.create_video("ep", None, "本編")
-    store.update_video("ep", status="uploaded", youtube_id="L1", publish_at="2026-09-26T11:00:00+00:00",
-                       stage={"kind": "long", "url": "https://youtu.be/L1", "duration": 1020})
-    for i, at in enumerate(["2026-09-26T12:30:00+00:00", "2026-09-27T12:30:00+00:00"]):
-        store.create_video(f"ep-short{i}", None, "s")
-        store.update_video(f"ep-short{i}", status="uploaded", youtube_id=f"S{i}", publish_at=at, stage={"kind": "short", "parent": "ep"})
-    posted = []
+    rows = [("ep", "L1", "2026-09-26T11:00:00+00:00", "long"), ("ep-s0", "S0", "2026-09-26T12:30:00+00:00", "short"),
+            ("ep-s1", "S1", "2026-09-27T12:30:00+00:00", "short")]
+    for slug, vid, at, kind in rows:
+        store.create_video(slug, None, slug)
+        store.update_video(slug, status="uploaded", youtube_id=vid, publish_at=at, stage={"kind": kind})
+
+    class FakeList:
+        def __init__(self, ids): self.ids = ids
+        def execute(self): return {"items": [{"id": i, "snippet": {"title": f"t{i}", "description": "d"}, "status": {"privacyStatus": "public"}} for i in self.ids]}
+
+    class FakeYT:
+        def videos(self): return self
+        def list(self, part, id): return FakeList(id.split(","))
+    monkeypatch.setattr("ytecon.youtube.build_service", lambda c: FakeYT())
+    monkeypatch.setattr(comments, "_own_channel_id", lambda c: "ME")
+    existing = {"S0": [{"id": "old", "text": "▶ 本編（17分）はこちら\nhttps://youtu.be/L1"}]}
+    monkeypatch.setattr(comments, "own_comments", lambda c, vid, ch: existing.get(vid, []))
+    deleted, posted = [], []
+    monkeypatch.setattr(comments, "delete_comment", lambda c, cid: deleted.append(cid) or True)
+    monkeypatch.setattr(comments, "summary_text", lambda c, t, d="": f"{t}って、なぜだと思いますか？\nあなたはどうですか？")
     monkeypatch.setattr("ytecon.youtube.post_comment", lambda c, st, vid, text: posted.append((vid, text)) or f"c-{vid}")
     now = dt.datetime(2026, 9, 26, 13, 0, tzinfo=dt.timezone.utc)
-    assert pipe.post_pending_comments(now) == 1
-    assert posted == [("S0", "▶ 本編（17分）はこちら\nhttps://youtu.be/L1")]
-    assert pipe.post_pending_comments(now) == 0                     # 二度付けない
+    assert pipe.post_pending_comments(now) == 2                       # 本編と、公開済みの Shorts 1 本
+    assert deleted == ["old"]                                         # リンクのコメントは消す
+    assert {v for v, _ in posted} == {"L1", "S0"} and all("http" not in t for _, t in posted)
+    assert pipe.post_pending_comments(now) == 0                       # 二度付けない
     assert pipe.post_pending_comments(now + dt.timedelta(days=2)) == 1 and posted[-1][0] == "S1"
 
 
