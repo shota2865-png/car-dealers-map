@@ -1,19 +1,27 @@
 # ============================================================
 #  目標 — 数字で追うための設定（ytecon goal が読む）
 # ============================================================
-# 目標は「30 日で 50 万再生」。収益化（YPP）に必要な数字も並べて追う。
+# 目標は 10 月末（2026-10-31）までに「登録者 100 人・本編の総再生時間 500 時間・Shorts の平均 1 万再生」。
+# （9/27 に決めた。「今月中」は 9 月が残り 3 日だったので、10 月末までの約 1 か月として置いている）
 # 進捗は YouTube Analytics（無ければ Data API の公開統計）から取り、
-# 必要ペース・予測・打ち手を出す。数字は毎回 output/goal/ に残す。
+# 必要ペース・予測・打ち手を出す。数字は毎回 output/goal/ に残す。週次レポート（ytecon report）にも出る。
 
 goal:
-  name: "30日で50万再生"
+  name: "10月末: 登録者100・本編500時間・Shorts平均1万"
   start: 2026-09-22          # 初回投稿日（火曜の本編を 19:00 に出す日）
-  days: 30
-  views: 500000
+  days: 40                   # 2026-10-31 まで
+  # 再生の合計は目安（Shorts が平均 1 万に届くまでの立ち上がりを見込んだ数字）
+  views: 300000
   # 再生の内訳の想定。新規チャンネルは Shorts が発見面のほぼ全部なので、打ち手の計算に使う
   mix: {shorts: 0.85, long: 0.15}
   # 1 日の本数（pipeline.videos_per_day と shorts.per_video を写しておく）
   per_day: {long: 1, shorts: 3}
+
+# 期限（上の start + days）までに届かせたい数字
+targets:
+  subscribers: 100
+  long_watch_hours: 500        # 本編（長尺）だけの総再生時間。Shorts の再生時間は入れない
+  shorts_avg_views: 10000      # 公開 3 日以上たった Shorts の、新しいほうから 9 本の平均
 
 # YouTube パートナープログラムの条件（2025 年時点の一般的な要件。変わったらここを直す）
 ypp:
@@ -21,12 +29,12 @@ ypp:
   watch_hours_12m: 4000        # 公開長尺の総再生時間（Shorts の再生時間は含まれない）
   shorts_views_90d: 10000000   # 上の代わりに、直近 90 日の Shorts 再生 1,000 万でも可
 
-# 週ごとの関門。ここを下回ったら「同じことを続けない」（打ち手は docs/目標_月50万再生.md）
+# 週ごとの関門。ここを下回ったら「同じことを続けない」
 gates:
-  - {day: 7,  views: 20000,  subscribers: 100}
-  - {day: 14, views: 80000,  subscribers: 300}
-  - {day: 21, views: 220000, subscribers: 600}
-  - {day: 30, views: 500000, subscribers: 1000}
+  - {day: 14, views: 60000,  subscribers: 25,  long_hours: 50}
+  - {day: 21, views: 110000, subscribers: 45,  long_hours: 120}
+  - {day: 30, views: 190000, subscribers: 70,  long_hours: 260}
+  - {day: 40, views: 300000, subscribers: 100, long_hours: 500}
 
 # 1 本ごとの合否ライン。下回った動画は打ち手の対象になる
 rules:

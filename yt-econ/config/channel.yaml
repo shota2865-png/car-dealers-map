@@ -8,6 +8,8 @@ channel:
   # env_prefix（例 PSY_）を付けると PSY_YOUTUBE_REFRESH_TOKEN などを先に読む（無ければ素の名前に落ちる）
   key: ""
   env_prefix: ""
+  # 概要欄の「チャンネル登録」リンク（?sub_confirmation=1 で押すと登録の確認が出る）に使う
+  id: "UCuOZdUBs68sCzq1g6GS9PIQ"
   name: "おやすみ経済学"          # 寝る前に聴く、お金と就活とAI。めたん先輩とずんだもんの掛け合い
   # --- 分野の言葉。台本・企画・Shorts・概要欄のプロンプトに差し込まれる（空なら経済の既定値。src/ytecon/domain.py） ---
   field: "経済"                   # 「◯◯解説YouTube」の◯◯
@@ -384,6 +386,12 @@ shorts:
   cta:
     - "【ずんだもん】続きは本編で聞くのだ。"
     - "【めたん】本編は毎日19時。下のリンクから飛べるわ。"
+  # 最後の誘導を入れるか。9/28 の週次レポートで Shorts → 本編の流入が 0 だったので、誘導はやめて
+  # 最後の一文を最初の一文にもどす終わり方（ループ）にし、最後まで見られる割合を上げる
+  end_cta: false
+  # story モードの長さ。短いほど最後まで見られる（45〜55 秒 → 30〜40 秒）
+  story_seconds: "30〜40"
+  story_chars: "200〜260 字"
   # Shorts の声は本編より少し速く、間を詰める
   tts_speed: 1.25
   pause_sentence: 0.22

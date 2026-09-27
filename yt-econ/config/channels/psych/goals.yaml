@@ -1,14 +1,18 @@
 # 2 チャンネル目（心理学）の目標。読み方は本体の config/goals.yaml と同じ（ytecon --channel psych goal）
-# 数字は本体の 6 割で置く。2 本目のチャンネルは本体の登録者を連れてこられない前提。
-# 1 週目の実績が出たら gates を実績 × 2 に置き直す。
+# 10 月末（2026-10-31）までに「登録者 100 人・本編の総再生時間 500 時間・Shorts の平均 1 万再生」。本体と同じ数字で追う。
 
 goal:
-  name: "30日で30万再生（心理学）"
+  name: "10月末: 登録者100・本編500時間・Shorts平均1万（心理学）"
   start: 2026-09-25          # 初回投稿日
-  days: 30
-  views: 300000
+  days: 37                   # 2026-10-31 まで
+  views: 250000              # 合計は目安
   mix: {shorts: 0.85, long: 0.15}
   per_day: {long: 1, shorts: 3}
+
+targets:
+  subscribers: 100
+  long_watch_hours: 500
+  shorts_avg_views: 10000
 
 ypp:
   subscribers: 1000
@@ -16,10 +20,10 @@ ypp:
   shorts_views_90d: 10000000
 
 gates:
-  - {day: 7,  views: 12000,  subscribers: 60}
-  - {day: 14, views: 48000,  subscribers: 180}
-  - {day: 21, views: 130000, subscribers: 360}
-  - {day: 30, views: 300000, subscribers: 600}
+  - {day: 11, views: 40000,  subscribers: 20,  long_hours: 40}
+  - {day: 18, views: 90000,  subscribers: 40,  long_hours: 110}
+  - {day: 27, views: 160000, subscribers: 70,  long_hours: 250}
+  - {day: 37, views: 250000, subscribers: 100, long_hours: 500}
 
 rules:
   long:

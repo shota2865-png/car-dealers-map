@@ -263,7 +263,7 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         s.add(2, ans, slide=False, delay=0.35)
 
     elif kind == "opening":
-        # 冒頭のあいさつ（寝ながら聴く人へ）。段階 0 = 大きな一言、1 = 補足、2 = 今日のテーマ
+        # 冒頭のあいさつ。段階 0 = 今日のテーマ、1 = 大きな一言、2 = 補足（何の話かを最初に出す）
         lines = [str(x) for x in (sc.get("lines") or [])][:2]
         theme_t = str(sc.get("theme") or "")
         cy0 = 260
@@ -275,9 +275,9 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
                 tw = d.textlength(ln, font=f)
                 P.marker_text(d, int((W - tw) / 2), y, ln, f, p=p)
                 y += int(f.size * 1.35)
-        s.add(0, big, slide=False)
+        s.add(1, big, slide=False)
         if len(lines) > 1:
-            s.add(1, lambda d, p: P.caption_under(d, W // 2, cy0 + 200, lines[1], P.f(52, 500), th.sec))
+            s.add(2, lambda d, p: P.caption_under(d, W // 2, cy0 + 200, lines[1], P.f(52, 500), th.sec))
         if theme_t:
             def th_(d, p):
                 f = P.f(44)
@@ -288,7 +288,7 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
                 for ln in ls:
                     P.text_mm(d, W / 2, y + f2.size * 0.6, ln, f2, th.text)
                     y += int(f2.size * 1.3)
-            s.add(2, th_)
+            s.add(0, th_)
 
     elif kind == "ending":
         # 締め。真ん中に大きく「今日のひとつ」、その下に次回と更新時刻

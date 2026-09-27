@@ -101,7 +101,37 @@ def collect(cfg: Config, days: int = 7, today: dt.date | None = None) -> dict[st
     sources = _q(svc, start, end, metrics="views", dimensions="insightTrafficSourceType", sort="-views")
     return {"channel": str(cfg.get("channel.name", "")), "start": start.isoformat(), "end": end.isoformat(),
             "now": totals(start, end), "prev": totals(pstart, pend), "sources": sources,
-            "long": long_, "short": short}
+            "long": long_, "short": short, "targets": _targets(cfg, svc, end)}
+
+
+def _targets(cfg: Config, svc, end: dt.date) -> dict[str, Any] | None:
+    """goals.yaml の targets（期限までの数字）に対して、開始日からの累計で今どこか."""
+    try:
+        goal = goals.load_goal(cfg)
+    except Exception:
+        return None
+    if not goal.targets or end < goal.start:
+        return None
+    rows = _q(svc, goal.start, end, metrics="views,estimatedMinutesWatched", dimensions="video", sort="-views", maxResults=200)
+    meta = _videos_meta(cfg, [r[0] for r in rows])
+    long_min, shorts = 0.0, []
+    for vid, views, minutes in rows:
+        m = meta.get(vid, {})
+        if m.get("seconds", 0) > LONG_SECONDS:
+            long_min += minutes
+        elif m.get("published"):
+            age = (end - dt.date.fromisoformat(m["published"])).days
+            shorts.append({"kind": "short", "views": views, "age_days": age})
+    try:
+        ch = youtube.build_service(cfg).channels().list(part="statistics", mine=True).execute()
+        subs = int(ch["items"][0]["statistics"].get("subscriberCount", 0))
+    except Exception as exc:
+        log.warning("登録者数が取れませんでした: %s", exc)
+        subs = None
+    day = goal.day_index(end)
+    status = goals.targets_status(goal.targets, subscribers=subs, long_hours=long_min / 60,
+                                  shorts_views=goals.recent_shorts_views(shorts), day=day, days=goal.days)
+    return {"deadline": goal.end.isoformat(), "day": day, "days": goal.days, "rows": status}
 
 
 def _pct(a: float, b: float) -> str:
@@ -118,6 +148,10 @@ def render(data: dict[str, Any]) -> str:
              f"| 再生 | {n['views']:,} | {p['views']:,} | {_pct(n['views'], p['views'])} |",
              f"| 総再生時間（分） | {n['minutes']:,} | {p['minutes']:,} | {_pct(n['minutes'], p['minutes'])} |",
              f"| 登録者の増減 | {n['subs']:+,} | {p['subs']:+,} | |", ""]
+    t = data.get("targets")
+    if t and t.get("rows"):
+        lines += [f"## 目標まで（期限 {t['deadline']}、{t['day']}/{t['days']} 日目）", ""]
+        lines += [f"- {ln}" for ln in goals.targets_lines(t["rows"])] + [""]
     total = sum(v for _, v in data["sources"]) or 1
     lines += ["## どこから見られたか", ""]
     for k, v in data["sources"][:6]:
@@ -145,6 +179,8 @@ _ADVICE_SYSTEM = """あなたは YouTube チャンネル「{name}」（{field}�
 週次の数字を見て、次の週に試すことを 3〜5 個、優先順に書きます。
 
 - 数字を根拠にする（「◯◯が△％なので」）。数字に無いことは推測だと断る
+- 目標（targets）がある場合は、遅れている数字から先に手を打つ。Shorts の平均再生は「最初の 1 秒」と「最後まで見られたか」、
+  本編の総再生時間は「検索されるタイトル」と「最初の 30 秒」、登録者は「本編を最後まで聴いた人」から来る
 - いちばんの課題は、Shorts は見られているのに本編に人が来ないこと。Shorts から本編への導線、本編の最初の 30 秒、タイトルとサムネを優先して見る
 - 自動で作っている前提なので、台本の型・タイトルの付け方・Shorts の選び方など「仕組みで変えられること」を書く
 - API では自動化できないもの（Shorts の「関連動画」の設定、コメントの固定、終了画面、サムネの A/B テスト）は「手作業」と明記する
@@ -154,6 +190,8 @@ _ADVICE_SYSTEM = """あなたは YouTube チャンネル「{name}」（{field}�
 
 def advice(cfg: Config, data: dict[str, Any]) -> str:
     slim = {k: data[k] for k in ("now", "prev", "sources")}
+    if data.get("targets"):
+        slim["targets"] = data["targets"]
     slim["long"] = [{k: r.get(k) for k in ("title", "seconds", "views", "avg_seconds", "avg_percent", "kept_30s", "from_shorts")} for r in data["long"]]
     slim["short"] = [{k: r.get(k) for k in ("title", "views", "avg_percent")} for r in sorted(data["short"], key=lambda r: -r["views"])[:10]]
     system = _ADVICE_SYSTEM.format(name=data["channel"], field=domain.field(cfg))

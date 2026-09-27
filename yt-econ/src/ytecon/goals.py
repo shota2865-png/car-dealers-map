@@ -42,6 +42,8 @@ class Goal:
     ypp: dict[str, int]
     gates: list[dict[str, int]]
     rules: dict[str, dict[str, float]]
+    # 期限までに届かせたい数字（subscribers / long_watch_hours / shorts_avg_views）。goals.yaml の targets
+    targets: dict[str, float] = field(default_factory=dict)
 
     @property
     def end(self) -> dt.date:
@@ -77,6 +79,7 @@ def load_goal(cfg: Config, path: Path | None = None) -> Goal:
         ypp={k: int(v) for k, v in (raw.get("ypp") or {}).items()},
         gates=[{k: int(v) for k, v in x.items()} for x in (raw.get("gates") or [])],
         rules={k: {kk: float(vv) for kk, vv in (v or {}).items()} for k, v in (raw.get("rules") or {}).items()},
+        targets={k: float(v) for k, v in (raw.get("targets") or {}).items()},
     )
 
 
@@ -119,6 +122,9 @@ def pace(goal: Goal, p: Progress, today: dt.date | None = None) -> dict[str, Any
     gate_ok = None
     if last_gate:
         gate_ok = p.views >= last_gate.get("views", 0) and p.subscribers >= last_gate.get("subscribers", 0)
+        lh = long_watch_hours(p)
+        if "long_hours" in last_gate and lh is not None:
+            gate_ok = gate_ok and lh >= last_gate["long_hours"]
 
     status = "ahead" if p.views >= expected_today * 1.1 else ("on_track" if p.views >= expected_today * 0.8 else "behind")
     if day == 0:
@@ -130,7 +136,75 @@ def pace(goal: Goal, p: Progress, today: dt.date | None = None) -> dict[str, Any
         "recent_avg_per_day": int(recent_avg), "projected_total": int(projected),
         "status": status, "next_gate": gate, "last_gate": last_gate, "last_gate_ok": gate_ok,
         "ypp": ypp_status(goal, p),
+        "targets": targets_status(goal.targets, subscribers=p.subscribers, long_hours=long_watch_hours(p),
+                                  shorts_views=recent_shorts_views(p.videos), day=day, days=goal.days),
     }
+
+
+def long_watch_hours(p: Progress) -> float | None:
+    """本編（長尺）だけの総再生時間。動画別の再生時間は Analytics のときだけ取れる."""
+    longs = [v for v in p.videos if v.get("kind", "long") == "long"]
+    if not longs or any(v.get("watch_minutes") is None for v in longs):
+        return None
+    return sum(float(v["watch_minutes"]) for v in longs) / 60
+
+
+def recent_shorts_views(videos: list[dict[str, Any]], n: int = 9, min_age: int = 3) -> list[int]:
+    """公開から min_age 日以上たった Shorts の、新しいほうから n 本の再生数（伸びきる前の数字で平均を下げない）."""
+    shorts = [v for v in videos if v.get("kind") == "short" and v.get("age_days", 0) >= min_age]
+    shorts.sort(key=lambda v: v.get("age_days", 0))
+    return [int(v.get("views", 0)) for v in shorts[:n]]
+
+
+_TARGET_JA = {"subscribers": "登録者", "long_watch_hours": "本編の総再生時間", "shorts_avg_views": "Shorts の平均再生"}
+_TARGET_UNIT = {"subscribers": "人", "long_watch_hours": "時間", "shorts_avg_views": "回"}
+
+
+def targets_status(targets: dict[str, float], *, subscribers: int | None, long_hours: float | None,
+                   shorts_views: list[int], day: int, days: int) -> list[dict[str, Any]]:
+    """期限の数字ごとに、今・目標・今日までに居たい数字・判定を返す.
+
+    登録者と本編の総再生時間は積み上がる数字なので、期間に比例した「今日までの目安」と比べる。
+    Shorts の平均再生は 1 本ごとの数字なので、目標そのものと比べる（直近の本数で平均）。
+    """
+    out = []
+    for key in ("subscribers", "long_watch_hours", "shorts_avg_views"):
+        if key not in targets:
+            continue
+        target = float(targets[key])
+        if key == "subscribers":
+            now = None if subscribers is None else float(subscribers)
+        elif key == "long_watch_hours":
+            now = long_hours
+        else:
+            now = (sum(shorts_views) / len(shorts_views)) if shorts_views else None
+        expected = target if key == "shorts_avg_views" else target * max(day, 0) / max(days, 1)
+        if now is None:
+            status = "unknown"
+        elif now >= target:
+            status = "done"
+        elif day == 0:
+            status = "not_started"
+        elif now >= expected * 0.8:
+            status = "on_track"
+        else:
+            status = "behind"
+        out.append({"key": key, "label": _TARGET_JA[key], "unit": _TARGET_UNIT[key], "now": now, "target": target,
+                    "expected": expected, "pct": (100 * now / target) if (now is not None and target) else None,
+                    "status": status, "n": len(shorts_views) if key == "shorts_avg_views" else None})
+    return out
+
+
+def targets_lines(rows: list[dict[str, Any]]) -> list[str]:
+    """期限の数字を 1 行ずつ（ytecon goal と週次レポートで共通）."""
+    ja = {"done": "達成", "on_track": "予定どおり", "behind": "遅れ", "unknown": "数字なし", "not_started": "開始前"}
+    lines = []
+    for r in rows:
+        now = "—" if r["now"] is None else f"{r['now']:,.0f}"
+        extra = f"（直近 {r['n']} 本）" if r.get("n") else ""
+        pace = "" if r["key"] == "shorts_avg_views" or r["status"] in ("done", "unknown") else f"  今日までの目安 {r['expected']:,.0f}"
+        lines.append(f"{r['label']} {now} / {r['target']:,.0f} {r['unit']}{extra}  → {ja.get(r['status'], r['status'])}{pace}")
+    return lines
 
 
 def ypp_status(goal: Goal, p: Progress) -> dict[str, Any]:
@@ -190,11 +264,18 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
         acts.append(f"Shorts「{v.get('title', '')[:28]}」が突出（{v.get('views', 0):,} 再生）。"
                     "同じテーマの派生を schedule.yaml に 2 本入れる（当たった型は 1 週間以内に重ねる）")
 
-    y = pc["ypp"]
-    if y.get("subscribers_pct") is not None and y["subscribers_pct"] < 100 and pc["day"] >= 14:
-        acts.append(f"登録者 {y['subscribers']:,} / {y['subscribers_need']:,}。"
-                    "Shorts の最後の 1 文に「本編は 19 時」を入れる（shorts の締めの誘導）。"
-                    "登録は本編視聴者から来るので、本編の概要欄 1 行目を「毎日 19:00」に固定")
+    for t in pc.get("targets") or []:
+        if t["status"] != "behind":
+            continue
+        if t["key"] == "shorts_avg_views":
+            acts.append(f"Shorts の平均 {t['now']:,.0f} 回（目標 {t['target']:,.0f}）。最初の 1 秒（1 文目の数字・結論）と長さ（shorts.story_seconds）を見直す。"
+                        "週次レポートで平均視聴率が高かった Shorts の 1 文目の型に寄せる")
+        elif t["key"] == "long_watch_hours":
+            acts.append(f"本編の総再生時間 {t['now']:,.1f} / {t['target']:,.0f} 時間（目安 {t['expected']:,.0f}）。"
+                        "本編は検索と関連動画から来る。タイトルの頭を検索される語にし、再生の多い本編と同じテーマの続編を schedule.yaml に入れる")
+        elif t["key"] == "subscribers":
+            acts.append(f"登録者 {t['now']:,.0f} / {t['target']:,.0f}（目安 {t['expected']:,.0f}）。"
+                        "登録は本編を最後まで聴いた人から来る。本編の締めの登録の一言と、概要欄の登録リンクが入っているか確認する")
     if not acts:
         acts.append("ペースどおり。設定は変えず、同じ型で続ける。週 1 回は Studio でクリック率と維持率だけ確認")
     return acts
@@ -403,9 +484,13 @@ def report(goal: Goal, p: Progress, pc: dict[str, Any], actions: list[str]) -> s
     lines.append(f"  収益化   登録者 {y['subscribers']:,} / {y['subscribers_need']:,}"
                  + (f"   総再生時間 {y['watch_hours']:,.0f} / {y['watch_hours_need']:,} h" if "watch_hours" in y else
                     "   総再生時間: Analytics のスコープを付けると出ます"))
+    if pc.get("targets"):
+        lines.append(f"  期限（{goal.end}）までの数字:")
+        lines += [f"    {ln}" for ln in targets_lines(pc["targets"])]
     if pc.get("next_gate"):
         g = pc["next_gate"]
-        lines.append(f"  次の関門  {g['day']} 日目: {g['views']:,} 再生 / 登録 {g['subscribers']:,}")
+        lines.append(f"  次の関門  {g['day']} 日目: {g['views']:,} 再生 / 登録 {g['subscribers']:,}"
+                     + (f" / 本編 {g['long_hours']:,} 時間" if "long_hours" in g else ""))
     if p.videos:
         lines.append("  動画別（上位）:")
         for v in sorted(p.videos, key=lambda v: -v.get("views", 0))[:8]:
@@ -437,5 +522,9 @@ def plan_text(goal: Goal) -> str:
         "  関門:",
     ]
     for g in goal.gates:
-        lines.append(f"    {g['day']:>2} 日目  {g['views']:>8,} 再生  登録 {g['subscribers']:>5,}")
+        lines.append(f"    {g['day']:>2} 日目  {g['views']:>8,} 再生  登録 {g['subscribers']:>5,}"
+                     + (f"  本編 {g['long_hours']:>4,} 時間" if "long_hours" in g else ""))
+    if goal.targets:
+        lines.append(f"  期限（{goal.end}）の数字: " + " / ".join(
+            f"{_TARGET_JA.get(k, k)} {v:,.0f}{_TARGET_UNIT.get(k, '')}" for k, v in goal.targets.items()))
     return "\n".join(lines)

@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import domain, llm
 from .assets import palette
 from .config import Config
-from .metadata import Metadata, _voice_credit
+from .metadata import Metadata, _voice_credit, subscribe_line
 
 log = logging.getLogger(__name__)
 
@@ -43,19 +43,21 @@ COUNT_TICK = 0.85          # カウントダウン 1 拍
 # ----------------------------------------------------------------------
 # 台本（LLM）
 # ----------------------------------------------------------------------
-_SYSTEM = """あなたは YouTube Shorts の構成作家です。{field}のチャンネルで、視聴者が最初の 3 秒で「選ぶ」参加型テストの型を書きます。
+_SYSTEM = """あなたは YouTube Shorts の構成作家です。{field}のチャンネルで、視聴者が最初の 1 秒で指を止め、3 秒後に「選ぶ」参加型テストの型を書きます。
 字幕は出ません。1 人のナレーター（落ち着いた女性の声）が話し、画面には短い言葉の箱・矢印・ハイライトだけが出ます。
 だから **画面の文字は短く（箱の中は 12 字以内）、ナレーションは 1 文節 25 字以内** にしてください。
+おすすめに広く出るかは「最初の 1 秒で止まったか」と「最後まで見られたか（もう一周されたか）」でほぼ決まります。短く、密に。
 
-# 型（この順。場面は 7〜8 個、全体で 55〜70 秒 = ナレーション合計 260〜320 字）
-1. question  : 「3秒で選んでください」→ 状況を 1 行 → A と B の選択肢。どちらも「自分もそうだ」と思える日常の行動にする
+# 型（この順。場面は 5〜6 個、全体で 35〜45 秒 = ナレーション合計 170〜220 字）
+1. question  : **最初の文節は、常識をひっくり返す結論の言い切り**（例:「先延ばしは、意志の弱さではありません。」）。
+               heading はその結論を 12 字以内に縮めたもの（例:「先延ばしは性格じゃない」）。「3秒で選んでください」は使わない。
+               続けて「あなたはどっち？」→ 状況を 1 行 → A と B の選択肢。どちらも「自分もそうだ」と思える日常の行動にする
 2. countdown : 3・2・1（ナレーションなし。自動で入る）
 3. result    : 選ばれがちな方（B）に向けて、よくある思い込み（strike）を消し、本当の理由（answer）を出す
-4. flow または branch : 研究の核を矢印で見せる。branch は「人 → 2 つの行き先。片方を避けていた」の形、flow は「A → B → C」の因果
-5. flow / versus : 「だからこうなる」の因果、または「うまくいく人 vs いかない人」の対比
-6. versus / flow : もう 1 つの見せ方（上と違う種類にする）
-7. steps     : 今日その場で試せる 1 つのこと。3 手順以内、各 10 字以内。最後に「それで終わり」
-8. cta       : 固定（自動で入る。書かなくてよい）
+4. flow / branch / versus : 研究の核を 1〜2 場面で見せる（同じ種類を続けない）。branch は「人 → 2 つの行き先。片方を避けていた」、flow は「A → B → C」の因果、versus は対比
+5. steps     : 今日その場で試せる 1 つのこと。3 手順以内、各 10 字以内。最後に「それで終わり」。
+               **最後の文節は、最初の結論にもどる一言で終える**（例:「だから、先延ばしは性格ではないんです。」。もう一周見たとき、最後→最初がひと続きに聞こえる）
+「続きは本編で」「チャンネル登録」などの誘導は書かない（必要ならこちらで足す）
 
 # 言葉づかい（いちばん大事）
 - 小学 5 年生が聞いて分かる言葉だけで話す。話し方（です・ます、落ち着いた口調）はそのまま
@@ -83,11 +85,11 @@ JSON だけを返す。形は次の例と同じ。"""
 
 _EXAMPLE = {
     "title": "先延ばしは意志の弱さではない？",
-    "hook": "締切が5日後の仕事、あなたはどっち？",
+    "hook": "先延ばしは、意志の弱さではない",
     "scenes": [
-        {"kind": "question", "heading": "3秒で選んでください", "heading_hl": "3秒", "lead": "締切が5日後の仕事", "lead_hl": "5日後",
+        {"kind": "question", "heading": "先延ばしは性格じゃない", "heading_hl": "性格じゃない", "lead": "締切が5日後の仕事", "lead_hl": "5日後",
          "options": ["今日、少しだけ手をつける", "気分が乗った日に、まとめてやる"],
-         "narration": [["3秒で選んでください。", 0], ["締切が5日後の仕事。", 1], ["A、今日少しだけ手をつける。", 2], ["B、気分が乗った日にまとめてやる。", 3]]},
+         "narration": [["先延ばしは、意志の弱さではありません。", 0], ["あなたはどっち？締切が5日後の仕事。", 1], ["A、今日少しだけ手をつける。", 2], ["B、気分が乗った日にまとめてやる。", 3]]},
         {"kind": "countdown"},
         {"kind": "result", "pick": "B", "option": "気分が乗った日に、まとめてやる", "strike": "意志が弱い", "answer": "仕組みの問題",
          "narration": [["Bを選んだ人。", 0], ["意志が弱いわけでは", 1], ["ありません。", 2]]},
@@ -97,15 +99,8 @@ _EXAMPLE = {
         {"kind": "branch", "heading": "研究が見つけたこと", "heading_hl": "研究", "note": "カールトン大学 ピチル教授", "source": "先延ばす人",
          "targets": [{"text": "課題", "avoided": False}, {"text": "嫌な気分", "avoided": True}],
          "narration": [["カールトン大学のピチル教授の研究では、", 0], ["先延ばす人ほど、課題の", 1], ["嫌な気分を避けていました。", 2]]},
-        {"kind": "flow", "heading": "やる気を待つと", "heading_hl": "やる気",
-         "boxes": [{"text": "やる気を待つ", "state": "normal"}, {"text": "嫌な気分が大きくなる", "state": "active", "up": True}, {"text": "もっと先延ばす", "state": "dim"}],
-         "narration": [["だから、やる気を待つほど、", 0], ["嫌な気分は大きくなります。", 1], ["そして、もっと先延ばします。", 2]]},
-        {"kind": "versus", "heading": "Aの人がしていること", "heading_hl": "A",
-         "left": {"text": "気分で決める", "caption": "来ない日が多い"}, "right": {"text": "最初の2分を決める", "caption": "毎日できる"},
-         "narration": [["Aの人がしているのは、", 0], ["気分ではなく、", 1], ["最初の2分だけを決めることです。", 2]]},
         {"kind": "steps", "heading": "今日のひとつ", "heading_hl": "今日のひとつ", "items": ["ファイルを開く", "名前だけ付ける", "閉じる"], "final": "それで終わり",
-         "narration": [["今日試すなら、ひとつ。", 0], ["次の仕事のファイルを開いて、", 1], ["名前だけ付けて、", 2], ["閉じる。", 3], ["それで終わりです。", 4]]},
-        {"kind": "cta"},
+         "narration": [["今日試すなら、ひとつ。", 0], ["次の仕事のファイルを開いて、", 1], ["名前だけ付けて、", 2], ["閉じる。", 3], ["それで終わり。だから、先延ばしは性格ではないんです。", 4]]},
     ],
     "sources": [{"name": "Sirois & Pychyl (2013) Procrastination and the priority of short-term mood regulation", "url": ""}],
 }
@@ -718,7 +713,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     from . import bgm as bgm_mod
     from . import tts
 
-    quiz = normalize(dict(quiz), add_cta=not wide)
+    quiz = normalize(dict(quiz), add_cta=not wide and bool(cfg.get("shorts.end_cta", True)))
     seg_gap, scene_tail, tick = SEG_GAP, SCENE_TAIL, COUNT_TICK
     voice_count, outro = False, 0.0
     if wide:
@@ -915,10 +910,11 @@ def quiz_metadata(cfg: Config, quiz: dict[str, Any], parent_url: str = "") -> Me
     if parent_url:
         parts.append(f"▶ 本編はこちら\n{parent_url}")
     parts.append(f"{domain.pitch(cfg)}毎日{times[0] if times else '20:00'}に本編を更新しています。")
+    parts.append(subscribe_line(cfg))
     parts.append("■ 音声\n" + _voice_credit(cfg))
     parts.append("■ ご注意\n" + domain.disclaimer(cfg))
     tags_h = ["#Shorts"] + domain.hashtags(cfg)
     parts.append(" ".join(tags_h))
     tags = ["Shorts"] + [t.lstrip("#") for t in domain.hashtags(cfg)] + [w for w in re.split(r"[、。 ]", quiz.get("hook", "")) if 2 <= len(w) <= 10][:5]
-    return Metadata(title=title[:100], description="\n\n".join(parts)[:5000], tags=tags[:15],
+    return Metadata(title=title[:100], description="\n\n".join(p for p in parts if p)[:5000], tags=tags[:15],
                     category_id=str(cfg.get("upload.category_id", "27")), language=str(cfg.get("upload.language", "ja")))

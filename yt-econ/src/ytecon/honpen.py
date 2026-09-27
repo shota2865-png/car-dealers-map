@@ -70,12 +70,19 @@ _OUTLINE_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作�
 - recap は 3 つ（各 10 字以内）。today_one は 14 字以内の一言
 - next は次回のテーマ（12 字以内）
 
+# タイトル（title / keyword）
+- keyword は、このテーマで人が YouTube の検索窓に打ち込む言葉（2〜8 字。例:「SNS疲れ」「先延ばし」「サンクコスト」「HSP」）
+- title は 32 字以内で、**keyword から始める**。後ろに「なぜ」「〜する人の心理」「やめ方」など、検索で付けられやすい言葉を続ける
+  （例:「SNS疲れの正体｜見るほど気分が沈むのはなぜ？」「先延ばしする人の心理｜意志の弱さではなかった」）
+- 煽らない。内容と一致させる
+
 JSON だけを返す。"""
 
 _OUTLINE_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
+        "keyword": {"type": "string"},
         "theme": {"type": "string"},
         "parts": {"type": "array", "items": {"type": "object", "properties": {
             "heading": {"type": "string"}, "heading_hl": {"type": "string"}, "sub": {"type": "string"},
@@ -156,6 +163,8 @@ def outline(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
     system = _OUTLINE_SYSTEM.format(field=domain.field(cfg), parts=n_parts(cfg), rules=_rules(cfg), minutes=_minutes(cfg))
     data = llm.complete_json(system, user, _OUTLINE_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
     data["parts"] = (data.get("parts") or [])[:n_parts(cfg)]
+    from .metadata import keyword_first
+    data["title"] = keyword_first(str(data.get("title") or topic.get("title") or ""), str(data.get("keyword") or ""))
     return data
 
 
@@ -200,17 +209,18 @@ def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] =
 
 
 # 冒頭と締めのあいさつ（既定はながら聴き）。{name} {theme} {one} {next} {when} を差し込める
+# 最初の一言はテーマ（最初の 30 秒で離れる人がいちばん多いので、何の話かを先に言う）
 GREETING = [
-    ["{name}へ、ようこそ。", 0],
-    ["この動画は、通勤や家事をしながらでも聴けるように作っています。", 0],
+    ["今日のテーマは、{theme}、です。", 0],
+    ["{name}へ、ようこそ。", 1],
     ["画面を見なくても、声だけでわかるように、お話ししますね。", 1],
-    ["今日のテーマは、{theme}、です。", 2],
-    ["さっそく、始めていきましょう。", 2],
+    ["ながら聴きで大丈夫です。さっそく、始めていきましょう。", 2],
 ]
 GREETING_LINES = ["声だけで、わかるようにお話しします", "ながら聴きで大丈夫です"]
 CLOSING = [
     ["今日のひとつは、{one}、でした。", 0],
     ["次回は、{next}のお話です。毎日{when}に更新しています。", 1],
+    ["チャンネル登録をしておくと、次のお話も、聴きのがさずに届きます。", 1],
     ["ここまで聴いてくださって、ありがとうございました。", 2],
     ["気になったところだけ、明日ひとつ試してみてください。", 2],
 ]
@@ -294,14 +304,15 @@ def _stamp(sec: float) -> str:
 
 def honpen_metadata(cfg: Config, data: dict[str, Any], chapters: list, topic: dict[str, Any] | None = None):
     """本編のタイトル・概要欄（チャプター付き）・タグ."""
-    from .metadata import Metadata, _voice_credit
+    from .metadata import Metadata, _voice_credit, subscribe_line
     ol = data.get("outline") or {}
     prefix = str(cfg.get("honpen.title_prefix", ""))
     suffix = str(cfg.get("upload.title_suffix", ""))
     title = f"{prefix}{data.get('title', '')}{suffix}"[:100]
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
     parts = [str(ol.get("theme") or data.get("title") or ""),
-             str(cfg.get("honpen.desc_note", "通勤や家事をしながらでも聴けるように、画面を見なくても声だけでわかるようにお話ししています。"))]
+             str(cfg.get("honpen.desc_note", "通勤や家事をしながらでも聴けるように、画面を見なくても声だけでわかるようにお話ししています。")),
+             subscribe_line(cfg)]
     # YouTube のチャプターは 0:00 から始まり、3 つ以上・各 10 秒以上で有効になる
     ch = [(float(t), str(n)) for t, n in chapters if n]
     if len(ch) >= 3:
@@ -317,7 +328,7 @@ def honpen_metadata(cfg: Config, data: dict[str, Any], chapters: list, topic: di
     parts.append("■ ご注意\n" + domain.disclaimer(cfg))
     tags_h = domain.hashtags(cfg) + [str(t) for t in (cfg.get("honpen.extra_hashtags", ["#聞き流し"]) or [])]
     parts.append(" ".join(tags_h))
-    tags = [t.lstrip("#") for t in tags_h] + [str(t) for t in (cfg.get("honpen.extra_tags", ["聞き流し", "作業用", "ながら聴き"]) or [])] + [str(cfg.get("channel.name", ""))]
+    tags = ([str(ol["keyword"])] if ol.get("keyword") else []) + [t.lstrip("#") for t in tags_h] + [str(t) for t in (cfg.get("honpen.extra_tags", ["聞き流し", "作業用", "ながら聴き"]) or [])] + [str(cfg.get("channel.name", ""))]
     return Metadata(title=title, description="\n\n".join(p for p in parts if p)[:5000], tags=list(dict.fromkeys(t for t in tags if t))[:15],
                     category_id=str(cfg.get("upload.category_id", "27")), language=str(cfg.get("upload.language", "ja")))
 

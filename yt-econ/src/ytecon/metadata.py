@@ -32,6 +32,7 @@ class Metadata:
 _TITLE_SCHEMA = llm.obj(
     {
         "title": llm.STR,
+        "keyword": llm.STR,
         "hook_tag": llm.STR,
         "reason": llm.STR,
         "thumbnail_main": llm.STR,
@@ -55,6 +56,8 @@ _TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。
 {horizon_guide}
 
 良いタイトルの条件:
+- **先頭の 12 字以内に、人が検索窓に打ち込む語（keyword）を置く**。制度名・商品名・お金の言葉など、
+  そのままの表記で（例:「生涯賃金」「新NISA」「年収の壁」）。keyword にはその語だけを入れる
 - 40字以内。スマホで切れずに読めるのは冒頭28字程度なので、前半に要点を置く
 - 「知らないと損」「ヤバい」など煽り語を使わない。内容と一致させる
 - 数字か固有名詞を1つ入れる
@@ -111,7 +114,8 @@ def choose_title(cfg: Config, script: VideoScript,
         model=cfg.get("script.model", llm.DEFAULT_MODEL),
         effort="medium",
     )
-    title = format_title(cfg, data.get("title") or script.topic_title, data.get("hook_tag") or "")
+    body = keyword_first(data.get("title") or script.topic_title, data.get("keyword") or "")
+    title = format_title(cfg, body, data.get("hook_tag") or "")
     thumb = {
         "main": (data.get("thumbnail_main") or "")[:14],
         "sub": (data.get("thumbnail_sub") or "")[:16],
@@ -120,16 +124,30 @@ def choose_title(cfg: Config, script: VideoScript,
     return title, thumb
 
 
+def keyword_first(title: str, keyword: str, within: int = 14) -> str:
+    """検索される語がタイトルの頭に無ければ「語｜タイトル」にする（一覧でも検索でも最初に目に入る位置）."""
+    title, keyword = title.strip(), keyword.strip().strip("【】「」")
+    if not keyword or keyword in title[:within]:
+        return title
+    return f"{keyword}｜{title}"
+
+
 def format_title(cfg: Config, body: str, hook_tag: str = "") -> str:
-    """タイトルの型: 【引き】本題【ずんだもん&めたん解説】。全体が MAX_TITLE を超えるなら本題を詰める."""
+    """タイトルの型: 本題【引き】【ずんだもん&めたん解説】。全体が MAX_TITLE を超えるなら本題を詰める.
+
+    検索と一覧で最初に読まれる頭は本題（検索される語）に空け、引きの【】は本題の後ろに置く
+    （upload.title_hook_position: front で以前の【引き】本題 に戻せる）。
+    """
     suffix = str(cfg.get("upload.title_suffix", "") or "").strip()
     body = body.strip().strip("【】")
     tag = hook_tag.strip().strip("【】")[:12]
-    prefix = f"【{tag}】" if tag and cfg.get("upload.title_hook_tag", True) else ""
-    room = MAX_TITLE - len(prefix) - len(suffix)
+    hook = f"【{tag}】" if tag and cfg.get("upload.title_hook_tag", True) else ""
+    room = MAX_TITLE - len(hook) - len(suffix)
     if len(body) > room:
         body = body[: max(room - 1, 8)].rstrip("、。 ") + "…"
-    return f"{prefix}{body}{suffix}"[:MAX_TITLE]
+    if str(cfg.get("upload.title_hook_position", "back")) == "front":
+        return f"{hook}{body}{suffix}"[:MAX_TITLE]
+    return f"{body}{hook}{suffix}"[:MAX_TITLE]
 
 
 def build_chapters(script: VideoScript, track: VoiceTrack) -> list[str]:
@@ -186,11 +204,21 @@ def _voice_credit(cfg: Config) -> str:
     )
 
 
+def subscribe_line(cfg: Config) -> str:
+    """概要欄の登録リンク（channel.id があるときだけ）。sub_confirmation=1 で押すと登録の確認が出る."""
+    cid = str(cfg.get("channel.id", "") or "").strip()
+    if not cid:
+        return ""
+    times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
+    return (f"▶ チャンネル登録（毎日{times[0] if times else ''}に新しい動画）\n"
+            f"https://www.youtube.com/channel/{cid}?sub_confirmation=1")
+
+
 def build(cfg: Config, script: VideoScript, track: VoiceTrack,
           title: str | None = None) -> Metadata:
     title = title or (script.title_candidates or [script.topic_title])[0]
 
-    parts = [script.description.strip()]
+    parts = [script.description.strip(), subscribe_line(cfg)]
 
     chapters = build_chapters(script, track)
     if chapters:

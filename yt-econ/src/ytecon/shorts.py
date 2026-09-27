@@ -368,6 +368,7 @@ def shorts_metadata(cfg: Config, script: VideoScript, w: Window, parent_url: str
     # 画面下の「関連動画」リンクは API から付けられない。YouTube Studio で本編を関連動画に設定する
     times = [str(t) for t in (cfg.get("upload.publish_times_jst", []) or [])]
     parts.append(f"{domain.pitch(cfg)}毎日{times[0] if times else '夜'}に本編を更新しています。")
+    parts.append(md.subscribe_line(cfg))
     parts.append("■ 音声\n" + md._voice_credit(cfg))
     credits = [c for c in detect_credits(cfg) + [str(cfg.get("render.bgm.credit", "") or "").strip()] if c]
     if credits:
@@ -377,7 +378,7 @@ def shorts_metadata(cfg: Config, script: VideoScript, w: Window, parent_url: str
     parts.append(" ".join(hashtags))
     tags = ["Shorts"] + names + [t for t in script.tags if t][:10]
     return md.Metadata(
-        title=title, description="\n\n".join(parts)[:5000], tags=tags,
+        title=title, description="\n\n".join(p for p in parts if p)[:5000], tags=tags,
         category_id=str(cfg.get("upload.category_id", "25")),
         language=str(cfg.get("upload.language", "ja")),
     )
@@ -449,32 +450,33 @@ class Story:
 
 
 _STORY_SYSTEM = """あなたは YouTube Shorts の構成作家です。{topic_words} を扱う、2 人の掛け合いのチャンネルの
-本編（15 分）から、単体で成立する 45〜55 秒の Shorts を書きます。
+本編（15 分）から、単体で成立する {seconds} 秒の Shorts を書きます。
 
-Shorts の視聴者は最初の 1 秒で指を止めるかを決め、退屈した瞬間に次へ送ります。
-だから「途中を切り出したもの」ではなく、**1 本で 起・承・転・結 が閉じる小さな話**にしてください。
-面白いか、役に立つか。どちらかが無い Shorts は最後まで見られません。両方あるのが理想です。
+Shorts の視聴者は最初の 1 秒で指を止めるかを決め、退屈した瞬間に次へ送ります。おすすめに広く出るかは
+「最初の 1 秒で止まったか」と「最後まで見られたか（もう一周されたか）」でほぼ決まります。
+だから「途中を切り出したもの」ではなく、**1 本で閉じる小さな話**を、短く、密に書いてください。
 
 出演者:
 {cast}
 
 守ること:
-- 文は 1 文 12〜28 字。1 文ずつ改行し、文頭に話者タグ（【めたん】【ずんだもん】）を付ける。地の文は書かない
+- 文は 1 文 10〜24 字。1 文ずつ改行し、文頭に話者タグ（【めたん】【ずんだもん】）を付ける。地の文は書かない
 - 読み上げ文を体言止め（「〜約9パーセント。」「〜の数字。」）で終えない。音声合成の語尾が不自然に上がる。
   必ず「〜だったの」「〜よ」「〜のだ」など述語で終える。1 文に数字は 1 つまで
-- 全体で 280〜360 字（タグを除く）。少ないと薄く、これを超えると 60 秒に収まらない
-- 起（1〜2 文、ずんだもん）: 視聴者が自分ごとにできる具体的な状況か、意外な数字で始める。
-  「こんにちは」「今日は」は禁止。前置きなしで、いきなり本題
-- 承（2〜3 文、めたん）: 事実を数字と出典つきで。出典は「総務省の白書によると」のように文中で
-- 転（3〜4 文）: ずんだもんが極端な結論に飛び、めたんが「そこは違うの」「むしろ」で視点を返す。ここが山場
-- 結（2 文、めたん）: 視聴者が今夜できる 1 つの小さな行動、または覚えて帰る 1 つの数字。説教にしない
+- 全体で {chars}（タグを除く）。長いと途中で送られる。削れる文は全部削る
+- **1 文目がすべて**: 本編の中でいちばん驚く数字か、常識をひっくり返す結論を、前置きなしで言い切る（18 字以内）。
+  hook（画面上部の見出し）と同じ中身にする。問いかけ・「こんにちは」「今日は」「実は」「みなさん」で始めない
+  良い例:「日本人の生涯賃金、2億円もないのだ。」「年収が上がると、手取りが減る人がいるの。」
+- 承（1〜2 文、めたん）: 1 文目の根拠を数字と出典つきで。出典は「総務省の白書によると」のように文中で
+- 転（2〜3 文）: ずんだもんが極端な結論に飛び、めたんが「そこは違うの」「むしろ」で視点を返す。ここが山場
+- 結（1〜2 文、めたん）: 覚えて帰る 1 つの数字か、今夜できる 1 つの行動。説教にしない。
+  **最後の文は 1 文目に自然につながる言い方で終える**（もう一周見たとき、最後→最初がひと続きに聞こえる）
+- 「続きは本編で」「チャンネル登録」「フォロー」などの誘導の文は書かない
 - 数字は本編の台本にあるものだけを使う。新しい統計や社名を作らない。断定的な投資助言はしない
 - 統計の時点が今から 1 年以上前（例: 令和6年版・2024 年）なら、そのまま「今の数字」のように言わない。
-  「令和6年の時点で」と時点を言い、「今は変わっているけれど、最初のとっかかりの時点でこれだけ差があった」
-  のように、古い数字を「出だしの差」として使う。今日の日付は {today}
+  「令和6年の時点で」と時点を言い、古い数字は「出だしの差」として使う。今日の日付は {today}
 - ずんだもんの語尾は「〜のだ」「〜なのだ」、一人称は「ぼく」。めたんは「〜よ」「〜ね」「〜わ」「〜の」で、です・ます調にしない
 - 感情が動く文には文頭に表情タグ [驚] [困] [笑] [考] [指] を付けてよい（話者タグの後ろ）
-- 本編への誘導の文はこちらで最後に足すので、書かない
 
 画面（visual）は各ビートに 1 つ。次のどれか:
 - {{"kind": "number", "value": "9% vs 46%", "label": "生成AIを使った人の割合", "note": "出典: 総務省"}}
@@ -497,7 +499,7 @@ _STORY_USER = """# 本編のタイトル
 # 依頼
 この本編から、互いに別のセクションを土台にした Shorts を {n} 本書いてください。
 1 本ごとに、いちばん「指が止まる」入口（数字の落差・誤解の訂正・視聴者の痛いところ）を選ぶこと。
-hook は画面上部に常に出る見出しで 14 字以内（数字があれば入れる、名詞止め）。
+hook は画面上部に常に出る見出しで 14 字以内（1 文目と同じ中身。数字があれば入れる、名詞止め）。
 title は投稿タイトルで 28 字以内（疑問形か数字入り。煽り語「ヤバい」「終わった」は使わない）。
 """
 
@@ -537,7 +539,9 @@ def write_stories(cfg: Config, script: VideoScript, n: int) -> list[Story]:
     sources = "\n".join(f"- {s.get('name', '')} {s.get('url', '')}".rstrip() for s in (script.sources or [])) or "（なし）"
     import datetime as _dt
     out = llm.complete_json(
-        _STORY_SYSTEM.format(cast=cast, today=_dt.date.today().isoformat(), topic_words=domain.topic_words(cfg)),
+        _STORY_SYSTEM.format(cast=cast, today=_dt.date.today().isoformat(), topic_words=domain.topic_words(cfg),
+                             seconds=str(cfg.get("shorts.story_seconds", "30〜40")),
+                             chars=str(cfg.get("shorts.story_chars", "200〜260 字"))),
         _STORY_USER.format(title=strip_tags(script.topic_title), body=_script_body(script), sources=sources, n=n),
         _story_schema(),
         model=str(cfg.get("shorts.model", cfg.get("script.model", "claude-sonnet-5"))),
@@ -565,7 +569,13 @@ def write_stories(cfg: Config, script: VideoScript, n: int) -> list[Story]:
 
 
 def with_cta(cfg: Config, story: Story) -> Story:
-    """最後に本編への誘導を足す（shorts.cta。無ければ既定の 2 文）."""
+    """最後に本編への誘導を足す（shorts.cta。無ければ既定の 2 文）.
+
+    shorts.end_cta: false なら足さない。誘導の数秒で離脱が増え、Shorts から本編へはほぼ流れない（週次レポートの実測）ので、
+    最後は 1 文目にもどる終わり方（ループ）にして、最後まで見られる割合を上げるほうを取る。
+    """
+    if not cfg.get("shorts.end_cta", True):
+        return story
     cta = [str(x) for x in (cfg.get("shorts.cta") or _DEFAULT_CTA)]
     if story.beats and story.beats[-1].role == "誘導":
         return story

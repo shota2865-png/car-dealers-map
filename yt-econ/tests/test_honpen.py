@@ -29,10 +29,12 @@ def test_assemble_adds_greeting_and_closing_for_listeners(cfg):
     kinds = [s["kind"] for s in data["scenes"]]
     assert kinds[0] == "opening" and kinds[-2:] == ["steps", "ending"]
     first = " ".join(t for t, _ in data["scenes"][0]["narration"])
-    assert "現代人のための心理学" in first and "声だけ" in first and "ながら" not in first or "家事" in first
-    assert OUTLINE["title"] in first and "長い説明文" not in first and "眠" not in first
+    assert "現代人のための心理学" in first and "声だけ" in first
+    assert first.startswith("今日のテーマは、" + OUTLINE["title"])          # 何の話かを最初の一言で
+    assert "長い説明文" not in first and "眠" not in first
     last = " ".join(t for t, _ in data["scenes"][-1]["narration"])
     assert "一言を書いて寝る" in last and "三日坊主" in last and "20:00" in last and "静かな音楽" not in last
+    assert "チャンネル登録" in last
 
 
 def test_sleep_style_can_be_restored_from_config(cfg):
@@ -55,6 +57,25 @@ def test_metadata_has_chapters_from_zero_and_sleep_tags(cfg):
     assert m.title == "テスト回【現代人のための心理学】"
     assert "0:00 はじめに" in m.description and "26:40 今日のまとめ" in m.description
     assert "聞き流し" in m.tags and "睡眠用" not in m.tags and len(m.tags) == len(set(m.tags))
+    assert "UCv-h9prBycfOLwu2ieAUcMw?sub_confirmation=1" in m.description      # 登録リンク
+    m2 = honpen.honpen_metadata(cfg, {"title": "SNS疲れの正体", "outline": {**OUTLINE, "keyword": "SNS疲れ"}}, [])
+    assert m2.tags[0] == "SNS疲れ"
+
+
+def test_outline_title_starts_with_search_keyword(cfg, monkeypatch):
+    from ytecon import llm
+    monkeypatch.setattr(llm, "complete_json", lambda *a, **k: {**OUTLINE, "title": "見るほど沈むのはなぜ？", "keyword": "SNS疲れ"})
+    ol = honpen.outline(cfg, {"title": "SNS"})
+    assert ol["title"] == "SNS疲れ｜見るほど沈むのはなぜ？"
+
+
+def test_quiz_shorts_have_no_cta_scene_when_end_cta_is_off(cfg):
+    assert cfg.get("shorts.end_cta") is False
+    q = quiz.normalize({"scenes": [{"kind": "question", "options": ["a", "b"]}, {"kind": "result"}]},
+                       add_cta=bool(cfg.get("shorts.end_cta", True)))
+    assert "cta" not in [s["kind"] for s in q["scenes"]]
+    m = quiz.quiz_metadata(cfg, {"title": "t", "hook": "h", "scenes": []})
+    assert "sub_confirmation=1" in m.description
 
 
 def test_short_angles_spread_over_chapters():
@@ -180,7 +201,11 @@ def test_weekly_report_renders_tables():
             "now": {"views": 4468, "minutes": 776, "subs": 1}, "prev": {"views": 1000, "minutes": 100, "subs": 0},
             "sources": [["SHORTS", 4304], ["YT_SEARCH", 70]],
             "long": [{"title": "本編", "views": 17, "avg_seconds": 176, "avg_percent": 18.4, "kept_30s": 0.53, "from_shorts": 2}],
-            "short": [{"title": "S", "views": 1113, "avg_percent": 34.5}]}
+            "short": [{"title": "S", "views": 1113, "avg_percent": 34.5}],
+            "targets": {"deadline": "2026-10-31", "day": 1, "days": 37, "rows": [
+                {"key": "subscribers", "label": "登録者", "unit": "人", "now": 2.0, "target": 100.0, "expected": 2.7, "status": "on_track", "n": None},
+                {"key": "shorts_avg_views", "label": "Shorts の平均再生", "unit": "回", "now": 1050.0, "target": 10000.0, "expected": 10000.0, "status": "behind", "n": 3}]}}
     text = report.render(data)
+    assert "## 目標まで（期限 2026-10-31、1/37 日目）" in text and "登録者 2 / 100 人" in text and "Shorts の平均再生 1,050 / 10,000 回（直近 3 本）  → 遅れ" in text
     assert "+347%" in text and "Shorts のフィード: 4,304（98%）" in text and "2分56秒" in text and "53%" in text
     assert report._iso_seconds("PT17M1S") == 1021 and report._iso_seconds("PT45S") == 45
