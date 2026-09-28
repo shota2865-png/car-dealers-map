@@ -288,9 +288,11 @@ def place_person(bg: Image.Image, person: Image.Image, *, right: int | None = No
 
     def sized(out_ratio: float) -> Image.Image:
         room = span / (1 - out_ratio)
-        im = sticker(fit_h(person, max_h), w=8)
-        if im.width > room:
-            im = sticker(fit_h(person, max(200, int(max_h * room / im.width))), w=8)
+        h = max_h
+        im = sticker(fit_h(person, h), w=8)
+        while im.width > room and h > 200:          # 白い縁の分も入れて収める
+            h = max(200, int(h * room / im.width) - 2)
+            im = sticker(fit_h(person, h), w=8)
         return im
 
     out_ratio = max_out
@@ -298,10 +300,11 @@ def place_person(bg: Image.Image, person: Image.Image, *, right: int | None = No
     if pim.height < min_h:
         out_ratio = 0.45
         pim = sized(out_ratio)
+    # 重ねないことを最優先（画面の外へのはみ出しが max_out を超えても、ずんだもん側には出さない）
     if right is not None:
-        x = max(min(right - pim.width, 10), -int(pim.width * out_ratio))
+        x = min(right - pim.width, 10)
     else:
-        x = min(max(left, pw - pim.width - 10), pw - pim.width + int(pim.width * out_ratio))
+        x = max(left, pw - pim.width - 10)
     y = max(top, ph - pim.height + 30)
     bg.alpha_composite(pim, (x, y))
 
