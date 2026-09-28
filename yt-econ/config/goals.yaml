@@ -15,7 +15,7 @@ goal:
   # 再生の内訳の想定。新規チャンネルは Shorts が発見面のほぼ全部なので、打ち手の計算に使う
   mix: {shorts: 0.85, long: 0.15}
   # 1 日の本数（pipeline.videos_per_day と shorts.per_video を写しておく）
-  per_day: {long: 1, shorts: 3}
+  per_day: {long: 1, shorts: 5}
 
 # 期限（上の start + days）までに届かせたい数字
 targets:

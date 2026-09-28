@@ -31,7 +31,11 @@ SCOPES = [
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 QUOTA_LIMIT = 10_000
-COST_UPLOAD = 1_600
+# 2026 年 9 月時点の Cloud コンソールでは、動画のアップロードは「Video Uploads per day」（1 プロジェクト 1 日 100 本）で別に数えられ、
+# Queries per day（10,000）はほとんど減らない（本編 2 本 + Shorts 6 本の日で 2,070）。以前の 1 本 1,600 の見積もりのままだと、
+# 自前のガードが Shorts の 5 本目以降を止めてしまうので、単価は小さく見積もり、本数は UPLOAD_LIMIT で別に見る
+COST_UPLOAD = 100
+UPLOAD_LIMIT = 100
 COST_THUMBNAIL = 50
 COST_CAPTION = 400
 COST_PLAYLIST = 50
@@ -128,6 +132,15 @@ class QuotaGuard:
         total = self.store.add_quota(self.today, cost)
         log.debug("クォータ消費 +%d (本日計 %d/%d)", cost, total, QUOTA_LIMIT)
 
+    def check_upload(self) -> None:
+        """その日のアップロード本数（Video Uploads per day）の上限."""
+        n = self.store.quota_used(self.today + "#uploads")
+        if n + 1 > UPLOAD_LIMIT:
+            raise QuotaExceeded(f"本日のアップロード本数が上限です（{n} / {UPLOAD_LIMIT}）。明日の午前0時(太平洋時間)にリセットされます。")
+
+    def spend_upload(self) -> None:
+        self.store.add_quota(self.today + "#uploads", 1)
+
 
 # ----------------------------------------------------------------------
 def next_publish_time(cfg: Config, slot_index: int,
@@ -167,6 +180,7 @@ def upload_video(
 
     guard = QuotaGuard(store)
     guard.check(COST_UPLOAD)
+    guard.check_upload()
 
     privacy = str(cfg.get("upload.privacy", "public"))
     status: dict[str, Any] = {
@@ -215,6 +229,7 @@ def upload_video(
             raise UploadError(f"アップロードに失敗しました: {exc}") from exc
 
     guard.spend(COST_UPLOAD)
+    guard.spend_upload()
     video_id = response["id"]
     log.info("アップロード完了: https://youtu.be/%s", video_id)
     return video_id
