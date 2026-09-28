@@ -146,7 +146,7 @@ def big_text(cfg: Config, parts: list[tuple[str, str]], size: int, *, inner=10, 
     x, y = outer * 2, outer
     for t, color in parts:
         d = ImageDraw.Draw(lay)
-        red = color != "white"
+        red = color not in ("white", "yellow")
         inn = "white" if red else "black"
         d.text((x, y), t, font=f, fill="black", stroke_width=outer, stroke_fill="black")
         d.text((x, y), t, font=f, fill=inn, stroke_width=inner, stroke_fill=inn)
@@ -158,7 +158,7 @@ def big_text(cfg: Config, parts: list[tuple[str, str]], size: int, *, inner=10, 
             fill = Image.new("RGB", (cw, ch), "#B80000")
             fill.paste(col, (0, y + int(size * 0.15)))
         else:
-            fill = Image.new("RGB", (cw, ch), "white")
+            fill = Image.new("RGB", (cw, ch), "#FFE600" if color == "yellow" else "white")
         lay.paste(fill, (0, 0), m)
         x += _tw(t, f)
     lay = lay.crop(lay.getbbox())
@@ -267,17 +267,57 @@ def emoji_image(ch: str, size: int) -> Image.Image | None:
         return None
 
 
-def place_props(im: Image.Image, props: list[str], right_limit: int) -> None:
-    """人を置かないコマの左側に、絵文字の小物を白い縁つきで大きく置く（空のコマにしない）."""
-    spots = [(18, 70, 190), (int(right_limit * 0.35), 300, 140)]
-    for ch, (x, y, size) in zip([p for p in props if p][:2], spots):
-        e = emoji_image(ch, min(size, max(80, right_limit - x - 10)))
-        if e is not None:
-            im.alpha_composite(sticker(e, w=7), (x, y))
+def _fit_into(im: Image.Image, box: tuple[int, int, int, int]) -> tuple[Image.Image, tuple[int, int]]:
+    """im を box（x0, y0, x1, y1）に収まる大きさにして、中央に置く位置を返す."""
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    k = min(bw / im.width, bh / im.height)
+    im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.LANCZOS)
+    return im, (x0 + (bw - im.width) // 2, y0 + (bh - im.height) // 2)
+
+
+def place_props(im: Image.Image, props: list[str], box: tuple[int, int, int, int]) -> None:
+    """絵文字の小物（1〜2 個）を白い縁つきで box いっぱいに置く（空のコマにしない）."""
+    props = [p for p in props if p][:2]
+    if not props:
+        return
+    x0, y0, x1, y1 = box
+    if len(props) == 1:
+        cells = [box]
+    elif (x1 - x0) >= (y1 - y0):
+        mid = (x0 + x1) // 2
+        cells = [(x0, y0, mid, y1), (mid, y0, x1, y1)]
+    else:
+        mid = (y0 + y1) // 2
+        cells = [(x0, y0, x1, mid), (x0, mid, x1, y1)]
+    for ch, cell in zip(props, cells):
+        e = emoji_image(ch, 300)
+        if e is None:
+            continue
+        e, pos = _fit_into(sticker(e, w=8), cell)
+        im.alpha_composite(e, pos)
+
+
+def place_big(cfg: Config, im: Image.Image, text: str, box: tuple[int, int, int, int], mood: str = "dark", tilt: float = -6) -> None:
+    """コマの中の大きな数字・言葉（「+5%」「158円」）。暗い背景は黄色、明るい背景は赤。少し傾ける."""
+    if not text:
+        return
+    color = "red" if mood in ("gold", "blue") else "yellow"
+    t = big_text(cfg, [(text[:6], color)], 150, inner=9, outer=16, skew=0.08, shadow=True)
+    if tilt:
+        t = t.rotate(tilt, expand=True, resample=Image.BICUBIC)
+    t, pos = _fit_into(t, box)
+    im.alpha_composite(t, pos)
+
+
+def place_stamp(cfg: Config, im: Image.Image, text: str, box: tuple[int, int, int, int]) -> None:
+    st = label(cfg, text[:6], 80, fill="#E00000", fg="white").rotate(-10, expand=True, resample=Image.BICUBIC)
+    st, pos = _fit_into(st, box)
+    im.alpha_composite(st, pos)
 
 
 def place_person(bg: Image.Image, person: Image.Image, *, right: int | None = None, left: int | None = None,
-                 top: int = 100, max_h: int = 470, min_h: int = 330, max_out: float = 0.3) -> None:
+                 top: int = 100, max_h: int = 470, min_h: int = 330, max_out: float = 0.3) -> tuple[int, int, int, int]:
     """人の切り抜きを置く。right（その x より右に出さない）/ left（その x より左に出さない）で、ずんだもんと重ねない.
 
     下端はコマの下（大見出しの裏）まで下ろし、写真の切れ目を見せない。横は画面の外へ max_out まではみ出してよく、
@@ -307,18 +347,24 @@ def place_person(bg: Image.Image, person: Image.Image, *, right: int | None = No
         x = max(left, pw - pim.width - 10)
     y = max(top, ph - pim.height + 30)
     bg.alpha_composite(pim, (x, y))
+    return x, y, pim.width, pim.height
 
 
-def up_arrows(im: Image.Image, down: bool = False) -> None:
-    """黄色い太い矢印を 3 本（値上がり・値下がり）."""
-    d = ImageDraw.Draw(im)
-    for ax, ay, s in [(24, 150, 1.0), (130, 70, 1.5), (270, 170, 0.9)]:
-        w_, h_ = 90 * s, 190 * s
+def up_arrows(im: Image.Image, down: bool = False, box: tuple[int, int, int, int] | None = None) -> None:
+    """黄色い太い矢印を 3 本（値上がり・値下がり）。box の中に収める."""
+    x0, y0, x1, y1 = box or (10, 60, 400, 380)
+    bw, bh = x1 - x0, y1 - y0
+    lay = Image.new("RGBA", (400, 330), (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    for ax, ay, s_ in [(10, 110, 0.95), (125, 10, 1.45), (275, 120, 0.9)]:
+        w_, h_ = 90 * s_, 200 * s_
         pts = [(ax, ay + h_ * 0.42), (ax + w_ / 2, ay), (ax + w_, ay + h_ * 0.42), (ax + w_ * 0.7, ay + h_ * 0.42),
                (ax + w_ * 0.7, ay + h_), (ax + w_ * 0.3, ay + h_), (ax + w_ * 0.3, ay + h_ * 0.42)]
         if down:
-            pts = [(x, 2 * ay + h_ - y) for x, y in pts]
+            pts = [(x, 330 - y) for x, y in pts]
         d.polygon(pts, fill="#FFE600", outline="black", width=7)
+    lay, pos = _fit_into(lay.crop(lay.getbbox()), (x0, y0, x0 + bw, y0 + bh))
+    im.alpha_composite(lay, pos)
 
 
 # ----------------------------------------------------------------------
@@ -521,6 +567,64 @@ def _limit_people(panels: list[dict]) -> list[dict]:
     return out
 
 
+def fill_zones(cfg: Config, bg: Image.Image, p: dict[str, Any], zones: dict[str, tuple[int, int, int, int] | None],
+               person_placed: bool) -> None:
+    """コマの空いている場所（A: 左上 / B: 左下 / C: 右の吹き出しとずんだもんの間）を、矢印・小物・判子・大きな数字で埋める.
+
+    人がいるコマは A と B が人なので、T（人の頭の上）と C を埋める。
+    """
+    mood = str(p.get("mood") or "dark")
+    props = [str(x) for x in (p.get("props") or []) if str(x).strip()]
+    pool: list[tuple[str, Any]] = []
+    if p.get("stamp"):
+        pool.append(("stamp", str(p["stamp"])))
+    if p.get("big"):
+        pool.append(("big", str(p["big"])))
+    pool += [("prop", x) for x in props]
+    order = ["T", "C"] if person_placed else ["A", "B", "C"]
+    if not person_placed:
+        a = zones.get("A")
+        if a and p.get("arrows") in ("up", "down"):
+            up_arrows(bg, down=p["arrows"] == "down", box=a)
+            order = ["B", "C"]
+        elif a:
+            first = next((it for it in pool if it[0] == "prop"), None) or (pool[0] if pool else None)
+            if first:
+                pool.remove(first)
+                _draw_item(cfg, bg, first, a, mood)
+            order = ["B", "C"]
+    for z in order:
+        box = zones.get(z)
+        if not box or not pool or box[2] - box[0] < 60 or box[3] - box[1] < 50:
+            continue
+        _draw_item(cfg, bg, pool.pop(0), box, mood)
+
+
+def _draw_item(cfg: Config, bg: Image.Image, item: tuple[str, Any], box, mood: str) -> None:
+    kind, val = item
+    if kind == "stamp":
+        place_stamp(cfg, bg, val, box)
+    elif kind == "big":
+        place_big(cfg, bg, val, box, mood)
+    else:
+        place_props(bg, [val], box)
+
+
+_TAIL_AT = 0.86        # 吹き出しのしっぽの根元（楕円の横の位置）
+_TAIL_TO = 0.62        # しっぽの先（ずんだもんの横幅に対する位置）
+
+
+def _tail_x(cfg: Config, p: dict[str, Any], pw: int, z: Image.Image | None, has_person: bool) -> int:
+    """flow のコマの中で、吹き出しのしっぽが通るいちばん左の x（コマの座標）."""
+    line = str(p.get("line") or "")[:9]
+    if not line or z is None:
+        return pw
+    _, _, (bw, _) = bubble(cfg, line, 34)
+    ex = max(6, pw - bw - 10)
+    zx = pw - z.width + (36 if has_person else 50)
+    return int(min(ex + bw * _TAIL_AT, zx + z.width * _TAIL_TO))
+
+
 def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     top = 96
     pw, ph = W // 3, H - 96
@@ -538,16 +642,15 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
         mood = str(p.get("mood") or "dark")
         bg = mood_bg(mood, (pw, ph), background_for(cfg, p, used), seed=i)
         person = person_for(cfg, p, used) if (p.get("person_query") or p.get("person_file")) else None
+        head_y = 0
         if person is not None:
-            place_person(bg, person, right=zleft - 4, top=90, max_h=470, min_h=400)
-        else:
-            if p.get("arrows") in ("up", "down"):
-                up_arrows(bg, down=p["arrows"] == "down")
-            elif p.get("props"):
-                place_props(bg, [str(x) for x in p["props"]], zleft)
-        if p.get("stamp"):
-            st = label(cfg, str(p["stamp"])[:6], 66, fill="#E00000", fg="white").rotate(-10, expand=True, resample=Image.BICUBIC)
-            bg.alpha_composite(st, (4, 120))
+            head_y = place_person(bg, person, right=zleft - 4, top=90, max_h=470, min_h=400)[1]
+        zy_panel = ((596 - z.height) if has_person[i] else 320) - top if z is not None else ph
+        # 吹き出しのしっぽは右端を下りる（_tail_x）。C はその左側だけを使い、しっぽと重ねない
+        c_right = min(pw - 8, _tail_x(cfg, p, pw, z, has_person[i]) - 14)
+        fill_zones(cfg, bg, p, {"A": (8, 106, zleft - 6, 330), "B": (8, 330, zleft - 6, 440),
+                                "T": (8, 104, (zleft - 14) if p.get("props") else c_right, head_y + 16) if person is not None else None,
+                                "C": (zleft - 10, 110, c_right, zy_panel - 4)}, person_placed=person is not None)
         img.paste(bg, (i * pw, top))
     for i, p in enumerate(panels):
         z = zs[i]
@@ -562,7 +665,7 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
             ex, ey = i * pw + pw - bw - 10, top + 16
             if ex < i * pw + 6:
                 ex = i * pw + 6
-            b, (ox, oy), _ = bubble(cfg, line, 34, tail_to=(zx + z.width * 0.42 - ex, zy + 40 - ey))
+            b, (ox, oy), _ = bubble(cfg, line, 34, tail=(_TAIL_AT, 0.86), tail_to=(zx + z.width * _TAIL_TO - ex, zy + 40 - ey))
             img.alpha_composite(b, (ex - ox, ey - oy))
     d = ImageDraw.Draw(img)
     for i in (1, 2):
@@ -600,20 +703,20 @@ def render_versus(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
         mood = str(p.get("mood") or ("gold" if i == 0 else "glitch"))
         bg = mood_bg(mood, (hw, ph), background_for(cfg, p, used), seed=i + 7)
         person = person_for(cfg, p, used) if (p.get("person_query") or p.get("person_file")) else None
-        if person is not None:
-            if i == 0:
+        seam = 112                                     # 真ん中の矢印（≫）にかからない幅
+        if i == 0:
+            if person is not None:
                 place_person(bg, person, right=zl_left - 4, top=90, max_h=440)
-            else:
+            zt = (H - zl.height + 60 - top) if zl is not None else ph
+            zones = {"A": (14, 112, min(zl_left, hw - seam) - 6, 330), "B": (14, 330, zl_left - 6, 470),
+                     "C": (zl_left - 10, 112, hw - seam, zt - 6)}
+        else:
+            if person is not None:
                 place_person(bg, person, left=zr_right + 4, top=90, max_h=440)
-        elif p.get("arrows") in ("up", "down"):
-            up_arrows(bg, down=p["arrows"] == "down")
-        elif p.get("props"):
-            if i == 0:
-                place_props(bg, [str(x) for x in p["props"]], zl_left)
-            else:
-                sub = Image.new("RGBA", (hw - zr_right, ph), (0, 0, 0, 0))
-                place_props(sub, [str(x) for x in p["props"]], hw - zr_right)
-                bg.alpha_composite(sub, (zr_right, 40))
+            zt = (H - zr.height + 60 - top) if zr is not None else ph
+            zones = {"A": (max(zr_right, seam) + 6, 112, hw - 14, 330), "B": (zr_right + 6, 330, hw - 14, 470),
+                     "C": (seam, 112, zr_right + 10, zt - 6)}
+        fill_zones(cfg, bg, p, zones, person_placed=person is not None)
         img.paste(bg, (i * hw, top))
     d = ImageDraw.Draw(img)
     d.rectangle([hw - 5, top, hw + 5, H], fill="white")
@@ -694,7 +797,9 @@ _SPEC_SYSTEM = """あなたは YouTube の「ずんだもん解説」のサム�
   企業名・ブランド名は入れない
 - person_query: 人の写真を置くなら、その検索語（例:「札束 男性」「頭を抱える 会社員」「喜ぶ 女性」「驚く 男性」）。**人は全部で 2 コマまで**。置かないコマは空
 - arrows: 人を置かないコマで、"up"（値上がり）か "down"（値下がり）の大きな矢印を出すなら。なければ空
-- props: 人も矢印も置かないコマに置く絵文字の小物 1〜2 個（例: ["☀️", "☕"]、["💻", "🤖"]、["🏦", "💴"]）。**中身のない空のコマは作らない**
+- big: そのコマの大きな数字・言葉（5 字以内。例:「+5%」「158円」「億」「0円」「2倍」）。動画にある数字だけ。**どのコマにも入れる**
+- props: 絵文字の小物 1〜2 個（例: ["☀️", "☕"]、["💻", "🤖"]、["🏦", "💴"]）。**どのコマにも入れる**（空いた場所を埋める）。
+  サムネに空白を残さない。空いた場所は big / props / stamp / arrows で埋まるように、コマごとに 2 つ以上入れる
 - stamp: 人を置かないコマに斜めの赤い判子（4 字以内。例:「値上げ」「減額」）。なければ空
 - zunda: ずんだもんの表情。喜（両手を上げて喜ぶ）/ 驚愕（目を見開く）/ 絶望（ぐるぐる目・青ざめ）/ 困 / 考 / 指 / 笑 / 怒
 - line: ずんだもんのひと言。flow は 8 字以内、versus は 10 字以内。「〜のだ」口調（例:「やったのだ！」「高すぎるのだ！」「どうしてこうなった…」）
@@ -710,7 +815,7 @@ _SPEC_SCHEMA = {
         "labels": {"type": "array", "items": {"type": "string"}},
         "panels": {"type": "array", "items": {"type": "object", "properties": {
             "mood": {"type": "string"}, "bg_query": {"type": "string"}, "person_query": {"type": "string"},
-            "arrows": {"type": "string"}, "stamp": {"type": "string"}, "props": {"type": "array", "items": {"type": "string"}}, "zunda": {"type": "string"},
+            "arrows": {"type": "string"}, "stamp": {"type": "string"}, "props": {"type": "array", "items": {"type": "string"}}, "big": {"type": "string"}, "zunda": {"type": "string"},
             "line": {"type": "string"}, "label": {"type": "string"}}}},
     },
     "required": ["layout", "headline", "panels"],
