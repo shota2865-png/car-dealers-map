@@ -268,6 +268,11 @@ cast:
       side: right
       dir: assets/character/ずんだもん立ち絵素材2.3
       flip: false
+      # サムネ（thumbpanel）で使う大きな表情。動画の中の表情タグ（[驚] など）は character.py の既定のまま
+      expressions:
+        喜: {目: "にっこり", 眉: "上がり眉", 右腕: "手を挙げる", 左腕: "手を挙げる", 顔色: "ほっぺ赤め"}
+        驚愕: {目セット: "見開き白目", 黒目: "カメラ目線", 眉: "困り眉1", 左腕: "口元", 顔色: "ほっぺ2"}
+        絶望: {目: "ぐるぐる", 眉: "困り眉2", 顔色: "青ざめ", 右腕: "苦しむ", 左腕: "苦しむ"}
       subtitle_outline: "#1E7F3C"
       persona: >-
         就活中の大学 3 年生。ガクチカも貯金も資格もまだ無く、自己啓発本を買っては三日で止まる。
@@ -350,6 +355,16 @@ render:
   capcut:
     # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
     draft_dir: ""
+
+thumbnail:
+  # 自動サムネの型。cast = ずんだもん解説の定番（右に 2 人の立ち絵を大きく・太い縁取りの大きな文字・数字は赤・集中線の背景）
+  # panel = コマ割りの迫力サムネ（src/ytecon/thumbpanel.py）。台本から LLM が組み立てを決め、写真はぱくたそから探す。
+  #         人の写真は 1 枚に 2 人まで。失敗したら cast に落ちる
+  # cast  = 右に 2 人の立ち絵・太い縁取りの大きな文字・集中線
+  style: "panel"
+  cast_height: 0.80            # cast のときの手前の立ち絵の高さ（画面の高さに対する比）
+  # 写真素材のクレジット（panel のとき概要欄の「■ 素材」に足す）
+  credit: "写真素材: ぱくたそ（https://www.pakutaso.com/）"
 
 upload:
   # public | unlisted | private
