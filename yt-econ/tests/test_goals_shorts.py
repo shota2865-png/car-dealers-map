@@ -447,3 +447,18 @@ def test_publish_at_in_jst_is_sent_to_youtube_as_utc(cfg, monkeypatch, tmp_path)
     youtube.upload_video(cfg, store, video, Metadata(title="t", description="d"),
                          publish_at=finals.parse_jst("2026-09-22 21:00"))
     assert sent["status"]["publishAt"] == "2026-09-22T12:00:00Z"
+
+
+def test_cast_thumbnail_renders_characters_and_big_text(cfg, tmp_path):
+    from PIL import Image
+    from ytecon import thumbnail
+    assert cfg.get("thumbnail.style") == "cast"
+    out = thumbnail.render_cast(cfg, "会社員の一生／給料は2億円／ない", "生涯賃金とは？", tmp_path / "t.jpg",
+                                bubble="足りるのだ？", seed="x")
+    img = Image.open(out)
+    assert img.size == (1280, 720) and out.stat().st_size < 2_000_000
+    # 数字は赤で出る（赤い画素がある）
+    px = img.convert("RGB").resize((320, 180)).getdata()
+    assert any(r > 220 and g < 60 and b < 60 for r, g, b in px)
+    # 「／」入りの文言を bar / framed に渡しても落ちない（「／」は消して 1 行として組む）
+    thumbnail.render_framed(cfg, "一行目／二行目", "", tmp_path / "f.jpg")

@@ -351,6 +351,12 @@ render:
     # CapCut ドラフト保存先。空なら OS 既定パスを自動判定
     draft_dir: ""
 
+thumbnail:
+  # 自動サムネの型。cast = ずんだもん解説の定番（右に 2 人の立ち絵を大きく・太い縁取りの大きな文字・数字は赤・集中線の背景）
+  # 同じジャンルの動画と並んだときに「いつものずんだもん解説」と一目でわかることを優先する（9/28 に bar から変更）
+  style: "cast"
+  cast_height: 0.80            # 手前の立ち絵の高さ（画面の高さに対する比）
+
 upload:
   # public | unlisted | private
   privacy: "public"

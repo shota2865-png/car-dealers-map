@@ -37,6 +37,7 @@ _TITLE_SCHEMA = llm.obj(
         "reason": llm.STR,
         "thumbnail_main": llm.STR,
         "thumbnail_sub": llm.STR,
+        "thumbnail_bubble": llm.STR,
     }
 )
 
@@ -65,8 +66,10 @@ _TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。
 - 疑問形か、意外性のある事実の提示のどちらか
 
 サムネ文言の条件:
-- main は最大13字。遠目で読める短さ
-- sub は最大14字。main を補う一言。無理なら空文字
+- main は最大16字。遠目で読める短さ。数字があれば入れる（数字は赤で大きく出る）。
+  2〜3 行に分けて出すので、行の切れ目に「／」を入れる（1 行 8 字まで。例:「会社員の一生／給料は2億円／ない」）
+- sub は最大12字。main を補う一言（上の赤い帯に出る）。無理なら空文字
+- bubble は聞き役（ずんだもん）の吹き出しのひと言。8字まで。視聴者の本音を代わりに言う（例:「足りるのだ？」「逆なのだ！」）
 """
 
 
@@ -117,8 +120,9 @@ def choose_title(cfg: Config, script: VideoScript,
     body = keyword_first(data.get("title") or script.topic_title, data.get("keyword") or "")
     title = format_title(cfg, body, data.get("hook_tag") or "")
     thumb = {
-        "main": (data.get("thumbnail_main") or "")[:14],
+        "main": (data.get("thumbnail_main") or "")[:20],
         "sub": (data.get("thumbnail_sub") or "")[:16],
+        "bubble": (data.get("thumbnail_bubble") or "")[:8],
     }
     log.info("タイトル決定: %s", title)
     return title, thumb
