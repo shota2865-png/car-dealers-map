@@ -452,7 +452,6 @@ def test_publish_at_in_jst_is_sent_to_youtube_as_utc(cfg, monkeypatch, tmp_path)
 def test_cast_thumbnail_renders_characters_and_big_text(cfg, tmp_path):
     from PIL import Image
     from ytecon import thumbnail
-    assert cfg.get("thumbnail.style") == "cast"
     out = thumbnail.render_cast(cfg, "会社員の一生／給料は2億円／ない", "生涯賃金とは？", tmp_path / "t.jpg",
                                 bubble="足りるのだ？", seed="x")
     img = Image.open(out)
@@ -462,3 +461,33 @@ def test_cast_thumbnail_renders_characters_and_big_text(cfg, tmp_path):
     assert any(r > 220 and g < 60 and b < 60 for r, g, b in px)
     # 「／」入りの文言を bar / framed に渡しても落ちない（「／」は消して 1 行として組む）
     thumbnail.render_framed(cfg, "一行目／二行目", "", tmp_path / "f.jpg")
+
+
+def test_panel_thumbnail_limits_people_and_renders_offline(cfg, tmp_path, monkeypatch):
+    from PIL import Image, ImageDraw
+    from ytecon import thumbpanel as T
+    assert cfg.get("thumbnail.style") == "panel"
+    monkeypatch.setattr(T, "search_photos", lambda *a, **k: [])          # ネットに出ない
+    # 白い背景に人の形（切り抜ける）と、背景の写真
+    person = Image.new("RGB", (400, 600), "white")
+    ImageDraw.Draw(person).ellipse([120, 60, 280, 220], fill="#333333")
+    ImageDraw.Draw(person).rectangle([80, 220, 320, 600], fill="#222244")
+    person.save(tmp_path / "p.jpg")
+    Image.new("RGB", (800, 600), "#88AA44").save(tmp_path / "bg.jpg")
+    spec = {"layout": "flow", "headline": [["昇給しても", "red"], ["貧乏な謎", "white"]], "labels": ["賃上げ5%", "でも値上げ", "実質マイナス"],
+            "panels": [{"mood": "gold", "bg_file": str(tmp_path / "bg.jpg"), "person_file": str(tmp_path / "p.jpg"), "zunda": "喜", "line": "やったのだ！"},
+                       {"mood": "red", "person_file": str(tmp_path / "p.jpg"), "arrows": "up", "stamp": "値上げ", "zunda": "驚愕", "line": "高すぎるのだ！"},
+                       {"mood": "dark", "person_file": str(tmp_path / "p.jpg"), "zunda": "絶望", "line": "なんでなのだ…"}]}
+    limited = T._limit_people(spec["panels"])
+    assert sum(1 for p in limited if p.get("person_file") or p.get("person_query")) == T.MAX_PEOPLE == 2
+    out = T.render(cfg, spec, tmp_path / "flow.jpg")
+    assert Image.open(out).size == (1280, 720) and out.stat().st_size < 2_000_000
+    vs = {"layout": "versus", "headline": [["利上げなのに", "white"], ["円安", "red"]],
+          "panels": [{"label": "日銀 1.25%", "mood": "blue", "arrows": "up", "zunda": "指", "line": "上げたのだ"},
+                     {"label": "1ドル158円", "mood": "glitch", "person_file": str(tmp_path / "p.jpg"), "zunda": "驚愕", "line": "逆なのだ！？"}]}
+    assert Image.open(T.render(cfg, vs, tmp_path / "vs.jpg")).size == (1280, 720)
+    # 切り抜けない写真（背景が白くない）は使わない
+    assert T.cutout_white(Image.open(tmp_path / "bg.jpg")) is None
+    # 全身は上半身だけにする
+    tall = Image.new("RGBA", (100, 400))
+    assert T.bust(tall).size == (100, 135)

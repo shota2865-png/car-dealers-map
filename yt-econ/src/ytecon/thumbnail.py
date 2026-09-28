@@ -20,10 +20,18 @@ SIZE = (1280, 720)
 
 def build(cfg: Config, script: VideoScript, out: str | Path) -> Path:
     """自動サムネ。thumbnail.style =
-    cast（ずんだもん解説の定番: 大きな立ち絵 + 太い縁取りの文字 + 集中線）| bar（左にアクセントバー・ゴシック 3 行）| framed（写真 + 細枠 + 明朝 2 行）."""
+    panel（コマ割り + フリー写真 + ずんだもん。thumbpanel.py）| cast（ずんだもん解説の定番: 大きな立ち絵 + 太い縁取りの文字 + 集中線）| bar（左にアクセントバー・ゴシック 3 行）| framed（写真 + 細枠 + 明朝 2 行）."""
     main = (script.thumbnail_copy or {}).get("main") or script.topic_title
     sub = (script.thumbnail_copy or {}).get("sub") or ""
     style = str(cfg.get("thumbnail.style", "bar") or "bar").strip().lower()
+    if style == "panel":
+        try:
+            from . import thumbpanel
+            return thumbpanel.build(cfg, script, out)
+        except Exception as exc:                    # 素材が取れない・LLM が失敗 → 立ち絵の型に落とす
+            import logging
+            logging.getLogger(__name__).warning("コマ割りのサムネを作れなかったので cast にします: %s", exc)
+            style = "cast"
     if style == "cast":
         return render_cast(cfg, main, sub, out, bubble=(script.thumbnail_copy or {}).get("bubble") or "",
                            seed=script.topic_title)
