@@ -43,9 +43,19 @@ _UA = {"User-Agent": "Mozilla/5.0 (ytecon thumbnail)"}
 # ----------------------------------------------------------------------
 # 文字・図形
 # ----------------------------------------------------------------------
+_FONTS: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
+
+
 def _font(cfg: Config, size: int) -> ImageFont.FreeTypeFont:
-    from .assets import load_font
-    return load_font(cfg, size, "black")
+    """サムネの文字は角ゴシックの極太（thumbnail.font）。動画の丸ゴシック（visuals.font）とは分ける."""
+    path = cfg.root / str(cfg.get("thumbnail.font", "assets/fonts/NotoSansJP-Black.ttf"))
+    if not path.exists():
+        from .assets import load_font
+        return load_font(cfg, size, "black")
+    key = (str(path), size)
+    if key not in _FONTS:
+        _FONTS[key] = ImageFont.truetype(str(path), size)
+    return _FONTS[key]
 
 
 def _tw(text: str, font) -> float:
@@ -237,6 +247,65 @@ def say_box(cfg: Config, text: str, size=44, border="#1EAF3C") -> Image.Image:
     return im
 
 
+def emoji_image(ch: str, size: int) -> Image.Image | None:
+    """カラー絵文字を 1 つ、指定の幅で（小物として置く）."""
+    for path in ("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf"):
+        if os.path.exists(path):
+            break
+    else:
+        return None
+    try:
+        f = ImageFont.truetype(path, 109)
+        im = Image.new("RGBA", (180, 180), (0, 0, 0, 0))
+        ImageDraw.Draw(im).text((10, 10), ch, font=f, embedded_color=True)
+        box = im.getbbox()
+        if not box:
+            return None
+        im = im.crop(box)
+        return im.resize((size, max(1, int(im.height * size / im.width))), Image.LANCZOS)
+    except Exception:
+        return None
+
+
+def place_props(im: Image.Image, props: list[str], right_limit: int) -> None:
+    """人を置かないコマの左側に、絵文字の小物を白い縁つきで大きく置く（空のコマにしない）."""
+    spots = [(18, 70, 190), (int(right_limit * 0.35), 300, 140)]
+    for ch, (x, y, size) in zip([p for p in props if p][:2], spots):
+        e = emoji_image(ch, min(size, max(80, right_limit - x - 10)))
+        if e is not None:
+            im.alpha_composite(sticker(e, w=7), (x, y))
+
+
+def place_person(bg: Image.Image, person: Image.Image, *, right: int | None = None, left: int | None = None,
+                 top: int = 100, max_h: int = 470, min_h: int = 330, max_out: float = 0.3) -> None:
+    """人の切り抜きを置く。right（その x より右に出さない）/ left（その x より左に出さない）で、ずんだもんと重ねない.
+
+    下端はコマの下（大見出しの裏）まで下ろし、写真の切れ目を見せない。横は画面の外へ max_out まではみ出してよく、
+    それでも小さくなりすぎる（min_h 未満）ときは、はみ出しを 0.45 まで広げる。
+    """
+    pw, ph = bg.size
+    span = right if right is not None else pw - left
+
+    def sized(out_ratio: float) -> Image.Image:
+        room = span / (1 - out_ratio)
+        im = sticker(fit_h(person, max_h), w=8)
+        if im.width > room:
+            im = sticker(fit_h(person, max(200, int(max_h * room / im.width))), w=8)
+        return im
+
+    out_ratio = max_out
+    pim = sized(out_ratio)
+    if pim.height < min_h:
+        out_ratio = 0.45
+        pim = sized(out_ratio)
+    if right is not None:
+        x = max(min(right - pim.width, 10), -int(pim.width * out_ratio))
+    else:
+        x = min(max(left, pw - pim.width - 10), pw - pim.width + int(pim.width * out_ratio))
+    y = max(top, ph - pim.height + 30)
+    bg.alpha_composite(pim, (x, y))
+
+
 def up_arrows(im: Image.Image, down: bool = False) -> None:
     """黄色い太い矢印を 3 本（値上がり・値下がり）."""
     d = ImageDraw.Draw(im)
@@ -346,8 +415,12 @@ def pick_background(cfg: Config, query: str, avoid: set[str]) -> Image.Image | N
     return None
 
 
-def pick_person(cfg: Config, query: str, avoid: set[str]) -> Image.Image | None:
-    """白い背景で、きれいに切り抜ける人物写真の最初の 1 枚."""
+def pick_person(cfg: Config, query: str, avoid: set[str], max_aspect: float = 0.95) -> Image.Image | None:
+    """白い背景で、きれいに切り抜ける人物写真。腕を広げていない細身の写真（幅 / 高さ ≦ max_aspect）を先に選ぶ.
+
+    コマの幅は狭く、ずんだもんとも重ねないので、横に広い写真は小さくなってしまう。
+    """
+    fallback = None
     for q in (query, query.split()[-1] if " " in query else ""):
         if not q:
             continue
@@ -358,9 +431,17 @@ def pick_person(cfg: Config, query: str, avoid: set[str]) -> Image.Image | None:
                 cut = cutout_white(Image.open(p))
             except Exception:
                 cut = None
-            if cut is not None and cut.height > cut.width * 0.7:
+            if cut is None:
+                continue
+            b = bust(cut)
+            if b.width <= b.height * max_aspect:
                 avoid.add(p.name)
                 return cut
+            if fallback is None:
+                fallback = (p.name, cut)
+    if fallback:
+        avoid.add(fallback[0])
+        return fallback[1]
     return None
 
 
@@ -445,27 +526,32 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     while len(panels) < 3:
         panels.append({"mood": "dark"})
     used: set[str] = set()
+    has_person = [bool(p.get("person_query") or p.get("person_file")) for p in panels]
+    zs = [zunda(cfg, str(p.get("zunda") or "驚"), 175 if has_person[i] else 250) for i, p in enumerate(panels)]
     for i, p in enumerate(panels):
+        z = zs[i]
+        zx_rel = pw - z.width + (36 if has_person[i] else 50) if z is not None else pw
+        zleft = zx_rel + ((z.getbbox() or (0, 0, 0, 0))[0] if z is not None else 0)   # ずんだもんの見えている左端
         mood = str(p.get("mood") or "dark")
         bg = mood_bg(mood, (pw, ph), background_for(cfg, p, used), seed=i)
-        if p.get("person_query") or p.get("person_file"):
-            person = person_for(cfg, p, used)
-            if person is not None:
-                pim = fit_h(person, 470)
-                if pim.width > int(pw * 1.2):           # 横に広い写真は幅で合わせる（顔が大きくなりすぎない）
-                    pim = person.resize((int(pw * 1.2), int(person.height * pw * 1.2 / person.width)), Image.LANCZOS)
-                bg.alpha_composite(sticker(pim, w=8), (-135 if pim.height >= 400 else -60, max(120, ph - pim.height - 60)))
-        elif p.get("arrows") in ("up", "down"):
-            up_arrows(bg, down=p["arrows"] == "down")
+        person = person_for(cfg, p, used) if (p.get("person_query") or p.get("person_file")) else None
+        if person is not None:
+            place_person(bg, person, right=zleft - 4, top=90, max_h=470, min_h=400)
+        else:
+            if p.get("arrows") in ("up", "down"):
+                up_arrows(bg, down=p["arrows"] == "down")
+            elif p.get("props"):
+                place_props(bg, [str(x) for x in p["props"]], zleft)
         if p.get("stamp"):
             st = label(cfg, str(p["stamp"])[:6], 66, fill="#E00000", fg="white").rotate(-10, expand=True, resample=Image.BICUBIC)
             bg.alpha_composite(st, (4, 120))
         img.paste(bg, (i * pw, top))
     for i, p in enumerate(panels):
-        z = zunda(cfg, str(p.get("zunda") or "驚"), 250)
+        z = zs[i]
         if z is None:
             continue
-        zx, zy = i * pw + pw - z.width + 60, 320
+        zx = i * pw + pw - z.width + (36 if has_person[i] else 50)
+        zy = (596 - z.height) if has_person[i] else 320
         img.alpha_composite(z, (zx, zy))
         line = str(p.get("line") or "")[:9]
         if line:
@@ -501,16 +587,30 @@ def render_versus(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     while len(panels) < 2:
         panels.append({"mood": "dark"})
     used: set[str] = set()
+    zl = zunda(cfg, str(panels[0].get("zunda") or "喜"), 260)
+    zr = zunda(cfg, str(panels[1].get("zunda") or "絶望"), 260)
+    zl_x = hw - zl.width + 10 if zl is not None else hw
+    zr_x = hw + 4
+    zl_left = zl_x + ((zl.getbbox() or (0, 0, 0, 0))[0] if zl is not None else 0)             # 左のずんだもんの見えている左端
+    zr_right = zr_x + ((zr.getbbox() or (0, 0, 0, 0))[2] if zr is not None else 0) - hw       # 右のずんだもんの右端（右のコマの中で）
     for i, p in enumerate(panels):
         mood = str(p.get("mood") or ("gold" if i == 0 else "glitch"))
         bg = mood_bg(mood, (hw, ph), background_for(cfg, p, used), seed=i + 7)
-        if p.get("person_query") or p.get("person_file"):
-            person = person_for(cfg, p, used)
-            if person is not None:
-                st = sticker(fit_h(person, 500), w=9)
-                bg.alpha_composite(st, (40, 100) if i == 0 else (hw - st.width + 20, 110))
+        person = person_for(cfg, p, used) if (p.get("person_query") or p.get("person_file")) else None
+        if person is not None:
+            if i == 0:
+                place_person(bg, person, right=zl_left - 4, top=90, max_h=440)
+            else:
+                place_person(bg, person, left=zr_right + 4, top=90, max_h=440)
         elif p.get("arrows") in ("up", "down"):
             up_arrows(bg, down=p["arrows"] == "down")
+        elif p.get("props"):
+            if i == 0:
+                place_props(bg, [str(x) for x in p["props"]], zl_left)
+            else:
+                sub = Image.new("RGBA", (hw - zr_right, ph), (0, 0, 0, 0))
+                place_props(sub, [str(x) for x in p["props"]], hw - zr_right)
+                bg.alpha_composite(sub, (zr_right, 40))
         img.paste(bg, (i * hw, top))
     d = ImageDraw.Draw(img)
     d.rectangle([hw - 5, top, hw + 5, H], fill="white")
@@ -519,12 +619,10 @@ def render_versus(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
             img.alpha_composite(fit_label(cfg, str(p["label"])[:10], hw - 60, 54), (i * hw + 24, top + 18))
     ch = chevrons(3, 130)
     img.alpha_composite(ch, (hw - ch.width // 2, top + ph // 2 - 110))
-    zl = zunda(cfg, str(panels[0].get("zunda") or "喜"), 260)
-    zr = zunda(cfg, str(panels[1].get("zunda") or "絶望"), 260)
     if zl is not None:
-        img.alpha_composite(zl, (hw - zl.width + 10, H - zl.height + 60))
+        img.alpha_composite(zl, (zl_x, H - zl.height + 60))
     if zr is not None:
-        img.alpha_composite(zr, (hw + 4, H - zr.height + 60))
+        img.alpha_composite(zr, (zr_x, H - zr.height + 60))
     for i, p in enumerate(panels):
         line = str(p.get("line") or "")[:11]
         if line:
@@ -593,6 +691,7 @@ _SPEC_SYSTEM = """あなたは YouTube の「ずんだもん解説」のサム�
   企業名・ブランド名は入れない
 - person_query: 人の写真を置くなら、その検索語（例:「札束 男性」「頭を抱える 会社員」「喜ぶ 女性」「驚く 男性」）。**人は全部で 2 コマまで**。置かないコマは空
 - arrows: 人を置かないコマで、"up"（値上がり）か "down"（値下がり）の大きな矢印を出すなら。なければ空
+- props: 人も矢印も置かないコマに置く絵文字の小物 1〜2 個（例: ["☀️", "☕"]、["💻", "🤖"]、["🏦", "💴"]）。**中身のない空のコマは作らない**
 - stamp: 人を置かないコマに斜めの赤い判子（4 字以内。例:「値上げ」「減額」）。なければ空
 - zunda: ずんだもんの表情。喜（両手を上げて喜ぶ）/ 驚愕（目を見開く）/ 絶望（ぐるぐる目・青ざめ）/ 困 / 考 / 指 / 笑 / 怒
 - line: ずんだもんのひと言。flow は 8 字以内、versus は 10 字以内。「〜のだ」口調（例:「やったのだ！」「高すぎるのだ！」「どうしてこうなった…」）
@@ -608,7 +707,7 @@ _SPEC_SCHEMA = {
         "labels": {"type": "array", "items": {"type": "string"}},
         "panels": {"type": "array", "items": {"type": "object", "properties": {
             "mood": {"type": "string"}, "bg_query": {"type": "string"}, "person_query": {"type": "string"},
-            "arrows": {"type": "string"}, "stamp": {"type": "string"}, "zunda": {"type": "string"},
+            "arrows": {"type": "string"}, "stamp": {"type": "string"}, "props": {"type": "array", "items": {"type": "string"}}, "zunda": {"type": "string"},
             "line": {"type": "string"}, "label": {"type": "string"}}}},
     },
     "required": ["layout", "headline", "panels"],

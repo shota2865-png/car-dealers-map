@@ -491,3 +491,17 @@ def test_panel_thumbnail_limits_people_and_renders_offline(cfg, tmp_path, monkey
     # 全身は上半身だけにする
     tall = Image.new("RGBA", (100, 400))
     assert T.bust(tall).size == (100, 135)
+
+
+def test_panel_person_never_crosses_zundamon_and_font_is_square_gothic(cfg):
+    from PIL import Image
+    from ytecon import thumbpanel as T
+    assert T._font(cfg, 40).path.endswith("NotoSansJP-Black.ttf")        # 動画の丸ゴシックではなく、角ゴシックの極太
+    wide = Image.new("RGBA", (900, 700), (40, 40, 40, 255))               # 腕を広げた横長の人
+    bg = Image.new("RGBA", (426, 624), (0, 0, 0, 0))
+    T.place_person(bg, wide, right=240, top=90, max_h=470, min_h=400)
+    box = bg.getbbox()
+    assert box is not None and box[2] <= 240                              # ずんだもんの左端より右に出ない
+    bg2 = Image.new("RGBA", (640, 570), (0, 0, 0, 0))
+    T.place_person(bg2, wide, left=260, top=90, max_h=440)
+    assert bg2.getbbox()[0] >= 260
