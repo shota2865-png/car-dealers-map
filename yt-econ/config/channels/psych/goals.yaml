@@ -7,7 +7,7 @@ goal:
   days: 37                   # 2026-10-31 まで
   views: 250000              # 合計は目安
   mix: {shorts: 0.85, long: 0.15}
-  per_day: {long: 1, shorts: 3}
+  per_day: {long: 1, shorts: 5}
 
 targets:
   subscribers: 100

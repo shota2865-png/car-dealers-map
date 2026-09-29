@@ -339,7 +339,8 @@ def short_angles(data: dict[str, Any], n: int = 3) -> list[tuple[str, str]]:
     parts = ol.get("parts") or []
     if not parts:
         return [(str(data.get("title") or ""), "")] * n
-    idx = sorted({round(i * (len(parts) - 1) / max(1, n - 1)) for i in range(n)}) if n > 1 else [0]
+    k = min(n, len(parts))
+    idx = sorted({round(i * (len(parts) - 1) / max(1, k - 1)) for i in range(k)}) if k > 1 else [0]
     out = []
     for i in idx[:n]:
         p = parts[i]
@@ -349,6 +350,15 @@ def short_angles(data: dict[str, Any], n: int = 3) -> list[tuple[str, str]]:
                  + (f"A: {opts[0]} / B: {opts[1]}。" if len(opts) >= 2 else "")
                  + "要点: " + " ".join((p.get("points") or [])[:4]))
         out.append((str(p.get("heading") or data.get("title") or ""), angle))
+    # 章より多く作るときは、同じ章の「研究・後半の要点」から別の問いを立てる（前の Shorts とクイズを変える）
+    j = 0
+    while len(out) < n:
+        p = parts[j % len(parts)]
+        rest = (p.get("research") or []) + (p.get("points") or [])[2:]
+        angle = (f"{p.get('heading', '')}。この章の、前の Shorts とは別の話題で問いを立てる（同じクイズは使わない）。"
+                 + ("材料: " + " ".join(str(x) for x in rest[:4]) if rest else "日常の別の場面で、同じ心のくせを確かめる問いにする"))
+        out.append((str(p.get("heading") or data.get("title") or ""), angle))
+        j += 1
     return out
 
 

@@ -126,11 +126,11 @@ def test_daily_flow_uploads_long_then_shorts_after_it_and_resumes(cfg, tmp_path,
     assert calls["write"] == 1 and res["video_id"] == "v1"
     long_, shorts = calls["publish"][0], calls["publish"][1:]
     assert "現代人のための心理学" in long_["title"] and long_["after"] is None
-    assert len(shorts) == 3 and all(s["after"] is not None for s in shorts)     # Shorts は本編の公開後の枠
+    assert len(shorts) == 5 and all(s["after"] is not None for s in shorts)     # Shorts は本編の公開後の枠
     assert store.get_video("ep1").stage.get("kind") == "long"
     # 同じ slug で回し直しても、台本も投稿もやり直さない
     pipe.produce(topic, upload=True, slug="ep1")
-    assert calls["write"] == 1 and len(calls["publish"]) == 4
+    assert calls["write"] == 1 and len(calls["publish"]) == 6
 
 
 def test_caption_cues_split_by_sentence_and_keep_timing():
@@ -209,3 +209,18 @@ def test_weekly_report_renders_tables():
     assert "## 目標まで（期限 2026-10-31、1/37 日目）" in text and "登録者 2 / 100 人" in text and "Shorts の平均再生 1,050 / 10,000 回（直近 3 本）  → 遅れ" in text
     assert "+347%" in text and "Shorts のフィード: 4,304（98%）" in text and "2分56秒" in text and "53%" in text
     assert report._iso_seconds("PT17M1S") == 1021 and report._iso_seconds("PT45S") == 45
+
+
+def test_five_shorts_from_four_chapters_and_upload_guard(cfg, tmp_path):
+    ol = {**OUTLINE, "parts": OUTLINE["parts"][:4]}
+    got = honpen.short_angles({"title": "t", "outline": ol}, 5)
+    assert len(got) == 5 and "別の話題" in got[4][1]                    # 章より多いときは同じ章から別の問い
+    assert cfg.get("shorts.per_video") == 5 and len(cfg.get("shorts.publish_times_jst")) == 5
+    from ytecon import youtube
+    from ytecon.state import Store
+    guard = youtube.QuotaGuard(Store(tmp_path / "q.db"))
+    for _ in range(12):                                                  # 2 チャンネル × (本編 1 + Shorts 5)
+        guard.check(youtube.COST_UPLOAD + 50 + 400 + 50)
+        guard.check_upload()
+        guard.spend(youtube.COST_UPLOAD)
+        guard.spend_upload()

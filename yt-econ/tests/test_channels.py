@@ -168,7 +168,7 @@ def test_psych_profile_overrides_and_inherits(psych):
     assert psych.get("video.design") == "dads" and design.tokens(psych)["name"] == "dads"
     assert psych.get("render.bgm.file") != load_config().get("render.bgm.file")
     assert psych.get("upload.publish_times_jst") == ["20:00"]
-    assert len(psych.get("shorts.publish_times_jst")) == 3
+    assert len(psych.get("shorts.publish_times_jst")) == psych.get("shorts.per_video") == 5
     assert psych.get("thumbnail.style") == "framed"
     assert finals.prefix(psych) == "ps"
     # 置き場が本体と混ざらない
