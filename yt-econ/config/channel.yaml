@@ -273,6 +273,7 @@ cast:
         喜: {目: "にっこり", 眉: "上がり眉", 右腕: "手を挙げる", 左腕: "手を挙げる", 顔色: "ほっぺ赤め"}
         驚愕: {目セット: "見開き白目", 黒目: "カメラ目線", 眉: "困り眉1", 左腕: "口元", 顔色: "ほっぺ2"}
         絶望: {目: "ぐるぐる", 眉: "困り眉2", 顔色: "青ざめ", 右腕: "苦しむ", 左腕: "苦しむ"}
+        眠: {目: "UU", 眉: "困り眉1", 顔色: "ほっぺ赤め"}
       subtitle_outline: "#1E7F3C"
       persona: >-
         就活中の大学 3 年生。ガクチカも貯金も資格もまだ無く、自己啓発本を買っては三日で止まる。
@@ -365,6 +366,13 @@ thumbnail:
   cast_height: 0.80            # cast のときの手前の立ち絵の高さ（画面の高さに対する比）
   # 写真素材のクレジット（panel のとき概要欄の「■ 素材」に足す）
   credit: "写真素材: ぱくたそ（https://www.pakutaso.com/）"
+
+# 週 1 回の総集編（.github/workflows/weekly-compilation.yml → ytecon compile）。直近 1 週間の本編をつなげる
+compilation:
+  publish_times_jst: ["22:00"]        # 日曜の朝に作って、その日の 22:00 に公開
+  playlist_title: "睡眠用・1週間まとめ"
+  title_prefix: "【睡眠用・作業用】"
+  min_episodes: 3                      # これより少ない週は作らない
 
 upload:
   # public | unlisted | private

@@ -1,0 +1,88 @@
+name: 週1 総集編（おやすみ経済学）
+
+# ------------------------------------------------------------
+# 毎週日曜に、直近 1 週間の本編（毎日の実行の成果物）をつなげた「睡眠用・作業用 1 週間まとめ」を作り、
+# 日曜 22:00 JST に予約公開する。新しい台本は作らない（自分の動画のまとめ）。
+# 成果物は 7 日で消えるので、直近 8 回の実行から集める。
+# ------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: "40 1 * * 0"          # 日曜 JST 10:40
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: "YouTube に予約投稿するか（false にすると mp4 を成果物に残すだけ）"
+        type: boolean
+        default: true
+      days:
+        description: "何日前までの本編を入れるか"
+        default: "7"
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  PYTHONPATH: src
+  YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+  YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+  YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    concurrency:
+      group: ytecon-weekly-compilation
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: yt-econ
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: yt-econ/requirements.txt
+
+      - name: ffmpeg を入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
+      - name: Python 依存を入れる
+        run: pip install -r requirements.txt
+
+      # 毎日の実行（daily-upload.yml）の成果物 ytecon-main-<run_id> を落とす。Shorts の動画は使わないので消して容量を空ける
+      - name: 直近 1 週間の本編を集める
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ../dl
+          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow daily-upload.yml -L 10 --json databaseId,conclusion -q '.[] | select(.conclusion=="success") | .databaseId'); do
+            gh run download "$id" -R "$GITHUB_REPOSITORY" -n "ytecon-main-$id" -D "../dl/$id" || echo "::notice::$id の成果物は取れませんでした（期限切れ等）"
+            find "../dl/$id" -path "*/shorts/*" -name "*.mp4" -delete 2>/dev/null || true
+            rm -rf "../dl/$id/finals" 2>/dev/null || true
+          done
+          du -sh ../dl || true
+
+      - name: つなげて投稿
+        timeout-minutes: 110
+        run: |
+          python -m ytecon compile ../dl --days "${{ github.event.inputs.days || 7 }}" --out compilation \
+            ${{ github.event.inputs.upload == 'false' && '' || '--upload' }} | tee compile-report.txt
+          { echo "## 総集編"; echo '```'; cat compile-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: 成果物を残す（投稿しないとき）
+        if: always() && github.event.inputs.upload == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytecon-compilation-${{ github.run_id }}
+          retention-days: 7
+          path: |
+            yt-econ/compilation/compilation.mp4
+            yt-econ/compilation/metadata.json
+            yt-econ/compilation/thumbnail.jpg
