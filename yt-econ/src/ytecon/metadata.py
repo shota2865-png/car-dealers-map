@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from . import domain, llm
 from .config import Config
@@ -60,6 +61,7 @@ _TITLE_SYSTEM = """あなたは日本語YouTubeのタイトル設計者です。
 - **先頭の 12 字以内に、人が検索窓に打ち込む語（keyword）を置く**。制度名・商品名・お金の言葉など、
   そのままの表記で（例:「生涯賃金」「新NISA」「年収の壁」）。keyword にはその語だけを入れる
 - 40字以内。スマホで切れずに読めるのは冒頭28字程度なので、前半に要点を置く
+- title には【】を入れない（引きの【】は hook_tag に入れる。こちらで付ける）
 - 「知らないと損」「ヤバい」など煽り語を使わない。内容と一致させる
 - 数字か固有名詞を1つ入れる
 - サムネの文言と同じ言葉を繰り返さない（同じ情報を2回見せると密度が下がる）
@@ -143,8 +145,18 @@ def format_title(cfg: Config, body: str, hook_tag: str = "") -> str:
     （upload.title_hook_position: front で以前の【引き】本題 に戻せる）。
     """
     suffix = str(cfg.get("upload.title_suffix", "") or "").strip()
-    body = body.strip().strip("【】")
     tag = hook_tag.strip().strip("【】")[:12]
+    body = body.strip()
+    # 本題の頭に【引き】が付いて返ってきたら、引きとして扱って本題から外す（「値下げは政策】スマホ代…」のような崩れを防ぐ）
+    m = re.match(r"^【([^】]{1,20})】", body)
+    if m and body[m.end():].strip():
+        tag = tag or m.group(1)[:12]
+        body = body[m.end():]
+    if tag:
+        body = body.replace(f"【{tag}】", "")
+    if suffix:
+        body = body.replace(suffix, "")
+    body = body.replace("【", "").replace("】", "").strip()
     hook = f"【{tag}】" if tag and cfg.get("upload.title_hook_tag", True) else ""
     room = MAX_TITLE - len(hook) - len(suffix)
     if len(body) > room:
