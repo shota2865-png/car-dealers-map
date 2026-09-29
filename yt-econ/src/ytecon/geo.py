@@ -147,6 +147,11 @@ def draw_map(cfg: Config, layer, scene: dict[str, Any], size: tuple[int, int]) -
                         d.polygon(pts, fill=ACCENT, outline="#8C1C13", width=int(3 * SS))
     for a in scene.get("arrows") or []:
         _arrow(d, proj(a[0], a[1]), proj(a[2], a[3]), SS)
+    for mk in scene.get("markers") or []:           # 地点のピン（町の場所）
+        x, y = proj(mk[0], mk[1])
+        r = int((mk[2] if len(mk) > 2 else 16) * SS)
+        d.ellipse([x - r - 4 * SS, y - r - 4 * SS, x + r + 4 * SS, y + r + 4 * SS], fill="white")
+        d.ellipse([x - r, y - r, x + r, y + r], fill=ACCENT)
     for lab in scene.get("labels") or []:
         text, lon, lat = lab[0], lab[1], lab[2]
         fs = int((lab[3] if len(lab) > 3 else 56) * SS)
@@ -249,13 +254,22 @@ def _ass_time(t: float) -> str:
     return f"{int(h)}:{int(m):02d}:{s:05.2f}"
 
 
-def _wrap_sub(text: str, n: int = 24) -> str:
-    """字幕は 1 行 24 字まで。読点で折る."""
+def _wrap_sub(text: str, n: int = 21) -> str:
+    """字幕は 2 行まで・1 行 21 字まで。読点 → 助詞のあと、の順に、真ん中に近いところで折る（「土地／を」のように割らない）."""
     if len(text) <= n:
         return text
-    cut = max(text.rfind("、", 0, n), text.rfind("。", 0, n))
-    cut = cut + 1 if cut > n // 3 else n
-    return text[:cut] + r"\N" + _wrap_sub(text[cut:], n)
+    L = len(text)
+
+    def best(cands: list[int], slack: int = 2) -> int | None:
+        ok = [i for i in cands if L - i <= n + slack and i <= n + slack]
+        return min(ok, key=lambda i: abs(i - L / 2)) if ok else None
+
+    punct = [i + 1 for i, ch in enumerate(text[:-1]) if ch in "、。"]
+    parts = [i + 1 for i, ch in enumerate(text[:-1]) if ch in "はがをにでとのもへや" and text[i + 1] not in "、。」ゃゅょっー"
+             and not text[i + 1:].startswith(("いう", "いわ", "して", "なる"))]
+    cut = best(punct) or best(punct, 4) or best(parts) or n
+    rest = text[cut:]
+    return text[:cut] + r"\N" + (rest if len(rest) <= n + 2 else _wrap_sub(rest, n))
 
 
 def render(cfg: Config, spec: dict[str, Any], outdir: str | Path) -> Path:
@@ -332,7 +346,7 @@ def render(cfg: Config, spec: dict[str, Any], outdir: str | Path) -> Path:
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, "
         "StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Sub,Noto Sans JP Black,66,&H00FFFFFF,&H00FFFFFF,&H00202020,&H99000000,0,0,0,0,100,100,0,0,3,14,0,2,80,80,54,1\n\n"
+        "Style: Sub,Noto Sans JP Black,86,&H00FFFFFF,&H00FFFFFF,&H00202020,&H99000000,0,0,0,0,100,100,0,0,3,14,0,2,80,80,54,1\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         + "".join(f"Dialogue: 0,{_ass_time(s)},{_ass_time(e)},Sub,,0,0,0,,{_wrap_sub(txt)}\n" for s, e, txt in cues),
         encoding="utf-8")
