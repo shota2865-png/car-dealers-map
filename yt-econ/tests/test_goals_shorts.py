@@ -505,3 +505,11 @@ def test_panel_person_never_crosses_zundamon_and_font_is_square_gothic(cfg):
     bg2 = Image.new("RGBA", (640, 570), (0, 0, 0, 0))
     T.place_person(bg2, wide, left=260, top=90, max_h=440)
     assert bg2.getbbox()[0] >= 260
+
+
+def test_title_with_leading_bracket_hook_is_not_broken(cfg):
+    from ytecon.metadata import format_title
+    t = format_title(cfg, "【値下げは政策】スマホ代はなぜ5年でまた上がる？", "値下げは政策")
+    assert t == "スマホ代はなぜ5年でまた上がる？【値下げは政策】【ずんだもん&めたん解説】"
+    t = format_title(cfg, "【値下げは政策】スマホ代はなぜ上がる？", "")
+    assert t == "スマホ代はなぜ上がる？【値下げは政策】【ずんだもん&めたん解説】"
