@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 W, H = 1280, 720
 MAX_PEOPLE = 2
 MOODS = ("gold", "red", "blue", "dark", "glitch")
-EXPRESSIONS = ("喜", "驚愕", "絶望", "困", "考", "指", "笑", "怒", "驚")
+EXPRESSIONS = ("喜", "驚愕", "絶望", "困", "考", "指", "笑", "怒", "驚", "眠")
 _UA = {"User-Agent": "Mozilla/5.0 (ytecon thumbnail)"}
 
 

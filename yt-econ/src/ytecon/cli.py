@@ -525,6 +525,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compile(args: argparse.Namespace) -> int:
+    """週 1 回の総集編。毎日の本編（Actions の成果物）をつなげて、章つきで予約投稿する."""
+    from .config import load_config
+    from . import compilation
+    cfg = load_config(args.config, channel=args.channel)
+    out = Path(args.out) if args.out else cfg.workdir / "compilation"
+    res = compilation.make(cfg, args.source, out, days=args.days, upload=args.upload)
+    print(json.dumps(res, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ytecon", description="経済解説YouTubeチャンネルの自動運用")
@@ -636,6 +647,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--upload", action="store_true", help="作った Shorts を予約投稿する")
     p.add_argument("--parent-url", help="概要欄に入れる本編の URL")
     p.set_defaults(func=cmd_shorts)
+
+    p = sub.add_parser("compile", help="週 1 回の総集編（毎日の本編をつなげて、章つきで予約投稿）")
+    p.add_argument("source", help="成果物（<slug>/video.mp4 と metadata.json）を落としたフォルダ")
+    p.add_argument("--days", type=int, default=7, help="何日前までの本編を入れるか")
+    p.add_argument("--out", help="書き出し先（既定 <workdir>/compilation）")
+    p.add_argument("--upload", action="store_true", help="予約投稿する（compilation.publish_times_jst の枠）")
+    p.set_defaults(func=cmd_compile)
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
