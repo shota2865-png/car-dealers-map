@@ -27,7 +27,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageStat
 
 from .config import Config
 
@@ -56,6 +56,29 @@ def _font(cfg: Config, size: int) -> ImageFont.FreeTypeFont:
     if key not in _FONTS:
         _FONTS[key] = ImageFont.truetype(str(path), size)
     return _FONTS[key]
+
+
+_CMAPS: dict[str, set[int]] = {}
+_ARROWS = "→⇒➡⟶➔➜►▶"
+
+
+def _glyphs(cfg: Config, text: str) -> str:
+    """サムネの字体に無い字（矢印「→」など）は豆腐（□）になるので、読める形に直す。矢印 1 つは「から」、2 つ以上は「»」."""
+    path = cfg.root / str(cfg.get("thumbnail.font", "assets/fonts/NotoSansJP-Black.ttf"))
+    if str(path) not in _CMAPS:
+        try:
+            from fontTools.ttLib import TTFont
+            _CMAPS[str(path)] = set(TTFont(str(path), lazy=True).getBestCmap())
+        except Exception:
+            _CMAPS[str(path)] = set()
+    cmap = _CMAPS[str(path)]
+    if not cmap:
+        return text
+    n = sum(text.count(a) for a in _ARROWS)
+    for a in _ARROWS:
+        if ord(a) not in cmap:
+            text = text.replace(a, "から" if n == 1 else "»")
+    return "".join(ch for ch in text if ord(ch) in cmap or ch.isspace())
 
 
 def _tw(text: str, font) -> float:
@@ -140,6 +163,7 @@ def sticker(im: Image.Image, w: int = 9, color: str = "white") -> Image.Image:
 def big_text(cfg: Config, parts: list[tuple[str, str]], size: int, *, inner=10, outer=22, skew=0.12, shadow=True) -> Image.Image:
     """大見出し。parts = [(文字, "red" | "white")]。赤はグラデーション + 白の内縁、白は黒の内縁。外側に黒の太い縁と影."""
     f = _font(cfg, size)
+    parts = [(_glyphs(cfg, t), c) for t, c in parts]
     wsum = sum(_tw(t, f) for t, _ in parts)
     cw, ch = int(wsum + outer * 4 + 40), int(size * 1.5 + outer * 2)
     lay = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -178,6 +202,7 @@ def big_text(cfg: Config, parts: list[tuple[str, str]], size: int, *, inner=10, 
 def bubble(cfg: Config, text: str, size: int = 34, tail=(0.62, 0.9), tail_to=None, pad=(34, 20), border=6):
     """吹き出し（楕円 + しっぽを 1 つの形として縁取る）。tail_to は楕円の左上からの相対座標。(画像, 楕円の左上) を返す."""
     f = _font(cfg, size)
+    text = _glyphs(cfg, text)
     w, h = int(_tw(text, f) + pad[0] * 2), int(size * 1.3 + pad[1] * 2)
     tx, ty = tail_to if tail_to else (w * 0.5, h + 50)
     mg = 80
@@ -206,6 +231,7 @@ def bubble(cfg: Config, text: str, size: int = 34, tail=(0.62, 0.9), tail_to=Non
 
 def label(cfg: Config, text: str, size=50, fill="#FFE600", fg="black", border=5, pad=(18, 6)) -> Image.Image:
     f = _font(cfg, size)
+    text = _glyphs(cfg, text)
     w, h = int(_tw(text, f) + pad[0] * 2 + border * 2), int(size * 1.25 + pad[1] * 2 + border * 2)
     im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
@@ -593,6 +619,12 @@ def fill_zones(cfg: Config, bg: Image.Image, p: dict[str, Any], zones: dict[str,
                 pool.remove(first)
                 _draw_item(cfg, bg, first, a, mood)
             order = ["B", "C"]
+    # 大きな数字は、いちばん広い空きに置く（狭い所に入れると小さくなって読めない）
+    def area(z: str) -> int:
+        b = zones.get(z)
+        return max(0, b[2] - b[0]) * max(0, b[3] - b[1]) if b else 0
+    order = sorted(order, key=area, reverse=True)
+    pool.sort(key=lambda it: {"big": 0, "stamp": 1}.get(it[0], 2))
     for z in order:
         box = zones.get(z)
         if not box or not pool or box[2] - box[0] < 60 or box[3] - box[1] < 50:
@@ -608,6 +640,62 @@ def _draw_item(cfg: Config, bg: Image.Image, item: tuple[str, Any], box, mood: s
         place_big(cfg, bg, val, box, mood)
     else:
         place_props(bg, [val], box)
+
+
+# 空いた場所を埋める小物（コマの props を先に使い、足りなければ気分ごとの小物）
+MOOD_FILLERS = {
+    "gold": ["💰", "💴", "✨", "🪙", "💎", "📈"],
+    "red": ["⚠️", "🔥", "📈", "💥", "❗", "🚨"],
+    "blue": ["📊", "🔍", "💡", "🧮", "📝", "🏦"],
+    "dark": ["💸", "📉", "😱", "💧", "❓", "🌧️"],
+    "glitch": ["⚡", "💥", "❗", "⚠️", "🌀", "❓"],
+}
+FILL_SIZES = (190, 160, 135, 112, 94, 78, 64, 54)      # 大きい空きから順に埋める（いちばん小さい空きでも 54px 角）
+
+
+def occupancy(base: Image.Image, now: Image.Image) -> Image.Image:
+    """何も置いていない背景（base）と今の絵（now）を比べ、何かが載っている所を白（255）にした地図."""
+    diff = ImageChops.difference(base.convert("RGB"), now.convert("RGB")).convert("L")
+    return diff.point(lambda v: 255 if v > 10 else 0).filter(ImageFilter.MaxFilter(9))
+
+
+def fill_gaps(img: Image.Image, occ: Image.Image, region: tuple[int, int, int, int], emojis: list[str],
+              seed: int = 0, step: int = 10, max_items: int = 14) -> int:
+    """region の中の、まだ何も載っていない四角い空きを、大きい順に小物で埋める（空白のサムネにしない）。置いた数を返す."""
+    import random
+    rnd = random.Random(seed)
+    x0, y0, x1, y1 = region
+    emojis = [e for e in emojis if e] or ["✨"]
+    k = 0
+    placed = 0
+    for size in FILL_SIZES:
+        if placed >= max_items:
+            break
+        cands = [(x, y) for y in range(y0, y1 - size + 1, step) for x in range(x0, x1 - size + 1, step)]
+        # 空きの真ん中に置きたいので、上下左右に余白を取れる位置を先に見る
+        for x, y in cands:
+            if placed >= max_items:
+                break
+            m = 6
+            box = (x - m, y - m, x + size + m, y + size + m)
+            # 縁が少しかかるくらいは許す（四角の 8% まで）
+            if ImageStat.Stat(occ.crop(box)).mean[0] > 255 * 0.08:
+                continue
+            e = emoji_image(emojis[k % len(emojis)], 300)
+            k += 1
+            if e is None:
+                continue
+            e = sticker(e, w=7).rotate(rnd.uniform(-14, 14), expand=True, resample=Image.BICUBIC)
+            e, pos = _fit_into(e, (x, y, x + size, y + size))
+            img.alpha_composite(e, pos)
+            ImageDraw.Draw(occ).rectangle(box, fill=255)
+            placed += 1
+    return placed
+
+
+def _fillers(p: dict[str, Any], mood: str) -> list[str]:
+    own = [str(x) for x in (p.get("props") or []) if str(x).strip()]
+    return list(dict.fromkeys(own + MOOD_FILLERS.get(mood, MOOD_FILLERS["dark"])))
 
 
 _TAIL_AT = 0.86        # 吹き出しのしっぽの根元（楕円の横の位置）
@@ -629,6 +717,7 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     top = 96
     pw, ph = W // 3, H - 96
     img = Image.new("RGBA", (W, H), "black")
+    base = img.copy()
     panels = _limit_people((spec.get("panels") or [])[:3])
     while len(panels) < 3:
         panels.append({"mood": "dark"})
@@ -641,6 +730,7 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
         zleft = zx_rel + ((z.getbbox() or (0, 0, 0, 0))[0] if z is not None else 0)   # ずんだもんの見えている左端
         mood = str(p.get("mood") or "dark")
         bg = mood_bg(mood, (pw, ph), background_for(cfg, p, used), seed=i)
+        base.paste(bg, (i * pw, top))
         person = person_for(cfg, p, used) if (p.get("person_query") or p.get("person_file")) else None
         head_y = 0
         if person is not None:
@@ -667,6 +757,15 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
                 ex = i * pw + 6
             b, (ox, oy), _ = bubble(cfg, line, 34, tail=(_TAIL_AT, 0.86), tail_to=(zx + z.width * _TAIL_TO - ex, zy + 40 - ey))
             img.alpha_composite(b, (ex - ox, ey - oy))
+    head = big_text(cfg, _parts(spec), 160, inner=11, outer=22)
+    if head.width > W - 16:
+        head = head.resize((W - 16, int(head.height * (W - 16) / head.width)), Image.LANCZOS)
+    head_xy = ((W - head.width) // 2, H - head.height + 4)
+    occ = occupancy(base, img)
+    occ.paste(255, (0, 0), head.getchannel("A").point(lambda v: 255 if v else 0).filter(ImageFilter.MaxFilter(9))
+              .crop((-head_xy[0], -head_xy[1], W - head_xy[0], H - head_xy[1])))
+    for i, p in enumerate(panels):
+        fill_gaps(img, occ, (i * pw + 12, top + 10, (i + 1) * pw - 12, H - 6), _fillers(p, str(p.get("mood") or "dark")), seed=i)
     d = ImageDraw.Draw(img)
     for i in (1, 2):
         d.rectangle([i * pw - 4, top, i * pw + 4, H], fill="black")
@@ -678,10 +777,7 @@ def render_flow(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     for i in range(1, len(labels)):
         ch = chevrons(3, 60)
         img.alpha_composite(ch, (i * pw - ch.width // 2, (top - 60) // 2))
-    head = big_text(cfg, _parts(spec), 160, inner=11, outer=22)
-    if head.width > W - 16:
-        head = head.resize((W - 16, int(head.height * (W - 16) / head.width)), Image.LANCZOS)
-    img.alpha_composite(head, ((W - head.width) // 2, H - head.height + 4))
+    img.alpha_composite(head, head_xy)
     return _save(img, out)
 
 
@@ -693,6 +789,7 @@ def render_versus(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     while len(panels) < 2:
         panels.append({"mood": "dark"})
     used: set[str] = set()
+    base = img.copy()
     zl = zunda(cfg, str(panels[0].get("zunda") or "喜"), 260)
     zr = zunda(cfg, str(panels[1].get("zunda") or "絶望"), 260)
     zl_x = hw - zl.width + 10 if zl is not None else hw
@@ -702,6 +799,7 @@ def render_versus(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
     for i, p in enumerate(panels):
         mood = str(p.get("mood") or ("gold" if i == 0 else "glitch"))
         bg = mood_bg(mood, (hw, ph), background_for(cfg, p, used), seed=i + 7)
+        base.paste(bg, (i * hw, top))
         person = person_for(cfg, p, used) if (p.get("person_query") or p.get("person_file")) else None
         seam = 112                                     # 真ん中の矢印（≫）にかからない幅
         if i == 0:
@@ -736,6 +834,10 @@ def render_versus(cfg: Config, spec: dict[str, Any], out: Path) -> Path:
             if b.width > hw - 60:
                 b = say_box(cfg, line, 36)
             img.alpha_composite(b, (20, H - b.height - 16) if i == 0 else (W - b.width - 20, H - b.height - 16))
+    occ = occupancy(base, img)
+    for i, p in enumerate(panels):
+        mood = str(p.get("mood") or ("gold" if i == 0 else "glitch"))
+        fill_gaps(img, occ, (i * hw + 14, top + 10, (i + 1) * hw - 14, H - 10), _fillers(p, mood), seed=i + 7)
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, top], fill="black")
     head = big_text(cfg, _parts(spec), 150, inner=8, outer=14, skew=0.0, shadow=False)
@@ -786,6 +888,7 @@ _SPEC_SYSTEM = """あなたは YouTube の「ずんだもん解説」のサム�
 話の中に「A なのに B」「A → B → C」の流れがあれば flow、はっきりした対比があれば versus
 
 # 大見出し（headline）
+- 矢印などの記号（→ ⇒ ➡ ▶）は labels・headline・line に使わない（字体に無く□になる）。「から」「で」で言う
 - 合計 9 字以内。[文字, 色] の並び。色は "red"（赤）か "white"（白）。いちばん刺さる語を片方の色に分ける
   例: [["昇給しても", "red"], ["貧乏な謎", "white"]]、[["給料アップでも", "white"], ["貧乏", "red"]]
 - 煽り語（ヤバい・終わった・知らないと損）は使わない。内容とずらさない。数字は動画にあるものだけ
@@ -798,7 +901,7 @@ _SPEC_SYSTEM = """あなたは YouTube の「ずんだもん解説」のサム�
 - person_query: 人の写真を置くなら、その検索語（例:「札束 男性」「頭を抱える 会社員」「喜ぶ 女性」「驚く 男性」）。**人は全部で 2 コマまで**。置かないコマは空
 - arrows: 人を置かないコマで、"up"（値上がり）か "down"（値下がり）の大きな矢印を出すなら。なければ空
 - big: そのコマの大きな数字・言葉（5 字以内。例:「+5%」「158円」「億」「0円」「2倍」）。動画にある数字だけ。**どのコマにも入れる**
-- props: 絵文字の小物 1〜2 個（例: ["☀️", "☕"]、["💻", "🤖"]、["🏦", "💴"]）。**どのコマにも入れる**（空いた場所を埋める）。
+- props: 絵文字の小物 3〜4 個（例: ["☀️", "☕", "⏰"]、["💻", "🤖", "📱"]、["🏦", "💴", "🪙", "📈"]）。**どのコマにも入れる**（空いた場所を埋める。空きが残れば自動で小物を足す）。
   サムネに空白を残さない。空いた場所は big / props / stamp / arrows で埋まるように、コマごとに 2 つ以上入れる
 - stamp: 人を置かないコマに斜めの赤い判子（4 字以内。例:「値上げ」「減額」）。なければ空
 - zunda: ずんだもんの表情。喜（両手を上げて喜ぶ）/ 驚愕（目を見開く）/ 絶望（ぐるぐる目・青ざめ）/ 困 / 考 / 指 / 笑 / 怒

@@ -126,11 +126,11 @@ def test_daily_flow_uploads_long_then_shorts_after_it_and_resumes(cfg, tmp_path,
     assert calls["write"] == 1 and res["video_id"] == "v1"
     long_, shorts = calls["publish"][0], calls["publish"][1:]
     assert "現代人のための心理学" in long_["title"] and long_["after"] is None
-    assert len(shorts) == 5 and all(s["after"] is not None for s in shorts)     # Shorts は本編の公開後の枠
+    assert len(shorts) == 6 and all(s["after"] is not None for s in shorts)     # Shorts は本編の公開後の枠
     assert store.get_video("ep1").stage.get("kind") == "long"
     # 同じ slug で回し直しても、台本も投稿もやり直さない
     pipe.produce(topic, upload=True, slug="ep1")
-    assert calls["write"] == 1 and len(calls["publish"]) == 6
+    assert calls["write"] == 1 and len(calls["publish"]) == 7
 
 
 def test_caption_cues_split_by_sentence_and_keep_timing():
@@ -215,7 +215,7 @@ def test_five_shorts_from_four_chapters_and_upload_guard(cfg, tmp_path):
     ol = {**OUTLINE, "parts": OUTLINE["parts"][:4]}
     got = honpen.short_angles({"title": "t", "outline": ol}, 5)
     assert len(got) == 5 and "別の話題" in got[4][1]                    # 章より多いときは同じ章から別の問い
-    assert cfg.get("shorts.per_video") == 5 and len(cfg.get("shorts.publish_times_jst")) == 5
+    assert cfg.get("shorts.per_video") == 6 and len(cfg.get("shorts.publish_times_jst")) == 6
     from ytecon import youtube
     from ytecon.state import Store
     guard = youtube.QuotaGuard(Store(tmp_path / "q.db"))

@@ -361,16 +361,17 @@ def test_manual_thumbnail_is_found_by_slug_or_date_and_resized(cfg, tmp_path, mo
     assert thumbnail.name_for(None, "slug-x") == "slug-x.jpg"
 
 
-def test_five_shorts_go_out_after_the_long_video_before_the_next_one(cfg):
+def test_six_shorts_go_out_after_the_long_video_before_the_next_one(cfg):
     from ytecon.youtube import next_publish_time
     jst = dt.timezone(dt.timedelta(hours=9))
     base = dt.datetime(2026, 9, 23, 15, 0, tzinfo=jst)           # Actions は JST 15:00 ごろに走る
     long_at = next_publish_time(cfg, 0, base=base)
     assert long_at.astimezone(jst).strftime("%m-%d %H:%M") == "09-23 19:00"
     times = cfg.get("shorts.publish_times_jst")
-    assert len(times) == cfg.get("shorts.per_video") == 5
-    got = [next_publish_time(cfg, i, base=long_at + dt.timedelta(minutes=1), times=times).astimezone(jst) for i in range(5)]
-    assert [g.strftime("%m-%d %H:%M") for g in got] == ["09-23 21:30", "09-24 00:00", "09-24 07:00", "09-24 12:00", "09-24 18:00"]
+    assert len(times) == cfg.get("shorts.per_video") == 6
+    got = [next_publish_time(cfg, i, base=long_at + dt.timedelta(minutes=1), times=times).astimezone(jst) for i in range(6)]
+    assert [g.strftime("%m-%d %H:%M") for g in got] == ["09-23 21:30", "09-24 00:00", "09-24 07:00", "09-24 12:00", "09-24 15:00",
+                                                        "09-24 18:00"]
 
 
 # ----------------------------------------------------------------------
