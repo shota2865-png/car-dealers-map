@@ -514,3 +514,17 @@ def test_title_with_leading_bracket_hook_is_not_broken(cfg):
     assert t == "スマホ代はなぜ5年でまた上がる？【値下げは政策】【ずんだもん&めたん解説】"
     t = format_title(cfg, "【値下げは政策】スマホ代はなぜ上がる？", "")
     assert t == "スマホ代はなぜ上がる？【値下げは政策】【ずんだもん&めたん解説】"
+
+
+def test_thumbnail_by_video_id_is_applied_even_if_not_in_state(cfg, tmp_path, monkeypatch):
+    from PIL import Image
+    from ytecon import thumbnail, youtube
+    from ytecon.pipeline import Pipeline
+    cfg.raw.setdefault("pipeline", {})["workdir"] = str(tmp_path / "work")
+    monkeypatch.setattr(thumbnail, "manual_dir", lambda _cfg: tmp_path / "manual")
+    calls = []
+    monkeypatch.setattr(youtube, "set_thumbnail", lambda _c, _s, vid, path: calls.append((vid, path.name)))
+    img = tmp_path / "abc123.jpg"
+    Image.new("RGB", (1280, 720), "red").save(img)
+    out = Pipeline(cfg).set_thumbnail_later(img, video_id="abc123")
+    assert out["applied"] and calls == [("abc123", "abc123.jpg")]
