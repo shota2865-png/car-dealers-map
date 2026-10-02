@@ -209,10 +209,14 @@ class Pipeline:
                 if when == day:
                     rec = r
                     break
-        dest = thumbnail.manual_dir(self.cfg) / thumbnail.name_for(day, rec.slug if rec else slug)
+        dest = thumbnail.manual_dir(self.cfg) / thumbnail.name_for(day, rec.slug if rec else (slug or video_id))
         thumbnail.prepare(image, dest)
         out: dict[str, Any] = {"saved": str(dest)}
-        if rec is not None and rec.youtube_id:
+        if rec is None and video_id:
+            # 状態 DB に無い動画（手で上げた回・古い回）でも、動画 ID が分かっていればそのまま付ける
+            youtube.set_thumbnail(self.cfg, self.store, video_id, dest)
+            out.update({"video_id": video_id, "applied": True})
+        elif rec is not None and rec.youtube_id:
             art = self.art(rec.slug)
             thumbnail.prepare(image, art.thumb)
             youtube.set_thumbnail(self.cfg, self.store, rec.youtube_id, art.thumb)
