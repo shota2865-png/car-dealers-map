@@ -1,0 +1,513 @@
+{
+ "_note": "thumbnails/replace/main/<動画ID>.jpg を作ったときの組み立て（thumbpanel.render に渡す spec）。写真は bg_query / person_query でぱくたそから選び直しになる",
+ "specs": {
+  "f88714xTAbU": {
+   "layout": "flow",
+   "headline": [
+    [
+     "昇給しても",
+     "white"
+    ],
+    [
+     "生活苦しい？",
+     "red"
+    ]
+   ],
+   "labels": [
+    "給料が上がる",
+    "でも物が値上げ",
+    "手元は減る"
+   ],
+   "panels": [
+    {
+     "mood": "gold",
+     "zunda": "喜",
+     "line": "やったのだ！",
+     "big": "昇給！",
+     "props": [
+      "💴"
+     ]
+    },
+    {
+     "mood": "red",
+     "arrows": "up",
+     "stamp": "値上げ",
+     "zunda": "驚愕",
+     "line": "高すぎるのだ！",
+     "props": [
+      "🛒"
+     ]
+    },
+    {
+     "mood": "dark",
+     "zunda": "絶望",
+     "line": "なんでなのだ…",
+     "big": "苦しい",
+     "props": [
+      "💸"
+     ]
+    }
+   ]
+  },
+  "fYYqCXnyJU4": {
+   "layout": "versus",
+   "headline": [
+    [
+     "AIが怖い人ほど",
+     "white"
+    ],
+    [
+     "使ってない",
+     "red"
+    ]
+   ],
+   "panels": [
+    {
+     "label": "AIが怖い",
+     "mood": "glitch",
+     "zunda": "絶望",
+     "line": "眠れないのだ…",
+     "props": [
+      "🤖"
+     ]
+    },
+    {
+     "label": "まず相談する",
+     "mood": "blue",
+     "zunda": "指",
+     "line": "聞けばいいのだ！",
+     "props": [
+      "💻",
+      "🤖"
+     ],
+     "big": "まず聞く"
+    }
+   ]
+  },
+  "viihtKyN1JI": {
+   "layout": "flow",
+   "headline": [
+    [
+     "投資の前に",
+     "white"
+    ],
+    [
+     "まず貯金",
+     "red"
+    ]
+   ],
+   "labels": [
+    "みんな投資してる",
+    "リボは借金",
+    "まず貯金から"
+   ],
+   "panels": [
+    {
+     "mood": "red",
+     "zunda": "驚愕",
+     "line": "みんな投資！？",
+     "big": "焦り",
+     "props": [
+      "📱"
+     ]
+    },
+    {
+     "mood": "dark",
+     "stamp": "リボ払い",
+     "arrows": "down",
+     "zunda": "絶望",
+     "line": "減っていくのだ…",
+     "props": [
+      "💳"
+     ]
+    },
+    {
+     "mood": "gold",
+     "zunda": "喜",
+     "line": "順番なのだ！",
+     "props": [
+      "🐷",
+      "💰"
+     ],
+     "big": "貯金"
+    }
+   ]
+  },
+  "KzaKEeumK9U": {
+   "layout": "versus",
+   "headline": [
+    [
+     "利上げでも",
+     "white"
+    ],
+    [
+     "円が弱い？",
+     "red"
+    ]
+   ],
+   "panels": [
+    {
+     "label": "日銀が金利アップ",
+     "mood": "blue",
+     "arrows": "up",
+     "zunda": "指",
+     "line": "金利を上げたのだ",
+     "big": "金利↑",
+     "props": [
+      "🏦"
+     ]
+    },
+    {
+     "label": "円はまだ安い",
+     "mood": "glitch",
+     "zunda": "驚愕",
+     "line": "逆なのだ！？",
+     "props": [
+      "💴"
+     ],
+     "big": "値上げ"
+    }
+   ]
+  },
+  "RusdLL2ajGo": {
+   "layout": "versus",
+   "headline": [
+    [
+     "窓口は減るのに",
+     "white"
+    ],
+    [
+     "新人は高給料",
+     "red"
+    ]
+   ],
+   "panels": [
+    {
+     "label": "窓口がなくなる",
+     "mood": "blue",
+     "arrows": "down",
+     "zunda": "困",
+     "line": "減ってるのだ…",
+     "props": [
+      "🏦",
+      "🏧"
+     ]
+    },
+    {
+     "label": "新人の給料アップ",
+     "mood": "gold",
+     "zunda": "驚愕",
+     "line": "なんでなのだ！？",
+     "props": [
+      "💴"
+     ]
+    }
+   ]
+  },
+  "NDi-vxgSOJw": {
+   "layout": "flow",
+   "headline": [
+    [
+     "一生の給料",
+     "white"
+    ],
+    [
+     "足りる？",
+     "red"
+    ]
+   ],
+   "labels": [
+    "一生で稼ぐお金",
+    "でも物が高い",
+    "AIで仕事が減る"
+   ],
+   "panels": [
+    {
+     "mood": "gold",
+     "zunda": "喜",
+     "line": "億単位なのだ！",
+     "big": "億",
+     "props": [
+      "💰"
+     ]
+    },
+    {
+     "mood": "red",
+     "arrows": "up",
+     "stamp": "値上げ",
+     "zunda": "驚愕",
+     "line": "削られるのだ！",
+     "props": [
+      "🛒"
+     ]
+    },
+    {
+     "mood": "glitch",
+     "zunda": "絶望",
+     "line": "足りないのだ…",
+     "big": "AI",
+     "props": [
+      "🤖"
+     ]
+    }
+   ]
+  },
+  "V503Vpy9gNk": {
+   "layout": "flow",
+   "headline": [
+    [
+     "夜の不安の",
+     "white"
+    ],
+    [
+     "正体",
+     "red"
+    ]
+   ],
+   "labels": [
+    "昼は平気",
+    "夜に不安",
+    "朝には平気"
+   ],
+   "panels": [
+    {
+     "mood": "blue",
+     "zunda": "笑",
+     "line": "平気なのだ",
+     "props": [
+      "☀️",
+      "💼"
+     ],
+     "big": "12:00"
+    },
+    {
+     "mood": "dark",
+     "zunda": "絶望",
+     "line": "眠れないのだ…",
+     "big": "1:00",
+     "props": [
+      "🌙"
+     ]
+    },
+    {
+     "mood": "gold",
+     "zunda": "喜",
+     "line": "朝には平気！",
+     "big": "7:00",
+     "props": [
+      "🌅"
+     ]
+    }
+   ]
+  },
+  "zZQ3z9aFlaE": {
+   "layout": "flow",
+   "headline": [
+    [
+     "スマホ代",
+     "white"
+    ],
+    [
+     "また値上げ",
+     "red"
+    ]
+   ],
+   "labels": [
+    "5年前に値下げ",
+    "理由は3つ",
+    "また値上げ"
+   ],
+   "panels": [
+    {
+     "mood": "blue",
+     "arrows": "down",
+     "big": "値下げ",
+     "props": [
+      "📱"
+     ],
+     "zunda": "喜",
+     "line": "安くなったのだ！"
+    },
+    {
+     "mood": "red",
+     "stamp": "コスト増",
+     "big": "3つ",
+     "props": [
+      "📡"
+     ],
+     "zunda": "考",
+     "line": "理由は3つ…"
+    },
+    {
+     "mood": "dark",
+     "big": "値上げ",
+     "props": [
+      "📱"
+     ],
+     "zunda": "驚愕",
+     "line": "また上がる！？"
+    }
+   ]
+  },
+  "KjW-l5MOpIo": {
+   "layout": "flow",
+   "headline": [
+    [
+     "減税なのに",
+     "white"
+    ],
+    [
+     "食費は減らない？",
+     "red"
+    ]
+   ],
+   "labels": [
+    "食べ物が減税",
+    "値段は店しだい",
+    "得は月1300円"
+   ],
+   "panels": [
+    {
+     "mood": "gold",
+     "bg_query": "スーパー 野菜",
+     "person_query": "喜ぶ 男性",
+     "zunda": "喜",
+     "line": "安くなるのだ！",
+     "big": "減税！",
+     "props": [
+      "🍙",
+      "🛒",
+      "🥬"
+     ]
+    },
+    {
+     "mood": "red",
+     "bg_query": "スーパー 値札",
+     "arrows": "",
+     "stamp": "値札そのまま",
+     "zunda": "驚愕",
+     "line": "あれ？高いのだ",
+     "big": "？",
+     "props": [
+      "🏷️",
+      "🧾",
+      "🛒"
+     ]
+    },
+    {
+     "mood": "dark",
+     "bg_query": "財布 小銭",
+     "person_query": "がっかり 男性",
+     "zunda": "絶望",
+     "line": "これだけなのだ…",
+     "big": "少しだけ",
+     "props": [
+      "🪙",
+      "💸"
+     ]
+    }
+   ]
+  },
+  "2HZlT-475G8": {
+   "layout": "flow",
+   "headline": [
+    [
+     "初任給は同じ",
+     "white"
+    ],
+    [
+     "でも一生で大差",
+     "red"
+    ]
+   ],
+   "labels": [
+    "最初は同じ給料",
+    "40代で差が開く",
+    "一生で数千万円"
+   ],
+   "panels": [
+    {
+     "mood": "blue",
+     "bg_query": "オフィス",
+     "person_query": "新入社員 女性",
+     "zunda": "考",
+     "line": "変わらないのだ",
+     "big": "同じ",
+     "props": [
+      "💼",
+      "📝"
+     ]
+    },
+    {
+     "mood": "red",
+     "bg_query": "グラフ",
+     "arrows": "up",
+     "stamp": "差拡大",
+     "zunda": "驚愕",
+     "line": "急に開くのだ！",
+     "big": "40代",
+     "props": [
+      "📈",
+      "🏢"
+     ]
+    },
+    {
+     "mood": "dark",
+     "bg_query": "札束",
+     "person_query": "頭を抱える 男性",
+     "zunda": "絶望",
+     "line": "差が数千万なのだ",
+     "big": "数千万",
+     "props": [
+      "💴",
+      "💸"
+     ]
+    }
+   ]
+  },
+  "O9ESl7cmQ6g": {
+   "layout": "versus",
+   "headline": [
+    [
+     "引かれるのは",
+     "white"
+    ],
+    [
+     "2割だけ",
+     "red"
+    ]
+   ],
+   "panels": [
+    {
+     "mood": "dark",
+     "label": "半分取られる？",
+     "bg_query": "給与明細",
+     "person_query": "頭を抱える 会社員",
+     "zunda": "絶望",
+     "line": "半分も引かれるのだ？",
+     "big": "半分",
+     "props": [
+      "💸",
+      "🧾",
+      "😱"
+     ]
+    },
+    {
+     "mood": "gold",
+     "label": "計算すると…",
+     "bg_query": "電卓 お金",
+     "arrows": "up",
+     "stamp": "安心",
+     "zunda": "喜",
+     "line": "8割も残るのだ！",
+     "big": "8割",
+     "props": [
+      "💰",
+      "🧮",
+      "✨"
+     ]
+    }
+   ]
+  }
+ }
+}
