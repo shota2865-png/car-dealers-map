@@ -40,7 +40,7 @@
 - テスト: `cd yt-econ && python -m pytest -q`（全部通してから push）。lint は `ruff check`（既存の指摘が 50 件ほどある。増やさない）
 - コミットとPRの末尾には、そのセッションで指定された署名を付ける。モデル名は書かない
 - サムネを作り直して YouTube に反映するとき:
-  1. `thumbpanel.render(cfg, spec, out)` で描く（組み立ての例は `yt-econ/thumbnails/replace/main_specs.json`）
+  1. `thumbpanel.render(cfg, spec, out)` で描く（組み立ての例は `yt-econ/reference/thumbnail_specs_main.json`）
   2. `yt-econ/thumbnails/replace/main/<動画ID>.jpg` に置いて PR → マージで自動差し替え
 
 ## 決まった方針（ユーザーの好み）
