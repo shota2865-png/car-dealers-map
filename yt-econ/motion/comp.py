@@ -224,8 +224,8 @@ def scene_text(img, t, fi, m):
             for key, val, col in (("groupL", 3, SUB), ("groupR", 30, GOLD)):
                 x, y, _ = m[key]
                 plain(img, f"{round(val * ck)}%", (x, y + 84), 110 if val == 30 else 84, col, k, anchor="ma", weight=900)
-        plain(img, "買った人の割合　出典：Iyengar & Lepper, 2000", (W - 120, H - 170), 26, SUB, seg(t, 22.0, 22.6) * (1 - seg(t, 25.4, 25.9)), anchor="ra")
-        plain(img, "※あとの研究では、いつも起きるとは限らない", (W - 120, H - 134), 26, SUB, seg(t, 24.0, 24.6) * (1 - seg(t, 25.4, 25.9)), anchor="ra")
+        plain(img, "買った人の割合　出典：Iyengar & Lepper, 2000", (W - 120, 150), 26, SUB, seg(t, 22.0, 22.6) * (1 - seg(t, 25.4, 25.9)), anchor="ra")
+        plain(img, "※あとの研究では、いつも起きるとは限らない", (W - 120, 186), 26, SUB, seg(t, 24.0, 24.6) * (1 - seg(t, 25.4, 25.9)), anchor="ra")
     # 04 めたん
     if 26 <= t < 38.6:
         kin = eo(seg(t, 26.0, 26.8)) * (1 - eio(seg(t, 37.7, 38.4)))
