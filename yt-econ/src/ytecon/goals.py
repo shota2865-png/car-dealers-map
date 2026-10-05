@@ -257,7 +257,8 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
                    and v.get("avg_pct") is not None and v["avg_pct"] < rules_s.get("avg_view_pct_min", 0.75)]
     if weak_shorts:
         acts.append(f"平均視聴率が {rules_s.get('avg_view_pct_min', 0.75):.0%} 未満の Shorts が {len(weak_shorts)} 本。"
-                    "shorts.max_seconds を 45 に下げ、出だしを聞き役の疑問文に限定する（shorts.py の点数の重み）")
+                    "長さは今のまま（30〜40 秒。伸ばさない）で、最初の 1 文を数字か結論の疑問文にする。"
+                    "視聴率の高い Shorts の 1 文目の型に寄せる")
     good_shorts = sorted([v for v in p.videos if v.get("kind") == "short"], key=lambda v: -v.get("views", 0))[:1]
     if good_shorts and good_shorts[0].get("views", 0) >= 5 * max(1, pc["recent_avg_per_day"] / max(goal.per_day.get("shorts", 3), 1)):
         v = good_shorts[0]
