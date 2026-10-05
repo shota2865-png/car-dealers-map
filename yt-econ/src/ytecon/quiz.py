@@ -747,9 +747,27 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     wavs: list[tuple[Path, float]] = []      # (wav, 後ろに足す無音)
     total = 0.0
     n = 0
+    # 研究所の解析画面（design: lab）: 本編は左のモニターに縮めて右にめたん、Shorts は地に格子と光
+    from . import lab as lab_mod
+    frame = None
+    back = None
+    cur_kind = ""
+    if lab_mod.enabled(cfg):
+        pal = palette(cfg)
+        if wide:
+            th.brand = ""
+            frame = lab_mod.Frame(cfg, pal, str(quiz.get("title") or ""))
+        else:
+            back = lab_mod.backdrop((th.W, th.H), pal)
 
-    def emit(img: Image.Image, dur: float) -> None:
+    def emit(img: Image.Image, dur: float, post: bool = True) -> None:
         nonlocal n
+        if not post:
+            pass
+        elif frame is not None:
+            img = frame.compose(img, cur_kind)
+        elif back is not None:
+            img = lab_mod.finish(img, th.bg, back)
         p = fr / f"f{n:04d}.png"
         img.save(p, compress_level=1)
         frames.extend([f"file '{p.name}'", f"duration {dur:.4f}"])
@@ -783,6 +801,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     shared_dy = None
     for sc in scenes:
         kind = sc.get("kind")
+        cur_kind = str(kind or "")
         if kind == "question":
             q_scene = sc
         if kind == "countdown":
@@ -856,9 +875,9 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
         fade = min(8.0, outro)
         k = int(fade * 6)
         for i in range(k):
-            emit(Image.blend(last, dark, (i + 1) / k), fade / k)
+            emit(Image.blend(last, dark, (i + 1) / k), fade / k, post=False)     # last は枠つきで書き出し済み
         if outro > fade:
-            emit(dark, outro - fade)
+            emit(dark, outro - fade, post=False)
         silence(outro)
         total += outro
     frames.append(frames[-2])

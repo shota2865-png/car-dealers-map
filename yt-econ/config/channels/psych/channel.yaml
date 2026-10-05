@@ -53,8 +53,9 @@ channel:
     - 恋愛・対人の「操作テクニック」（相手を思いどおりに動かす類）
 
 video:
-  # 見た目: デジタル庁デザインシステム準拠（白地・青。config/design_tokens.yaml の dads）
-  design: "dads"
+  # 見た目: 研究所の解析画面（黒に近い紺・シアン。config/design_tokens.yaml の lab。src/ytecon/lab.py）
+  #   本編は場面を左の「解析モニター」に縮めて置き、右に解析担当のめたん（presenter）を立たせる
+  design: "lab"
   target_minutes_min: 15.0
   target_minutes_max: 20.0
 
@@ -137,6 +138,24 @@ tts:
 character:
   enabled: false
 
+# 本編の右側・サムネに立つ「解析担当」のめたん（立ち絵 PSD の差分の組み合わせ。書き方は本体の cast と同じ）
+# 表情は場面の種類で変わる（lab.EXPR_BY_KIND: クイズ=考 / 答え合わせ=驚 / データ=指 / 検証結果=笑）
+presenter:
+  key: metan
+  name: 四国めたん
+  dir: assets/character/四国めたん立ち絵素材2.1
+  flip: true
+  parts: {服: "白ロリ服", 右腕: "普通", 左腕: "普通", 顔色: "普通2", 眉: "太眉ごきげん"}
+  mouth: {base: "ほほえみ", mouth_half: "ゆ", mouth_open: "わあー"}
+  blink: "目閉じ"
+  skip_groups: ["その他の服", "記号など"]
+  expressions:
+    通常: {}
+    笑: {眉: "太眉ごきげん", 顔色: "赤面"}
+    驚: {目セット: "見開き白目", 眉: "太眉ごきげん"}
+    考: {眉: "太眉こまり", 左腕: "口元に指"}
+    指: {右腕: "指差す"}
+
 # 本編（16:9・15〜20 分・ながら聴き）。台本は src/ytecon/honpen.py、画面は wide.py、組み立ては quiz.build(wide=True)
 # あいさつ（greeting / closing）・聴かれ方（listener / tone）も honpen.py の既定を上書きできる
 honpen:
@@ -155,6 +174,15 @@ honpen:
   bgm_db: -20
   title_prefix: ""
   thumb_note: "ながら聴きOK・声だけでわかる"
+  # 研究所の解析画面: 本編を左のモニター、右にめたん（lab.Frame）
+  frame: "lab"
+  # 冒頭のあいさつ（データで検証する番組であることを最初に言う）
+  greeting:
+    - ["今日の検証テーマは、{theme}、です。", 0]
+    - ["{name}の、データ解析ラボへ、ようこそ。", 1]
+    - ["よく聞く心理学の話を、研究のデータで、ひとつずつ確かめていきます。", 1]
+    - ["画面を見なくても、声だけでわかるようにお話しします。さっそく、始めましょう。", 2]
+  greeting_lines: ["研究のデータで、確かめます", "声だけでも、わかるようにお話しします"]
 
 upload:
   privacy: "public"
@@ -185,8 +213,8 @@ shorts:
   publish_times_jst: ["21:30", "23:30", "07:30", "12:30", "15:00", "17:30"]
 
 thumbnail:
-  # サムネは手で作る（thumbnails/psych/ に置く）。無い日だけ framed で自動生成
-  style: "framed"
+  # サムネは手で作ったもの（thumbnails/psych/）が優先。無い日は lab（解析画面＋大きな問い＋めたん）で自動生成
+  style: "lab"
 
 goal:
   file: "config/channels/psych/goals.yaml"

@@ -9,6 +9,8 @@
   steps                 手順カードを左から右へ。最後に ✓ と締めの一言
   meter                 「頭のメモ帳」のような容量を、升目が順に埋まっていくことで見せる
   point                 専門用語 = 日常の言葉 の言い換えを、大きく
+  data                  研究のデータを横棒グラフで（棒が 1 本ずつ伸びる。hl の棒をシアンに）
+  verdict               検証結果。調べた「よく聞く話」に 本当 / 半分本当 / ウソ のスタンプ
 各場面の narration の段階の意味は quiz.py と同じ考え方（段階 i で i 番目の要素が出る）。
 """
 
@@ -322,6 +324,94 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         rest = str(sc.get("rest") or "")
         if rest:
             s.add(2, lambda d, p: P.caption_under(d, W // 2, cy0 + 600, rest, P.f(46, 500), th.sec))
+
+    elif kind == "data":
+        # 研究のデータを横棒で見せる。段階 0 = 見出しと出典、1..k = 棒が 1 本ずつ伸びる、k+1 = まとめの一言
+        s.add(0, title)
+        source = str(sc.get("source") or "")
+        if source:
+            s.add(0, lambda d, p: d.text((M, TY - 10), "◆ " + source, font=P.f(40, 500), fill=th.blue), delay=0.2)
+        bars = [b for b in (sc.get("bars") or []) if isinstance(b, dict)][:4]
+        vals = []
+        for b in bars:
+            try:
+                vals.append(float(b.get("value") or 0))
+            except (TypeError, ValueError):
+                vals.append(0.0)
+        vmax = max(vals + [1e-9])
+        n = max(1, len(bars))
+        lab_w = 470
+        x0 = M + lab_w
+        x1 = W - M - 260
+        top = TY + 80
+        bh = min(110, int((620 - (n - 1) * 46) / n))
+        for i, (b, v) in enumerate(zip(bars, vals)):
+            y = top + i * (bh + 46)
+            hl = bool(b.get("hl"))
+            text = str(b.get("label") or "")
+            unit = str(b.get("unit") or "")
+            num = (f"{v:g}" if abs(v - round(v)) > 1e-9 else f"{int(round(v)):,}") + unit
+
+            def bar(d, p, y=y, hl=hl, text=text, v=v, num=num):
+                f, lines = P.fit(d, text, lab_w - 40, 48)
+                lh = int(f.size * 1.2)
+                ty = y + bh / 2 - lh * len(lines) / 2
+                for ln in lines:
+                    d.text((M, ty), ln, font=f, fill=th.text if hl else th.sec)
+                    ty += lh
+                d.rectangle([x0, y, x1, y + bh], fill=th.surface)
+                w = (x1 - x0) * (v / vmax) * p
+                d.rectangle([x0, y, x0 + w, y + bh], fill=th.blue if hl else th.muted)
+                d.text((x0 + w + 24, y + bh / 2), num, font=P.f(64 if hl else 56), fill=th.blue if hl else th.text, anchor="lm")
+            s.add(i + 1, bar, slide=False)
+        note = str(sc.get("note") or "")
+        if note:
+            def nt(d, p):
+                f, lines = P.fit(d, note, CW, 60)
+                y = top + n * (bh + 46) + 10
+                for ln in lines:
+                    P.marker_text(d, M, y, ln, f, p=p)
+                    y += int(f.size * 1.3)
+            s.add(len(bars) + 1, nt, slide=False)
+
+    elif kind == "verdict":
+        # 検証結果。段階 0 = 調べた「よく聞く話」、1 = 判定のスタンプ、2 = ひとことの理由
+        from . import lab as lab_mod
+        from .assets import palette
+        claim = str(sc.get("claim") or "")
+        result = str(sc.get("result") or "半分本当")
+        reason = str(sc.get("reason") or "")
+
+        def head(d, p):
+            f = P.f(44)
+            tw = d.textlength("検証結果", font=f)
+            d.rounded_rectangle([M, 170, M + tw + 48, 170 + 74], radius=8, outline=th.blue, width=3)
+            d.text((M + 24, 170 + 37), "検証結果", font=f, fill=th.blue, anchor="lm")
+            f2, lines = P.fit(d, f"「{claim}」", CW - 520, 84)
+            y = 300
+            for ln in lines:
+                d.text((M, y), ln, font=f2, fill=th.text)
+                y += int(f2.size * 1.3)
+        s.add(0, head, slide=False)
+        col = lab_mod.verdict_color(palette(cfg), result)
+
+        def stamp_(d, p):
+            st = lab_mod.stamp(cfg, result, col, size=150)
+            k = 1.35 - 0.35 * p                       # 少し大きいところから押される
+            st = st.resize((max(1, int(st.width * k)), max(1, int(st.height * k))))
+            a = st.getchannel("A").point(lambda v: int(v * min(1.0, p * 1.4)))
+            st.putalpha(a)
+            cx, cy = W - M - 330, 420
+            d._image.alpha_composite(st, (int(cx - st.width / 2), int(cy - st.height / 2)))
+        s.add(1, stamp_, slide=False)
+        if reason:
+            def rs(d, p):
+                f, lines = P.fit(d, reason, CW, 64)
+                y = 700
+                for ln in lines:
+                    P.marker_text(d, M, y, ln, f, p=p)
+                    y += int(f.size * 1.35)
+            s.add(2, rs, slide=False)
 
     else:
         s.add(0, title)

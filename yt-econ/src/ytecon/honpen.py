@@ -58,6 +58,29 @@ _KINDS = """# 場面の種類（段階 = narration の 2 つ目の数字。そ�
 - versus   : 対比。heading, heading_hl, left/right（{"text": 14 字以内, "caption": 10 字以内}）。段階 0 = left、1 = left に ✕ と caption、2 = right に ✓ と caption
 - steps    : 手順。heading（12 字以内）, heading_hl, items（3 つ、各 10 字以内）, final（10 字以内）。段階 0 = 見出し、1..3 = items、4 = final"""
 
+# 研究所の解析画面（video.design: lab）のときに足す決まり。番組の型は「よく聞く話を、研究のデータで検証する」
+_KINDS_LAB = """- data     : 研究のデータを横棒グラフで。heading（14 字以内）, heading_hl, source（研究者名か大学名と年 26 字以内）,
+             bars（2〜4 本。{"label": 12 字以内, "value": 数, "unit": "%" や "人" など, "hl": true で強調}）, note（読み取りの一言 20 字以内）
+             段階 0 = 見出しと出典、1..k = 棒が 1 本ずつ、k+1 = note。**数字は研究で報告された値だけ**。正確な値に自信がなければ data を使わず flow / versus にする
+             ナレーションで「〜の研究では」と出典を言い、棒の中身（何が何%か）を全部声で言う
+- verdict  : 検証結果。claim（この部で確かめた「よく聞く話」20 字以内）, result（"本当" か "半分本当" か "ウソ"）, reason（ひとことの理由 24 字以内）
+             段階 0 = claim、1 = 判定のスタンプ、2 = reason。ナレーションは「検証結果です。〜は、半分本当でした。」のように、判定を声ではっきり言う"""
+
+_OUTLINE_LAB = """
+# 番組の型（研究所の解析画面）
+- 「よく聞く心理学の話」を、解析担当のめたんが研究のデータで 1 つずつ検証する番組
+- 部ごとに、検証する話（claim。例:「怒りは6秒で消える」「選択肢が多いと選べない」）を 1 つ決め、
+  研究で分かったことから判定（verdict: "本当" / "半分本当" / "ウソ"）を出す。全部が「本当」にならないようにする
+- data_hint に、その部で見せられる研究の数字（研究者か大学・年・何と何を比べて何%か）を書く。確かな数字が無ければ空にする
+- thumb_claim はサムネの大きな問い（14 字以内、疑問形）。初心者が一瞬で分かる言葉にし、率や専門語は使わない
+  （例:「怒りは6秒で消える？」「スマホを置くと集中できる？」）。thumb_hl はその中のいちばん大事な語"""
+
+_PART_LAB = """
+# 研究所の解析画面のとき
+- chapter の heading は、この部で検証する話を問いの形で（例:「選択肢が多いと選べない？」）
+- 説明の場面に data を 1 つ以上入れる（研究の数字があるとき）。部の最後の場面は verdict にする
+- 「データ」「検証」「研究」の言葉を自然に使い、科学番組のような落ち着いた口調で"""
+
 _OUTLINE_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作家です。約 {minutes} 分の本編の骨組みを作ります。
 全体は {parts} 部。各部は「2 択クイズ → 答え合わせ → 研究と説明」で進み、最後に全体のまとめと「今日のひとつ」を置きます。
 
@@ -90,7 +113,10 @@ _OUTLINE_SCHEMA = {
                                                        "pick": {"type": "string"}, "strike": {"type": "string"}, "answer": {"type": "string"}}},
             "points": {"type": "array", "items": {"type": "string"}},
             "research": {"type": "array", "items": {"type": "string"}},
+            "claim": {"type": "string"}, "verdict": {"type": "string"}, "data_hint": {"type": "string"},
         }}},
+        "thumb_claim": {"type": "string"},
+        "thumb_hl": {"type": "string"},
         "recap": {"type": "array", "items": {"type": "string"}},
         "today_one": {"type": "string"},
         "next": {"type": "string"},
@@ -134,6 +160,20 @@ _EXAMPLE_PART = {"scenes": [
 ]}
 
 
+_EXAMPLE_PART_LAB = {"scenes": [
+    {"kind": "chapter", "label": "検証 01", "heading": "選択肢が多いと選べない？", "heading_hl": "選べない", "sub": "有名な「ジャムの実験」を確かめる",
+     "narration": [["最初の検証は、選択肢が多いと、人は選べなくなる、という話です。", 0], ["有名な、ジャムの実験から、確かめていきます。", 1]]},
+    {"kind": "data", "heading": "ジャムを買った人の割合", "heading_hl": "買った人", "source": "コロンビア大学 アイエンガー教授ら（2000年）",
+     "bars": [{"label": "24種類の売り場", "value": 3, "unit": "%"}, {"label": "6種類の売り場", "value": 30, "unit": "%", "hl": True}],
+     "note": "少ないほうが、よく買われた",
+     "narration": [["コロンビア大学の、アイエンガー教授たちの研究です。", 0], ["24種類のジャムを並べた売り場では、買った人は、およそ3%。", 1],
+                   ["6種類だけの売り場では、およそ30%でした。", 2], ["少ないほうが、ずっとよく買われたんです。", 3]]},
+    {"kind": "verdict", "claim": "選択肢が多いと、人は選べなくなる", "result": "半分本当", "reason": "あとの研究では、いつも起きるとは限らなかった",
+     "narration": [["では、検証結果です。", 0], ["選択肢が多いと選べなくなる、という話は、半分本当でした。", 1],
+                   ["あとの研究をまとめると、いつも起きるとは限らないと分かってきています。", 2]]},
+]}
+
+
 def _model(cfg: Config) -> str:
     return str(cfg.get("honpen.model", cfg.get("script.model", llm.DEFAULT_MODEL)))
 
@@ -161,6 +201,8 @@ def outline(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
         + f"\n{n_parts(cfg)} 部の骨組みを JSON で。"
     )
     system = _OUTLINE_SYSTEM.format(field=domain.field(cfg), parts=n_parts(cfg), rules=_rules(cfg), minutes=_minutes(cfg))
+    if _lab(cfg):
+        system = system.replace("\nJSON だけを返す。", _OUTLINE_LAB + "\n\nJSON だけを返す。")
     data = llm.complete_json(system, user, _OUTLINE_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
     data["parts"] = (data.get("parts") or [])[:n_parts(cfg)]
     from .metadata import keyword_first
@@ -197,15 +239,25 @@ def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] =
         "# ほかの部で話すこと（ここでは繰り返さない）\n" + "\n".join(f"- {o}" for o in others) + "\n\n"
         + ("この部が最後なので、今日・明日から試せることを中心に。\n" if k == len(ol["parts"]) - 1 else "")
         + "形の例（内容は使わない。形だけ真似る）:\n" + json.dumps(_EXAMPLE_PART, ensure_ascii=False, indent=1)
+        + ("\n研究所の解析画面の場面の例（形だけ）:\n" + json.dumps(_EXAMPLE_PART_LAB, ensure_ascii=False, indent=1) if _lab(cfg) else "")
     )
-    system = _PART_SYSTEM.format(field=domain.field(cfg), rules=_rules(cfg), kinds=_KINDS, chars_min=chars[0], chars_max=chars[1],
+    kinds = _KINDS + ("\n" + _KINDS_LAB if _lab(cfg) else "")
+    system = _PART_SYSTEM.format(field=domain.field(cfg), rules=_rules(cfg), kinds=kinds, chars_min=chars[0], chars_max=chars[1],
                                  minutes=_minutes(cfg), part_minutes=max(3, round(_minutes(cfg) / n_parts(cfg))))
+    if _lab(cfg):
+        system = system.replace("画面は白地に短い言葉の箱・矢印・黄色いマーカーだけ。",
+                                "画面は暗い研究所の解析画面（短い言葉の箱・矢印・グラフ・判定のスタンプ）。右に解析担当のめたんが立っている。")
+        system = system.replace("\nJSON だけを返す。", _PART_LAB + "\n\nJSON だけを返す。")
     data = llm.complete_json(system, user, _PART_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
     scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict) and s.get("kind")]
     for s in scenes:
         if s["kind"] == "chapter":
-            s["label"] = f"第{k + 1}章"
+            s["label"] = f"検証 {k + 1:02d}" if _lab(cfg) else f"第{k + 1}章"
     return scenes
+
+
+def _lab(cfg: Config) -> bool:
+    return str(cfg.get("video.design", "") or "") == "lab"
 
 
 # 冒頭と締めのあいさつ（既定はながら聴き）。{name} {theme} {one} {next} {when} を差し込める
@@ -363,7 +415,11 @@ def short_angles(data: dict[str, Any], n: int = 3) -> list[tuple[str, str]]:
 
 
 def thumbnail(cfg: Config, data: dict[str, Any], out) -> Any:
-    """手で作ったサムネが無い日の自動サムネ（白地・黒の太字・黄マーカー・青のチャンネル名）."""
+    """手で作ったサムネが無い日の自動サムネ（白地・黒の太字・黄マーカー・青のチャンネル名）。thumbnail.style: lab なら解析画面."""
+    if str(cfg.get("thumbnail.style", "") or "") == "lab":
+        from . import lab
+        ol = data.get("outline") or {}
+        return lab.thumbnail(cfg, {**ol, "title": data.get("title") or ol.get("title")}, out)
     from pathlib import Path
     from PIL import Image, ImageDraw
     from . import quiz as quiz_mod
