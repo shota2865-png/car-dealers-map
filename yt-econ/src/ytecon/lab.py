@@ -99,19 +99,23 @@ def presenter_cfg(cfg: Config) -> Config | None:
     return character.char_cfg(cfg, dict(entry))
 
 
-def presenter(cfg: Config, expr: str, max_w: int, max_h: int, crop_bottom: float = 0.0) -> Image.Image | None:
-    """めたんの立ち絵（胸から上。下の切り方は character.crop_bottom で済んでいる）。PSD が無い・読めないときは None."""
+def presenter(cfg: Config, expr: str, max_w: int, max_h: int, crop_bottom: float = 0.0, state: str = "base") -> Image.Image | None:
+    """めたんの立ち絵（胸から上。下の切り方は character.crop_bottom で済んでいる）。PSD が無い・読めないときは None.
+
+    state: base（口を閉じる）/ mouth_half / mouth_open / blink。どれも base と同じ位置・大きさに切る（口パクでずれない）.
+    """
     c = presenter_cfg(cfg)
     if c is None:
         return None
-    return _presenter_cached(id(cfg), c, expr, max_w, max_h, crop_bottom)
+    return _presenter_cached(id(cfg), c, expr, max_w, max_h, crop_bottom, state)
 
 
 _PCACHE: dict[tuple, Image.Image | None] = {}
 
 
-def _presenter_cached(key, c: Config, expr: str, max_w: int, max_h: int, crop_bottom: float) -> Image.Image | None:
-    k = (key, expr, max_w, max_h, crop_bottom)
+def _presenter_cached(key, c: Config, expr: str, max_w: int, max_h: int, crop_bottom: float,
+                      state: str = "base") -> Image.Image | None:
+    k = (key, expr, max_w, max_h, crop_bottom, state)
     if k in _PCACHE:
         return _PCACHE[k]
     from . import character
@@ -120,8 +124,9 @@ def _presenter_cached(key, c: Config, expr: str, max_w: int, max_h: int, crop_bo
         exprs = c.get("character.expressions", {}) or {}
         a = character.find_assets(c, expr if expr in exprs else "通常")
         if a and Path(a.get("base", "")).exists():
-            im = Image.open(a["base"]).convert("RGBA")
-            im = im.crop(im.getbbox())
+            box = Image.open(a["base"]).convert("RGBA").getbbox()
+            src = a.get(state) if Path(str(a.get(state, ""))).exists() else a["base"]
+            im = Image.open(src).convert("RGBA").crop(box)
             if crop_bottom > 0:
                 im = im.crop((0, 0, im.width, int(im.height * (1 - crop_bottom))))
             if c.get("character.flip", False):
@@ -188,12 +193,14 @@ class Frame:
         od.text((x0 + 32, y1 + 24), "ANALYZING", font=_font(cfg, 24), fill=red)
         od.text((x0 + 200, y1 + 24), "研究データで「よく聞く話」を確かめる", font=_font(cfg, 24, 500), fill=pal.get("text_secondary", "#8FB3CC"))
         self.over = over
-        self._stage: dict[str, Image.Image] = {}
+        self._stage: dict[tuple[str, str], Image.Image] = {}
+        self._panel_key = None
+        self._panel = None
 
-    def stage(self, expr: str) -> Image.Image:
-        """右側（めたん・足もとの光の輪・名札）の重ね絵。表情ごとに 1 回だけ作る."""
-        if expr in self._stage:
-            return self._stage[expr]
+    def stage(self, expr: str, state: str = "base") -> Image.Image:
+        """右側（めたん・足もとの光の輪・名札）の重ね絵。表情 × 口の形ごとに 1 回だけ作る."""
+        if (expr, state) in self._stage:
+            return self._stage[(expr, state)]
         pal, cfg = self.pal, self.cfg
         acc = pal.get("accent", "#22D3EE")
         lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -203,7 +210,7 @@ class Frame:
         for k, a in ((0, 150), (18, 90), (36, 50)):
             rd.ellipse([cx - 210 - k, 1000 - 34 - k // 3, cx + 210 + k, 1000 + 34 + k // 3], outline=_rgb(acc) + (a,), width=4)
         lay.alpha_composite(ring.filter(ImageFilter.GaussianBlur(2)))
-        m = presenter(cfg, expr, 520, 760)
+        m = presenter(cfg, expr, 520, 760, state=state)
         if m is not None:
             lay.paste(m, (W - m.width + 30, H - m.height), m)
         # 名札
@@ -213,20 +220,54 @@ class Frame:
                              outline=acc, width=2)
         nd.text((px0 + 22, py0 + 12), "解析担当", font=_font(cfg, 22, 500), fill=acc)
         nd.text((px0 + 22, py0 + 40), "四国めたん", font=_font(cfg, 36), fill=pal.get("text", "#EAF6FF"))
-        self._stage[expr] = lay
+        self._stage[(expr, state)] = lay
         return lay
 
-    def compose(self, scene_img: Image.Image, kind: str = "") -> Image.Image:
-        x0, y0, x1, y1 = PANEL
-        pw, ph = x1 - x0, y1 - y0
-        sc = scene_img.convert("RGB").resize((pw, ph), Image.LANCZOS)
-        panel_back = self.back.crop(PANEL)
-        sc = finish(sc, self.bg, panel_back)
-        out = self.base.copy()
-        out.paste(sc, (x0, y0))
-        out.alpha_composite(self.over)
-        out.alpha_composite(self.stage(EXPR_BY_KIND.get(kind, "通常")))
+    def compose(self, scene_img: Image.Image, kind: str = "", mouth: str = "base") -> Image.Image:
+        """mouth: 口の形（base / mouth_half / mouth_open / blink）。同じ場面の絵が続くときは枠までを使い回す."""
+        key = (id(scene_img), scene_img.size)
+        if self._panel_key != key or self._panel is None:
+            x0, y0, x1, y1 = PANEL
+            pw, ph = x1 - x0, y1 - y0
+            sc = scene_img.convert("RGB").resize((pw, ph), Image.LANCZOS)
+            sc = finish(sc, self.bg, self.back.crop(PANEL))
+            out = self.base.copy()
+            out.paste(sc, (x0, y0))
+            out.alpha_composite(self.over)
+            self._panel_key, self._panel = key, out
+        out = self._panel.copy()
+        out.alpha_composite(self.stage(EXPR_BY_KIND.get(kind, "通常"), mouth))
         return out.convert("RGB")
+
+
+def mouth_track(wav_bytes: bytes, fps: int = 12, blink_every: float = 3.6) -> list[tuple[float, float, str]]:
+    """声の音量から口の形の並び [(始まり秒, 長さ, 形)] を作る（同じ形が続くところはまとめる）。間が空いたらまばたき."""
+    import io
+    import wave
+
+    import numpy as np
+    with wave.open(io.BytesIO(wav_bytes)) as w:
+        sr, n = w.getframerate(), w.getnframes()
+        a = np.frombuffer(w.readframes(n), dtype=np.int16).astype(np.float32) / 32768
+        if w.getnchannels() > 1:
+            a = a.reshape(-1, w.getnchannels()).mean(axis=1)
+    hop = max(1, sr // fps)
+    rms = np.array([np.sqrt(np.mean(a[i:i + hop] ** 2)) for i in range(0, len(a), hop)] or [0.0])
+    peak = max(float(np.percentile(rms, 95)), 1e-4)
+    states = []
+    for i, v in enumerate(rms / peak):
+        st = "mouth_open" if v > 0.55 else ("mouth_half" if v > 0.18 else "base")
+        if st == "base" and i > 0 and (i / fps) % blink_every < 1.5 / fps:
+            st = "blink"
+        states.append(st)
+    out: list[tuple[float, float, str]] = []
+    for i, st in enumerate(states):
+        if out and out[-1][2] == st:
+            s0, d0, _ = out[-1]
+            out[-1] = (s0, d0 + 1 / fps, st)
+        else:
+            out.append((i / fps, 1 / fps, st))
+    return out
 
 
 # ----------------------------------------------------------------------

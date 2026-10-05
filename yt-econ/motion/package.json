@@ -1,0 +1,6 @@
+{
+  "name": "psych-data-lab-motion",
+  "private": true,
+  "description": "PSYCH DATA LAB の 3D モーショングラフィックス（three.js をヘッドレス Chromium で 1 コマずつ描く）",
+  "dependencies": {"three": "0.160.0", "playwright-core": "1.56.0"}
+}

@@ -760,12 +760,12 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
         else:
             back = lab_mod.backdrop((th.W, th.H), pal)
 
-    def emit(img: Image.Image, dur: float, post: bool = True) -> None:
+    def emit(img: Image.Image, dur: float, post: bool = True, mouth: str = "base") -> None:
         nonlocal n
         if not post:
             pass
         elif frame is not None:
-            img = frame.compose(img, cur_kind)
+            img = frame.compose(img, cur_kind, mouth)
         elif back is not None:
             img = lab_mod.finish(img, th.bg, back)
         p = fr / f"f{n:04d}.png"
@@ -773,7 +773,15 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
         frames.extend([f"file '{p.name}'", f"duration {dur:.4f}"])
         n += 1
 
-    def animate(scene: Scene, step: int, seconds: float, dy: int, extra=None, static: bool = False) -> None:
+    def mouth_at(talk, t: float) -> str:
+        for s0, d0, st in talk or []:
+            if s0 <= t < s0 + d0:
+                return st
+        return "base"
+
+    def animate(scene: Scene, step: int, seconds: float, dy: int, extra=None, static: bool = False, talk=None) -> None:
+        """talk = 口の形の並び（lab.mouth_track）。解析画面のときだけ、声に合わせてめたんの口を動かす."""
+        talk = talk if frame is not None else None
         trans = min(seconds * 0.8, (0 if static else scene.max_delay(step)) + TRANS)
         k = max(1, int(trans * FPS))
         for i in range(k):
@@ -781,13 +789,28 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             img = scene.render(step, 99.0 if static else el)
             if extra:
                 extra(img, min(1.0, el / TRANS))
-            emit(_shift(img, dy, th), trans / k)
+            emit(_shift(img, dy, th), trans / k, mouth=mouth_at(talk, el))
         rest = seconds - trans
         if rest > 0.01:
             img = scene.render(step, 99.0)
             if extra:
                 extra(img, 1.0)
-            emit(_shift(img, dy, th), rest)
+            img = _shift(img, dy, th)
+            if not talk:
+                emit(img, rest)
+                return
+            # 止まっている絵の間も、口の形が変わるところでコマを分ける（場面の絵は 1 回だけ作る）
+            cuts = sorted({trans, seconds} | {c for s0, d0, _ in talk for c in (s0, s0 + d0) if trans < c < seconds})
+            pending, cur = 0.0, None
+            for a, b in zip(cuts, cuts[1:]):
+                st = mouth_at(talk, (a + b) / 2)
+                if cur is not None and st != cur:
+                    emit(img, pending, mouth=cur)
+                    pending = 0.0
+                cur = st
+                pending += b - a
+            if pending > 0.001:
+                emit(img, pending, mouth=cur or "base")
 
     def silence(sec: float) -> None:
         p = fr / f"a{len(wavs):03d}.wav"
@@ -858,7 +881,8 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 wavs.append((p, tail))
             else:
                 silence(voice + tail)
-            animate(scene, st, voice + tail, dy)
+            talk = lab_mod.mouth_track(data) if (frame is not None and p is not None) else None
+            animate(scene, st, voice + tail, dy, talk=talk)
             total += voice + tail
         # 台本にない段階（要素だけの段階）が残っていれば最後にまとめて出す
         last = scene.last_step()

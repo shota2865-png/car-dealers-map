@@ -57,3 +57,35 @@ def test_lab_prompts_ask_for_verification(monkeypatch):
     sc = honpen.write_part(cfg, ol, 0)
     assert "検証" in seen[0][0] and "verdict" in seen[1][0] and "data" in seen[1][0]
     assert sc[0]["label"] == "検証 01"
+
+
+def test_mouth_track_follows_voice():
+    import io
+    import math
+    import wave
+    buf = io.BytesIO()
+    sr = 24000
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        frames = bytearray()
+        for i in range(sr * 2):                       # 前半 1 秒は声、後半 1 秒は無音
+            v = int(12000 * math.sin(i / sr * 2 * math.pi * 220)) if i < sr else 0
+            frames += v.to_bytes(2, "little", signed=True)
+        w.writeframes(bytes(frames))
+    tr = lab.mouth_track(buf.getvalue(), fps=12)
+    states = [st for _, _, st in tr]
+    assert "mouth_open" in states and states[-1] in ("base", "blink")
+    assert abs(sum(d for _, d, _ in tr) - 2.0) < 0.2
+
+
+def test_frame_mouth_states_differ_when_presenter_exists():
+    cfg = _psych()
+    if lab.presenter(cfg, "通常", 520, 760) is None:          # 立ち絵が無い環境では確かめられない
+        return
+    fr = lab.Frame(cfg, palette(cfg), "t")
+    scene = Image.new("RGB", (1920, 1080), palette(cfg)["bg"])
+    a = fr.compose(scene, "data", "base")
+    b = fr.compose(scene, "data", "mouth_open")
+    assert list(a.crop((1430, 300, 1920, 1080)).getdata()) != list(b.crop((1430, 300, 1920, 1080)).getdata())
