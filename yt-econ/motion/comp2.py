@@ -301,9 +301,9 @@ def compose(fi):
 if __name__ == "__main__":
     a, b = int(sys.argv[1]), int(sys.argv[2])
     import os
-    os.makedirs(f"{M}/out", exist_ok=True)
+    os.makedirs(f"{M}/out2", exist_ok=True)
     for fi in range(a, b):
         if not __import__("os").path.exists(f"{M}/{FR}/f{fi:05d}.png"):
             continue
-        compose(fi).save(f"{M}/out/c{fi:05d}.jpg", quality=93)
+        compose(fi).save(f"{M}/out2/c{fi:05d}.jpg", quality=93)
     random.seed(0)
