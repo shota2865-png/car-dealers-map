@@ -57,3 +57,14 @@ def test_compile_joins_week_of_long_videos_with_chapters(cfg, tmp_path):
 
 def test_compile_skips_thin_weeks(cfg, tmp_path):
     assert compilation.make(cfg, tmp_path, tmp_path / "out")["skipped"]
+
+
+def test_keywords_in_title_are_clean():
+    k = compilation._keyword
+    assert k("値下げは政策】スマホ代はなぜ5年でまた上がる？【値下げは政策】【ずんだもん&めたん解説】") == "スマホ代"
+    assert k("食料品の消費税1%、なぜ食費は7%も安くならない？") == "食料品の消費税1%"
+    assert k("売り手市場なのに給料が上がらない理由") == "売り手市場"
+    assert k("【就職して足りる？】生涯賃金とは？会社員の一生は億単位") == "生涯賃金"
+    assert k("送料はなぜ無料にならない？") == "送料"
+    for t in ("なぜ不安は夜に大きくなる？", "保険の勧誘はなぜ断りにくいのか？"):
+        assert "】" not in k(t) and len(k(t)) <= 10

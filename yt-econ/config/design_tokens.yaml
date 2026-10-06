@@ -305,3 +305,39 @@ presets:
     motion:
       fade_ms: 400                # emphasized（medium 250〜400ms）
       easing: "emphasized"
+  lab:
+    label: "研究所の解析画面（黒に近い紺・シアンの光・格子。心理学をデータで検証する）"
+    colors:
+      bg: "#060A12"
+      surface: "#0C1524"
+      surface_high: "#0A2A3B"       # 強調の面（シアンの暗い面）
+      outline: "#1F3A52"
+      text: "#EAF6FF"
+      text_secondary: "#8FB3CC"
+      muted: "#7F9AB0"
+      accent: "#22D3EE"             # シアン
+      accent2: "#0F5A70"            # マーカー（白い字の下に敷く暗いシアン）
+      on_accent: "#03121A"
+      positive: "#34F5A4"
+      negative: "#FF4D7D"
+      negative_surface: "#3A1222"
+      warning: "#FFC857"
+    type:
+      display_xl: 150
+      display_l: 118
+      display_m: 96
+      display_s: 84
+      headline_l: 88
+      headline_m: 76
+      title: 62
+      body_l: 50
+      body_m: 44
+      label: 36
+      label_s: 30
+      numeral_xl: 200
+      subtitle: 110
+    radius: {s: 6, m: 6, l: 10}
+    stroke: {card: 2, text_outline: 0}
+    motion:
+      fade_ms: 400
+      easing: "ease_in_out"

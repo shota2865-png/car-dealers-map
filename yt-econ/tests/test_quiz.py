@@ -28,7 +28,7 @@ def test_normalize_adds_countdown_and_cta_and_renumbers_steps():
 
 def test_example_scenes_render_and_stay_in_safe_area(cfg):
     th = quiz.theme(cfg)
-    assert th.bg.upper() == "#FFFFFF" and th.blue.upper() == "#0017C1"      # dads プリセット
+    assert th.bg.upper() == "#060A12" and th.blue.upper() == "#22D3EE"      # lab プリセット
     q = quiz.normalize(copy.deepcopy(quiz._EXAMPLE))
     for sc in q["scenes"]:
         s = quiz.build_scene(cfg, th, sc if sc["kind"] != "countdown" else dict(q["scenes"][0], kind="countdown"))
@@ -68,7 +68,7 @@ def test_metadata_has_choices_sources_credit_and_disclaimer(cfg):
 def test_psych_is_voice_only(cfg):
     assert cfg.get("cast.mode") == "solo" and not cfg.get("character.enabled")
     assert int(cfg.get("tts.voicevox.speaker")) == 2
-    assert cfg.get("shorts.mode") == "quiz" and cfg.get("video.design") == "dads"
+    assert cfg.get("shorts.mode") == "quiz" and cfg.get("video.design") == "lab"
 
 
 def test_run_daily_skips_when_the_day_already_has_an_episode(tmp_path, monkeypatch):

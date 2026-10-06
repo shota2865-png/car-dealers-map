@@ -115,7 +115,7 @@ def test_recommend_names_concrete_levers(goal):
     text = "\n".join(acts)
     assert "shorts.per_video" in text                  # 遅れ → Shorts の本数
     assert "本編A" in text and "サムネ" in text          # 弱い本編 → サムネとタイトル
-    assert "shorts.max_seconds" in text                 # 視聴率の低い Shorts → 尺
+    assert "1 文目" in text and "45" not in text        # 長さは伸ばさない（ユーザーが却下）                 # 視聴率の低い Shorts → 尺
     assert "短いやつ" in text and "派生" in text          # 当たった Shorts → 派生
 
 

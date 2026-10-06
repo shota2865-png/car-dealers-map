@@ -107,13 +107,27 @@ def chapters(eps: list[Episode]) -> list[str]:
 
 
 def _keyword(title: str) -> str:
-    """タイトルの頭の、検索される語（「｜」「？」「とは」の前）."""
-    t = re.sub(r"【[^】]*】", "", title).strip()
-    for sep in ("｜", "？", "?", "とは", "、", "。"):
+    """タイトルの頭の、検索される語（「｜」「？」「とは」の前）。【】の残りや句読点は落とし、10 字で切れるなら出さない."""
+    t = re.sub(r"【[^】]*】", "", title)
+    t = re.sub(r"^[^【]*】", "", t)              # 片方だけ残った「…】」（古いタイトルの崩れ）は手前ごと落とす
+    t = re.sub(r"[【】#＃]", "", t).strip()
+    for sep in ("｜", "|", "？", "?", "とは", "、", "。", "！", "!", " ", "　"):
         if sep in t:
             t = t.split(sep)[0]
-            break
-    return t[:10]
+    t = t.strip("・,，.。、 ")
+    if t.startswith("なぜ"):
+        t = t[2:]
+    for sep in ("なのに", "なぜ", "でも"):
+        if sep in t and t.index(sep) >= 2:
+            t = t.split(sep)[0]
+    if len(t) > 10:                               # まだ長ければ、最初の「は」「が」の前（例: 不安は夜に… → 不安）
+        for p_ in ("は", "が"):
+            i = t.find(p_)
+            if 2 <= i <= 10:
+                t = t[:i]
+                break
+    t = t.rstrip("はがのをにで")                   # 「スマホ代は」→「スマホ代」
+    return t if 2 <= len(t) <= 10 else ""
 
 
 def build_metadata(cfg: Config, eps: list[Episode]):
@@ -123,10 +137,17 @@ def build_metadata(cfg: Config, eps: list[Episode]):
     hours = total / 3600
     length = f"{hours:.1f}時間" if hours >= 1 else f"{int(total // 60)}分"
     name = str(cfg.get("channel.name", ""))
-    kws = "・".join(dict.fromkeys(_keyword(e.title) for e in eps if _keyword(e.title)))
+    kws = list(dict.fromkeys(k for k in (_keyword(e.title) for e in eps) if k))
     prefix = str(cfg.get("compilation.title_prefix", "【睡眠用・作業用】"))
-    title = f"{prefix}{name} 1週間まとめ {length}（{kws}"
-    title = (title[:97] + "…）") if len(title) > 98 else title + "）"
+    title = f"{prefix}{name} 1週間まとめ {length}"
+    # 中身は語の途中で切らない。入るだけ（最大 4 語）並べる
+    picked: list[str] = []
+    for k in kws[:4]:
+        if len(title) + len("｜" + "・".join(picked + [k])) > 100:
+            break
+        picked.append(k)
+    if picked:
+        title += "｜" + "・".join(picked)
     lines = [
         str(cfg.get("compilation.lead", f"この 1 週間に公開した {len(eps)} 本を、1 本にまとめました（約 {length}）。"
                                          "眠る前や作業中に、流しっぱなしでどうぞ。")),
