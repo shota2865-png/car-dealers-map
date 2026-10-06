@@ -881,7 +881,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 wavs.append((p, tail))
             else:
                 silence(voice + tail)
-            talk = lab_mod.mouth_track(data) if (frame is not None and p is not None) else None
+            talk = lab_mod.mouth_track(data, cfg, seed=len(wavs)) if (frame is not None and p is not None) else None
             animate(scene, st, voice + tail, dy, talk=talk)
             total += voice + tail
         # 台本にない段階（要素だけの段階）が残っていれば最後にまとめて出す

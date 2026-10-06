@@ -1,0 +1,418 @@
+<!doctype html><html><body style="margin:0;background:#000;overflow:hidden">
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+// PSYCH DATA LAB ショーリール v2 — プラネタリウムのように「包み込まれる」立体の映像。
+//   - 広角 + 魚眼のレンズ（ドームに映したような湾曲）、縁の色ずれ、光源からの光の筋（ゴッドレイ）
+//   - 4 次元: 正八胞体（テッセラクト）とホップ・ファイブレーションを 4D で回して立体に写す（3Blue1Brown の立体射影の考え方）
+//   - 神経細胞の星空ドーム、時間で形を変える脳の活動（時間 = 4 つ目の軸）、小さな惑星の上の群衆と光の柱
+// window.renderAt(t) で t 秒の絵を描き、2D で重ねる文字の位置を返す。
+import * as THREE from 'three';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+
+const W = 1920, H = 1080;
+const renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
+renderer.setSize(W, H); renderer.setPixelRatio(1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x020409);
+const cam = new THREE.PerspectiveCamera(70, W / H, 0.02, 400);
+
+// ---------- 後処理: 光のにじみ → レンズ（魚眼・色ずれ・光の筋・周辺減光） ----------
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, cam));
+const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), 1.0, 0.55, 0.2);
+composer.addPass(bloom);
+const Lens = {
+  uniforms: {tDiffuse: {value: null}, fish: {value: 0.35}, ca: {value: 0.0022}, rays: {value: 0.0}, sun: {value: new THREE.Vector2(0.5, 0.5)}, aspect: {value: W / H}},
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float fish, ca, rays, aspect; uniform vec2 sun; varying vec2 vUv;
+    vec2 lens(vec2 uv, float k){
+      vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+      float r = length(p);
+      // 魚眼（中心がふくらみ、縁が丸く回り込む）。r を球面に写す
+      float f = 1.0 / (1.0 + k * 1.04);                 // 四隅が画面の内側に収まるように縮める（黒い縁を出さない）
+      float rr = r * (1.0 + k * r * r) * f;
+      p = (r > 0.0 ? p / r * rr : p);
+      return p / vec2(aspect, 1.0) + 0.5;
+    }
+    void main(){
+      float k = fish;
+      vec2 uvR = lens(vUv, k * (1.0 + ca * 40.0));
+      vec2 uvG = lens(vUv, k);
+      vec2 uvB = lens(vUv, k * (1.0 - ca * 40.0));
+      vec3 col = vec3(texture2D(tDiffuse, uvR).r, texture2D(tDiffuse, uvG).g, texture2D(tDiffuse, uvB).b);
+      // 光の筋: 光源に向かって明るいところを伸ばす
+      if (rays > 0.0) {
+        vec2 d = (uvG - sun) / 28.0; vec2 c = uvG; float decay = 1.0; vec3 acc = vec3(0.0);
+        for (int i = 0; i < 28; i++) { c -= d; vec3 s = texture2D(tDiffuse, c).rgb; acc += max(s - 0.7, 0.0) * decay; decay *= 0.9; }
+        col += acc * rays * 0.05;
+      }
+      vec2 q = (vUv - 0.5) * vec2(aspect, 1.0);
+      float vig = smoothstep(1.25, 0.25, length(q));
+      col *= vig;
+      gl_FragColor = vec4(col, 1.0);
+    }`
+};
+const lensPass = new ShaderPass(Lens); composer.addPass(lensPass);
+composer.addPass(new OutputPass());
+
+// ---------- 道具 ----------
+let seed = 11;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = x => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
+const easeOut = x => 1 - Math.pow(1 - clamp(x), 3);
+const lerp = (a, b, k) => a + (b - a) * k;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const win = (t, a, b, f = 0.8) => seg(t, a, a + f) * (1 - seg(t, b - f, b));   // a〜b の間だけ 1（前後 f 秒でフェード）
+const CYAN = new THREE.Color(0x22d3ee), MAG = new THREE.Color(0xff3d9a), VIO = new THREE.Color(0x7c5cff),
+      TEAL = new THREE.Color(0x2ff5c8), GOLD = new THREE.Color(0xffc857), WHITE = new THREE.Color(0xeaf6ff), BLUE = new THREE.Color(0x3a7bff);
+function dotTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.3, 'rgba(255,255,255,.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const DOT = dotTex();
+const pmat = (size, opacity = 1) => new THREE.PointsMaterial({size, map: DOT, vertexColors: true, transparent: true, opacity,
+  depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true});
+function pointCloud(n, fill, size, opacity = 1) {
+  const g = new THREE.BufferGeometry(), p = new Float32Array(n * 3), c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const [x, y, z, col, v] = fill(i); p.set([x, y, z], i * 3); c.set([col.r * v, col.g * v, col.b * v], i * 3); }
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return new THREE.Points(g, pmat(size, opacity));
+}
+const onSphere = () => { const u = rnd() * 2 - 1, th = rnd() * Math.PI * 2, s = Math.sqrt(1 - u * u); return [s * Math.cos(th), u, s * Math.sin(th)]; };
+
+// ======================================================================
+// 1) 神経細胞の星空ドーム（カメラはドームの中心）
+// ======================================================================
+const dome = new THREE.Group(); scene.add(dome);
+const DN = 26000, domeR = 40;
+const neurons = [];
+const domePts = pointCloud(DN, i => {
+  const [x, y, z] = onSphere(); const r = domeR * (0.75 + rnd() * 0.5);
+  const c = rnd() < .62 ? CYAN : (rnd() < .5 ? VIO : MAG);
+  if (i < 900) neurons.push(new THREE.Vector3(x * r, y * r, z * r));
+  return [x * r, y * r, z * r, c, 0.35 + rnd() * 0.65];
+}, 0.32, 0.95);
+dome.add(domePts);
+// 星座のようにつながる神経（近い点どうしを線で）
+const synEdges = [];
+for (let i = 0; i < neurons.length; i++) {
+  const d = neurons.map((n, j) => [n.distanceTo(neurons[i]), j]).sort((a, b) => a[0] - b[0]);
+  for (let k = 1; k <= 2; k++) if (d[k][1] > i && d[k][0] < 14) synEdges.push([i, d[k][1]]);
+}
+const synGeo = new THREE.BufferGeometry(), sp = new Float32Array(synEdges.length * 6), sc = new Float32Array(synEdges.length * 6);
+synEdges.forEach(([a, b], k) => { sp.set([...neurons[a].toArray(), ...neurons[b].toArray()], k * 6); const c = rnd() < .5 ? CYAN : TEAL; sc.set([c.r, c.g, c.b, c.r, c.g, c.b], k * 6); });
+synGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3)); synGeo.setAttribute('color', new THREE.BufferAttribute(sc, 3));
+synGeo.setDrawRange(0, 0);
+const synMat = new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false});
+dome.add(new THREE.LineSegments(synGeo, synMat));
+// 線の上を走る信号
+const SPN = 1400, spGeo = new THREE.BufferGeometry(), spPos = new Float32Array(SPN * 3), spCol = new Float32Array(SPN * 3), sigs = [];
+for (let i = 0; i < SPN; i++) { sigs.push({e: Math.floor(rnd() * synEdges.length), o: rnd(), s: 0.25 + rnd() * 0.6}); const c = rnd() < .75 ? WHITE : GOLD; spCol.set([c.r, c.g, c.b], i * 3); }
+spGeo.setAttribute('position', new THREE.BufferAttribute(spPos, 3)); spGeo.setAttribute('color', new THREE.BufferAttribute(spCol, 3));
+const sigMat = pmat(0.55, 0); dome.add(new THREE.Points(spGeo, sigMat));
+// 天の川のような帯（神経の束）
+const band = pointCloud(16000, () => {
+  const a = rnd() * Math.PI * 2, w = (rnd() - .5) * (rnd() < .5 ? 3 : 9), r = domeR * 0.92;
+  const v = new THREE.Vector3(Math.cos(a) * r, w, Math.sin(a) * r).applyAxisAngle(new THREE.Vector3(1, 0, 0.3).normalize(), 0.9);
+  return [v.x, v.y, v.z, rnd() < .5 ? MAG : VIO, 0.25 + rnd() * 0.5];
+}, 0.22, 0.9);
+dome.add(band);
+
+// ======================================================================
+// 2) 4 次元: テッセラクトとホップ・ファイブレーション
+// ======================================================================
+const four = new THREE.Group(); scene.add(four);
+const tv = []; for (let i = 0; i < 16; i++) tv.push([(i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1, (i & 8) ? 1 : -1]);
+const te = []; for (let i = 0; i < 16; i++) for (let b = 0; b < 4; b++) { const j = i ^ (1 << b); if (j > i) te.push([i, j]); }
+const SUB = 24;     // 1 本の辺を細かく割り、4D の回転で曲がって見えるように
+const tessGeo = new THREE.BufferGeometry(), tessPos = new Float32Array(te.length * SUB * 6), tessCol = new Float32Array(te.length * SUB * 6);
+te.forEach(([a, b], k) => { const c = (tv[a][3] + tv[b][3]) > 0 ? MAG : CYAN; for (let s = 0; s < SUB; s++) tessCol.set([c.r, c.g, c.b, c.r, c.g, c.b], (k * SUB + s) * 6); });
+tessGeo.setAttribute('position', new THREE.BufferAttribute(tessPos, 3)); tessGeo.setAttribute('color', new THREE.BufferAttribute(tessCol, 3));
+const tessMat = new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false});
+const tess = new THREE.LineSegments(tessGeo, tessMat); four.add(tess);
+const tvGeo = new THREE.BufferGeometry(), tvPos = new Float32Array(16 * 3), tvCol = new Float32Array(16 * 3);
+for (let i = 0; i < 16; i++) tvCol.set([1, 1, 1], i * 3);
+tvGeo.setAttribute('position', new THREE.BufferAttribute(tvPos, 3)); tvGeo.setAttribute('color', new THREE.BufferAttribute(tvCol, 3));
+const tvMat = pmat(0.22, 0); four.add(new THREE.Points(tvGeo, tvMat));
+// ホップ・ファイブレーション（入れ子のトーラスに並ぶ円）
+const FIB = [], FP = 160;
+const etas = [0.35, 0.62, 0.9, 1.15];
+etas.forEach((eta, ei) => { const nf = 22 + ei * 4; for (let k = 0; k < nf; k++) FIB.push({eta, d: k / nf * Math.PI * 2, col: new THREE.Color().setHSL(0.48 + ei * 0.09 + k / nf * 0.08, 0.9, 0.6)}); });
+const hopfGeo = new THREE.BufferGeometry(), hopfPos = new Float32Array(FIB.length * FP * 6), hopfCol = new Float32Array(FIB.length * FP * 6);
+FIB.forEach((f, k) => { for (let s = 0; s < FP; s++) hopfCol.set([f.col.r, f.col.g, f.col.b, f.col.r, f.col.g, f.col.b], (k * FP + s) * 6); });
+hopfGeo.setAttribute('position', new THREE.BufferAttribute(hopfPos, 3)); hopfGeo.setAttribute('color', new THREE.BufferAttribute(hopfCol, 3));
+const hopfMat = new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false});
+four.add(new THREE.LineSegments(hopfGeo, hopfMat));
+function rot4(p, a, b, c) {           // XW・YW・ZW 平面の回転
+  let [x, y, z, w] = p;
+  let ca = Math.cos(a), sa = Math.sin(a); [x, w] = [x * ca - w * sa, x * sa + w * ca];
+  let cb = Math.cos(b), sb = Math.sin(b); [y, w] = [y * cb - w * sb, y * sb + w * cb];
+  let cc = Math.cos(c), sc_ = Math.sin(c); [z, w] = [z * cc - w * sc_, z * sc_ + w * cc];
+  return [x, y, z, w];
+}
+const proj4 = (p, d = 3.2) => { const k = 1.6 / (d - p[3]); return [p[0] * k, p[1] * k, p[2] * k]; };
+const stereo = p => { const k = 1 / Math.max(0.06, 1 - p[3]); return [p[0] * k, p[1] * k, p[2] * k]; };
+function updateFour(t) {
+  const a = t * 0.55, b = t * 0.37, c = t * 0.21;
+  let o = 0;
+  te.forEach(([i, j]) => {
+    for (let s = 0; s < SUB; s++) {
+      for (const f of [s / SUB, (s + 1) / SUB]) {
+        const p = tv[i].map((v, n) => lerp(v, tv[j][n], f));
+        const q = proj4(rot4(p, a, b, c)); tessPos[o++] = q[0]; tessPos[o++] = q[1]; tessPos[o++] = q[2];
+      }
+    }
+  });
+  tessGeo.attributes.position.needsUpdate = true;
+  tv.forEach((p, i) => { const q = proj4(rot4(p, a, b, c)); tvPos.set(q, i * 3); });
+  tvGeo.attributes.position.needsUpdate = true;
+  o = 0;
+  const ha = t * 0.4, hb = t * 0.27;
+  FIB.forEach(f => {
+    for (let s = 0; s < FP; s++) {
+      for (const u of [s / FP, (s + 1) / FP]) {
+        const th = u * Math.PI * 2;
+        const p = [Math.cos(f.eta) * Math.cos(th), Math.cos(f.eta) * Math.sin(th), Math.sin(f.eta) * Math.cos(th + f.d), Math.sin(f.eta) * Math.sin(th + f.d)];
+        const q = stereo(rot4(p, ha, hb, 0)); hopfPos[o++] = q[0] * 1.3; hopfPos[o++] = q[1] * 1.3; hopfPos[o++] = q[2] * 1.3;
+      }
+    }
+  });
+  hopfGeo.attributes.position.needsUpdate = true;
+}
+
+// ======================================================================
+// 3) ホログラムの脳と、時間で移り変わる活動（時間 = 4 つ目の軸）
+// ======================================================================
+const brainG = new THREE.Group(); scene.add(brainG);
+function brainPoint() {
+  const r = rnd();
+  if (r < 0.82) {
+    const side = rnd() < .5 ? -1 : 1, u = rnd() * 2 - 1, th = rnd() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+    let x = s * Math.cos(th), y = u, z = s * Math.sin(th);
+    const k = 1 + 0.07 * Math.sin(17 * th + 4 * Math.sin(5 * u)) * Math.sin(13 * u + 3 * Math.cos(7 * th));
+    x *= 0.70 * k; y *= 0.82 * k; z *= 1.30 * k; if (x < -0.45) x = -0.45 - (x + 0.45) * 0.2;
+    return [side * (x + 0.5), y + 0.15, z];
+  } else if (r < 0.96) {
+    const u = rnd() * 2 - 1, th = rnd() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+    return [s * Math.cos(th) * 0.78, -0.62 + u * 0.32, -0.85 + s * Math.sin(th) * 0.42];
+  }
+  const a = rnd() * Math.PI * 2, h = rnd(), rr = 0.16 * (1 - h * 0.45);
+  return [Math.cos(a) * rr, -0.40 - h * 0.75, -0.35 + Math.sin(a) * rr - h * 0.2];
+}
+const BN = 46000, bBase = new Float32Array(BN * 3);
+const brainPts = pointCloud(BN, i => { const p = brainPoint(); bBase.set(p, i * 3); return [...p, rnd() < .7 ? CYAN : TEAL, 0.35 + rnd() * 0.5]; }, 0.022, 0.75);
+brainG.add(brainPts);
+const bCol = brainPts.geometry.attributes.color.array, bCol0 = Float32Array.from(bCol);
+// 活動の中心（扁桃体 = 感情 / 海馬 = 記憶 / 前頭前野 = 判断）。時間で順に強くなる
+const hubs = [{p: new THREE.Vector3(0.55, -0.35, 0.25), c: new THREE.Color(0xff5a3c)}, {p: new THREE.Vector3(-0.6, -0.3, -0.15), c: GOLD}, {p: new THREE.Vector3(0.0, 0.35, 1.05), c: MAG}];
+// 脳のまわりを回る輪（データの軌道）
+const orbit = new THREE.Group(); brainG.add(orbit);
+for (let k = 0; k < 5; k++) {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(1.7 + k * 0.28, 0.004, 6, 200, Math.PI * (1.0 + rnd())), new THREE.MeshBasicMaterial({color: k % 2 ? 0x22d3ee : 0x7c5cff, transparent: true, opacity: 0}));
+  m.rotation.set(1.2 + rnd() * .6, rnd() * .6, rnd() * 6); m.userData.s = 0.2 + rnd() * 0.4; orbit.add(m);
+}
+
+// ======================================================================
+// 4) 小さな惑星の上の群衆と、空へ伸びる光の柱
+// ======================================================================
+const planet = new THREE.Group(); scene.add(planet);
+const PR = 4;
+const wire = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(PR, 5)), new THREE.LineBasicMaterial({color: 0x0f4c63, transparent: true, opacity: 0}));
+planet.add(wire);
+const core = new THREE.Mesh(new THREE.SphereGeometry(PR * 0.995, 64, 64), new THREE.MeshBasicMaterial({color: 0x03111c, transparent: true, opacity: 0}));
+planet.add(core);
+const body = new THREE.CylinderGeometry(0.018, 0.024, 0.085, 8); body.translate(0, 0.043, 0);
+const head = new THREE.SphereGeometry(0.017, 10, 10); head.translate(0, 0.106, 0);
+const personGeo = BufferGeometryUtils.mergeGeometries([body, head]);
+const CN = 2400, people = new THREE.InstancedMesh(personGeo, new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0}), CN);
+const pDir = [], litL = new Set(), litR = new Set();
+const up = new THREE.Vector3(0, 1, 0), m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+const cL = new THREE.Vector3(-0.42, 1, 0.25).normalize(), cR = new THREE.Vector3(0.42, 1, 0.25).normalize();
+for (let i = 0; i < CN; i++) {
+  const c = i % 2 === 0 ? cL : cR, k = Math.floor(i / 2), a = k * 2.399963, r = Math.sqrt(k) * 0.0068;
+  const tA = new THREE.Vector3(1, 0, 0).cross(c).normalize(), tB = c.clone().cross(tA).normalize();
+  pDir.push(c.clone().addScaledVector(tA, Math.cos(a) * r).addScaledVector(tB, Math.sin(a) * r).normalize());
+  if (i % 2 === 0 ? rnd() < 0.03 : rnd() < 0.30) (i % 2 === 0 ? litL : litR).add(i);
+}
+const pc = new THREE.Color();
+for (let i = 0; i < CN; i++) {
+  const d = pDir[i]; qq.setFromUnitVectors(up, d); m4.compose(d.clone().multiplyScalar(PR), qq, one); people.setMatrixAt(i, m4); people.setColorAt(i, pc.set(0x1d3550));
+}
+planet.add(people);
+// 光の柱（光った人の数だけ）
+const beams = new THREE.Group(); planet.add(beams);
+const beamGeo = new THREE.CylinderGeometry(0.003, 0.008, 1, 6, 1, true); beamGeo.translate(0, 0.5, 0);
+[...litL, ...litR].forEach(i => {
+  const mesh = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({color: 0xffc857, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false}));
+  const d = pDir[i]; mesh.quaternion.setFromUnitVectors(up, d); mesh.position.copy(d).multiplyScalar(PR + 0.2); mesh.userData = {i, L: litL.has(i), h: 2 + rnd() * 6};
+  beams.add(mesh);
+});
+const atmo = pointCloud(6000, () => { const [x, y, z] = onSphere(); const r = PR * (1.05 + rnd() * 0.25); return [x * r, y * r, z * r, CYAN, 0.2 + rnd() * 0.3]; }, 0.05, 0.6);
+planet.add(atmo);
+
+// ======================================================================
+// 5) めたんの場面の背景: 4D のノイズで流れる粒子（周りを取り囲む渦）
+// ======================================================================
+const flowN = 14000, flowGeo = new THREE.BufferGeometry(), flowPos = new Float32Array(flowN * 3), flowCol = new Float32Array(flowN * 3), flowSeed = [];
+for (let i = 0; i < flowN; i++) { const r = 2 + rnd() * 16, a = rnd() * Math.PI * 2; flowSeed.push([r, a, (rnd() - .5) * 10, 0.2 + rnd()]); const c = rnd() < .6 ? CYAN : (rnd() < .5 ? MAG : VIO); const v = .3 + rnd() * .6; flowCol.set([c.r * v, c.g * v, c.b * v], i * 3); }
+flowGeo.setAttribute('position', new THREE.BufferAttribute(flowPos, 3)); flowGeo.setAttribute('color', new THREE.BufferAttribute(flowCol, 3));
+const flowMat = pmat(0.09, 0); const flow = new THREE.Points(flowGeo, flowMat); scene.add(flow);
+
+// ======================================================================
+// 6) ロゴの輪（すべての粒子が集まる）
+// ======================================================================
+const ringN = 20000, ringGeo = new THREE.BufferGeometry(), ringPos = new Float32Array(ringN * 3), ringCol = new Float32Array(ringN * 3), ringFrom = new Float32Array(ringN * 3), ringA = new Float32Array(ringN);
+for (let i = 0; i < ringN; i++) {
+  const [x, y, z] = onSphere(), r = 20 + rnd() * 30; ringFrom.set([x * r, y * r, z * r], i * 3); ringA[i] = rnd();
+  const c = rnd() < .65 ? CYAN : (rnd() < .5 ? MAG : VIO), v = .4 + rnd() * .6; ringCol.set([c.r * v, c.g * v, c.b * v], i * 3);
+}
+ringGeo.setAttribute('position', new THREE.BufferAttribute(ringPos, 3)); ringGeo.setAttribute('color', new THREE.BufferAttribute(ringCol, 3));
+const ringMat = pmat(0.045, 0); const ring = new THREE.Points(ringGeo, ringMat); scene.add(ring);
+
+// ---------- 2D へ渡す座標 ----------
+const tmp = new THREE.Vector3();
+function project(v) { tmp.copy(v).project(cam); return [Math.round((tmp.x + 1) / 2 * W), Math.round((1 - tmp.y) / 2 * H), tmp.z < 1 ? 1 : 0]; }
+
+// ======================================================================
+// 時間ごと
+// ======================================================================
+window.renderAt = (t) => {
+  const out = {};
+  // ---- 1) ドーム 0〜10 秒（と、めたんの場面 44〜54 秒の背景にも） ----
+  const domeK = Math.max(win(t, -1, 10.6, 1.2), win(t, 43.6, 54.6, 1.0) * 0.6);
+  dome.visible = domeK > 0.01;
+  domePts.material.opacity = domeK; band.material.opacity = 0.8 * domeK;
+  synGeo.setDrawRange(0, Math.floor(synEdges.length * 2 * easeOut(seg(t, 2.5, 7.5))) );
+  synMat.opacity = 0.6 * domeK; sigMat.opacity = domeK * seg(t, 4, 6);
+  if (dome.visible) {
+    sigs.forEach((s, i) => { const [a, b] = synEdges[s.e]; const f = (s.o + t * s.s) % 1; spPos.set([lerp(neurons[a].x, neurons[b].x, f), lerp(neurons[a].y, neurons[b].y, f), lerp(neurons[a].z, neurons[b].z, f)], i * 3); });
+    spGeo.attributes.position.needsUpdate = true;
+    dome.rotation.y = t * 0.03; dome.rotation.x = 0.15 * Math.sin(t * 0.1);
+  }
+  // ---- 2) 4D 10〜21 秒 ----
+  const fourK = win(t, 9.6, 21.4, 1.0);
+  four.visible = fourK > 0.01;
+  if (four.visible) {
+    updateFour(t);
+    const morph = ease(seg(t, 14.5, 16.5));                 // テッセラクト → ホップ・ファイブレーション
+    tessMat.opacity = fourK * (1 - morph); tvMat.opacity = fourK * (1 - morph);
+    hopfMat.opacity = fourK * morph * 0.85;
+  }
+  // ---- 3) 脳 21〜33 秒 ----
+  const brainK = win(t, 20.6, 33.4, 1.0);
+  brainG.visible = brainK > 0.01;
+  brainPts.material.opacity = 0.85 * brainK;
+  if (brainG.visible) {
+    // 時間で移る活動: 3 つの中心が順に光り、その近くの点の色が変わる（波のように）
+    const act = hubs.map((h, k) => Math.max(0, Math.sin((t - 22.5 - k * 2.6) * 0.9)) * seg(t, 22 + k * 2.6, 23 + k * 2.6));
+    for (let i = 0; i < BN; i++) {
+      const x = bBase[i * 3], y = bBase[i * 3 + 1], z = bBase[i * 3 + 2];
+      let r = bCol0[i * 3], g = bCol0[i * 3 + 1], b = bCol0[i * 3 + 2];
+      for (let k = 0; k < 3; k++) {
+        if (act[k] <= 0) continue;
+        const h = hubs[k].p, dd = (x - h.x) ** 2 + (y - h.y) ** 2 + (z - h.z) ** 2;
+        const w = Math.min(1, act[k] * 1.3 * Math.exp(-dd * 3.2) * (0.65 + 0.35 * Math.sin(t * 7 + dd * 30)));
+        r = lerp(r, hubs[k].c.r * 2.2, w); g = lerp(g, hubs[k].c.g * 2.2, w); b = lerp(b, hubs[k].c.b * 2.2, w);
+      }
+      bCol[i * 3] = r; bCol[i * 3 + 1] = g; bCol[i * 3 + 2] = b;
+    }
+    brainPts.geometry.attributes.color.needsUpdate = true;
+    brainG.rotation.y = 0.15 * Math.sin(t * 0.3);
+    orbit.children.forEach((m, k) => { m.material.opacity = 0.7 * brainK; m.rotation.z = t * m.userData.s + k; });
+    out.hubs = hubs.map(h => project(brainG.localToWorld(h.p.clone())));
+    out.act = act;
+  }
+  // ---- 4) 惑星 33〜44 秒 ----
+  const plK = win(t, 32.6, 44.4, 1.0);
+  planet.visible = plK > 0.01;
+  wire.material.opacity = 0.6 * plK; core.material.opacity = 0.95 * plK; people.material.opacity = plK; atmo.material.opacity = 0.6 * plK;
+  if (planet.visible) {
+    for (let i = 0; i < CN; i++) {
+      const L = litL.has(i), R = litR.has(i);
+      const on = (L && t > 37.0) || (R && t > 37.8);
+      pc.set(0x24456a).lerp(GOLD, on ? clamp((t - (L ? 37.0 : 37.8)) * 3) * 0.7 : 0); people.setColorAt(i, pc);
+    }
+    people.instanceColor.needsUpdate = true;
+    beams.children.forEach(b => { const st = b.userData.L ? 37.3 : 38.1; const k = easeOut(seg(t, st, st + 1.4)); b.scale.set(1, 0.001 + b.userData.h * k, 1); b.material.opacity = 0.32 * k * plK; });
+    planet.rotation.set(0, 0, 0);
+    out.groupL = project(cL.clone().multiplyScalar(PR + 0.05).applyEuler(planet.rotation));
+    out.groupR = project(cR.clone().multiplyScalar(PR + 0.05).applyEuler(planet.rotation));
+  }
+  // ---- 5) 4D ノイズの渦 44〜54 秒 ----
+  const flK = win(t, 43.4, 54.6, 1.0);
+  flow.visible = flK > 0.01; flowMat.opacity = flK;
+  if (flow.visible) {
+    for (let i = 0; i < flowN; i++) {
+      const [r, a, y, s] = flowSeed[i];
+      const ang = a + t * 0.12 * s + 0.35 * Math.sin(r * 0.4 + t * 0.5);
+      const rr = r + 0.8 * Math.sin(a * 3 + t * 0.7 * s);
+      flowPos.set([Math.cos(ang) * rr, y + 1.2 * Math.sin(ang * 2 + t * 0.4), Math.sin(ang) * rr], i * 3);
+    }
+    flowGeo.attributes.position.needsUpdate = true;
+  }
+  // ---- 6) ロゴの輪 53〜60 秒 ----
+  const rgK = seg(t, 52.6, 53.6);
+  ring.visible = rgK > 0.01; ringMat.opacity = rgK * (1 - seg(t, 59.2, 60));
+  if (ring.visible) {
+    for (let i = 0; i < ringN; i++) {
+      const k = ease(seg(t, 53.0 + ringA[i] * 1.6, 55.0 + ringA[i] * 1.6));
+      const a = i * 2.399963 + t * 0.3, rr = 2.2 + Math.sin(i * 12.9898) * 0.12;
+      ringPos[i * 3] = lerp(ringFrom[i * 3], Math.cos(a) * rr, k);
+      ringPos[i * 3 + 1] = lerp(ringFrom[i * 3 + 1], Math.sin(a) * rr, k);
+      ringPos[i * 3 + 2] = lerp(ringFrom[i * 3 + 2], Math.sin(i * 7.3) * 0.08, k);
+    }
+    ringGeo.attributes.position.needsUpdate = true;
+  }
+
+  // ---- カメラとレンズ ----
+  let fish = 0.35, fov = 70, rays = 0;
+  if (t < 10.6) {             // ドームの中心から見上げて、ゆっくり回る
+    const k = ease(seg(t, 0, 10.6));
+    cam.position.set(0, 0, 0); fov = lerp(95, 80, k); fish = 0.55;
+    cam.lookAt(Math.sin(t * 0.08) * 10, lerp(-2, 14, k), -20);
+  } else if (t < 21.4) {      // 4D の形の周りを回る
+    const k = seg(t, 10.6, 21.4), a = k * 2.4 + 0.3, r = lerp(5.2, 3.6, ease(k));
+    cam.position.set(Math.sin(a) * r, 0.8 * Math.sin(k * 3), Math.cos(a) * r); cam.lookAt(0, 0, 0); fov = 62; fish = 0.4;
+  } else if (t < 33.4) {      // 脳に寄って、光の筋
+    const k = seg(t, 21.4, 33.4), a = -1.35 + k * 0.9;
+    const r = lerp(5.4, 3.0, ease(seg(t, 21.4, 27)));
+    cam.position.set(Math.sin(a) * r, lerp(1.6, 0.4, ease(k)), Math.cos(a) * r); cam.lookAt(0, -0.05, 0); fov = 58; fish = 0.3;
+    rays = 0.5 * brainK; lensPass.uniforms.sun.value.set(0.5, 0.5);
+  } else if (t < 44.4) {      // 惑星の地平線すれすれ → 上空へ
+    const k = seg(t, 33.4, 44.4);
+    const h = lerp(1.6, 6.0, ease(seg(t, 38.6, 43.8)));
+    const a = lerp(-0.35, 0.3, k);
+    const p = new THREE.Vector3(Math.sin(a) * 0.9, 1, Math.cos(a) * 0.9 + 0.25).normalize().multiplyScalar(PR + h);
+    cam.position.copy(p); cam.up.set(0, 1, 0);
+    cam.lookAt(0, PR * 0.86, 0.25); fov = lerp(68, 60, k); fish = 0.5;
+    rays = 0.25 * seg(t, 37.3, 39) * plK;
+    const sp2 = project(new THREE.Vector3(0, PR + 6, 0)); lensPass.uniforms.sun.value.set(sp2[0] / W, 1 - sp2[1] / H);
+  } else if (t < 53) {        // めたん: 渦の中心
+    const k = seg(t, 44.4, 53);
+    cam.position.set(Math.sin(k * 0.6) * 1.5, 0.6, 6 - k * 1.2); cam.lookAt(-1.2, 0.4, 0); fov = 75; fish = 0.45;
+  } else {                    // ロゴ
+    const k = ease(seg(t, 53, 56));
+    cam.position.set(0, 0, lerp(14, 7.2, k)); cam.lookAt(0, 0, 0); fov = 50; fish = lerp(0.6, 0.25, k);
+    rays = 0.5 * seg(t, 55, 56) * (1 - seg(t, 58.5, 60)); lensPass.uniforms.sun.value.set(0.5, 0.5);
+  }
+  cam.fov = fov; cam.updateProjectionMatrix();
+  lensPass.uniforms.fish.value = fish; lensPass.uniforms.rays.value = rays;
+  bloom.strength = (t >= 32.6 && t < 44.4) ? 0.55 : (t >= 20.6 && t < 33.4) ? 0.6 : 1.0;
+  if (t >= 33.4 && t < 44.4) { out.groupL = project(cL.clone().multiplyScalar(PR + 0.05)); out.groupR = project(cR.clone().multiplyScalar(PR + 0.05)); }
+  composer.render();
+  return out;
+};
+window.ready = true;
+</script></body></html>

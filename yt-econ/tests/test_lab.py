@@ -74,7 +74,7 @@ def test_mouth_track_follows_voice():
             v = int(12000 * math.sin(i / sr * 2 * math.pi * 220)) if i < sr else 0
             frames += v.to_bytes(2, "little", signed=True)
         w.writeframes(bytes(frames))
-    tr = lab.mouth_track(buf.getvalue(), fps=12)
+    tr = lab.mouth_track(buf.getvalue(), _psych())
     states = [st for _, _, st in tr]
     assert "mouth_open" in states and states[-1] in ("base", "blink")
     assert abs(sum(d for _, d, _ in tr) - 2.0) < 0.2

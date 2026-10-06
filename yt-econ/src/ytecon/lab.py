@@ -240,26 +240,24 @@ class Frame:
         return out.convert("RGB")
 
 
-def mouth_track(wav_bytes: bytes, fps: int = 12, blink_every: float = 3.6) -> list[tuple[float, float, str]]:
-    """声の音量から口の形の並び [(始まり秒, 長さ, 形)] を作る（同じ形が続くところはまとめる）。間が空いたらまばたき."""
-    import io
-    import wave
+def mouth_track(wav_bytes: bytes, cfg: Config | None = None, seed: int = 7) -> list[tuple[float, float, str]]:
+    """声から口の形の並び [(始まり秒, 長さ, 形)] を作る。経済チャンネルの立ち絵（character.py）と同じ速さ・同じ決め方:
 
-    import numpy as np
-    with wave.open(io.BytesIO(wav_bytes)) as w:
-        sr, n = w.getframerate(), w.getnframes()
-        a = np.frombuffer(w.readframes(n), dtype=np.int16).astype(np.float32) / 32768
-        if w.getnchannels() > 1:
-            a = a.reshape(-1, w.getnchannels()).mean(axis=1)
-    hop = max(1, sr // fps)
-    rms = np.array([np.sqrt(np.mean(a[i:i + hop] ** 2)) for i in range(0, len(a), hop)] or [0.0])
-    peak = max(float(np.percentile(rms, 95)), 1e-4)
-    states = []
-    for i, v in enumerate(rms / peak):
-        st = "mouth_open" if v > 0.55 else ("mouth_half" if v > 0.18 else "base")
-        if st == "base" and i > 0 and (i / fps) % blink_every < 1.5 / fps:
-            st = "blink"
-        states.append(st)
+    1 秒 20 回で音量を測り（ピークを 0.7 くらいに正規化）、閉じるのを少し遅らせてバタつかせない。
+    閾値は character.mouth_half_threshold / mouth_open_threshold、まばたきは character.apply_blinks と同じ.
+    """
+    import tempfile
+
+    from . import character
+    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+        tmp.write(wav_bytes)
+        tmp.flush()
+        env = character.envelope(Path(tmp.name))
+    fps = character.FPS
+    if cfg is None:
+        from .config import load_config
+        cfg = load_config()
+    states = character.apply_blinks(cfg, character.mouth_states(cfg, env), fps=fps, seed=seed)
     out: list[tuple[float, float, str]] = []
     for i, st in enumerate(states):
         if out and out[-1][2] == st:
