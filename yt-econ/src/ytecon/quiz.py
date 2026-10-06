@@ -206,8 +206,54 @@ def theme(cfg: Config) -> Theme:
 _font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
 
+class _SafeFont(ImageFont.FreeTypeFont):
+    """字体に無い記号（→ ※ ● など）を、描ける近い字に置き換えてから描く（M PLUS 1 は矢印を持たない）."""
+
+    def getmask2(self, text, *a, **k):
+        from .assets import _safe_for_font
+        return super().getmask2(_safe_for_font(self, text), *a, **k)
+
+    def getlength(self, text, *a, **k):
+        from .assets import _safe_for_font
+        return super().getlength(_safe_for_font(self, text), *a, **k)
+
+    def getbbox(self, text, *a, **k):
+        from .assets import _safe_for_font
+        return super().getbbox(_safe_for_font(self, text), *a, **k)
+
+
+def font_en(cfg: Config, size: int, weight: int = 500) -> ImageFont.FreeTypeFont:
+    """英字・数字だけの飾り文字（PSYCH DATA LAB など）。video.typeface_en（Orbitron）が無ければ本文と同じ."""
+    face = _typeface(cfg, "video.typeface_en")
+    if not face:
+        return font(cfg, size, weight)
+    key = (f"{face}@{weight}", size)
+    if key not in _font_cache:
+        f = ImageFont.truetype(face, size)
+        try:
+            f.set_variation_by_axes([weight])
+        except Exception:
+            pass
+        _font_cache[key] = f
+    return _font_cache[key]
+
+
+def _typeface(cfg: Config, key: str = "video.typeface") -> str:
+    """config で字体を指定していれば、その可変フォントのパス（心理学の研究所は細い M PLUS 1）."""
+    face = str(cfg.get(key, "") or "").strip()
+    if face:
+        p = Path(face)
+        p = p if p.is_absolute() else cfg.root / p
+        if p.exists():
+            return str(p)
+    return ""
+
+
 def _font_file(cfg: Config, weight: int) -> tuple[str, bool]:
     """(ファイル, 可変フォントか)。Bold は Noto Sans JP Bold、細い字は Medium/Regular、無ければ可変、最後は Bold."""
+    face = _typeface(cfg)
+    if face:
+        return face, True
     fonts = cfg.root / "assets" / "fonts"
     if weight >= 700:
         for n in ("NotoSansJP-Bold.ttf", "NotoSansJP-Black.ttf"):
@@ -229,10 +275,13 @@ def _font_file(cfg: Config, weight: int) -> tuple[str, bool]:
 
 
 def font(cfg: Config, size: int, weight: int = 700) -> ImageFont.FreeTypeFont:
+    if _typeface(cfg):
+        # 細い字体にするときは、全部の太さを同じだけ細くする（見出し 900 → 600、本文 700 → 400 など）
+        weight = max(100, min(900, weight + int(cfg.get("video.weight_shift", 0) or 0)))
     path, variable = _font_file(cfg, weight)
     key = (f"{path}@{weight if variable else 0}", size)
     if key not in _font_cache:
-        f = ImageFont.truetype(path, size)
+        f = _SafeFont(path, size) if _typeface(cfg) else ImageFont.truetype(path, size)
         if variable:
             try:
                 f.set_variation_by_axes([weight])
@@ -881,7 +930,7 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 wavs.append((p, tail))
             else:
                 silence(voice + tail)
-            talk = lab_mod.mouth_track(data) if (frame is not None and p is not None) else None
+            talk = lab_mod.mouth_track(data, cfg, seed=len(wavs)) if (frame is not None and p is not None) else None
             animate(scene, st, voice + tail, dy, talk=talk)
             total += voice + tail
         # 台本にない段階（要素だけの段階）が残っていれば最後にまとめて出す

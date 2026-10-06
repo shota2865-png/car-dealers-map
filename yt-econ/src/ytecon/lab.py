@@ -148,6 +148,21 @@ def _font(cfg: Config, size: int, weight: int = 700):
     return font(cfg, size, weight)
 
 
+def _font_en(cfg: Config, size: int, weight: int = 500):
+    """英字の飾り（PSYCH DATA LAB・ANALYZING）は近未来の字体（Orbitron）."""
+    from .quiz import font_en
+    return font_en(cfg, size, weight)
+
+
+def _bold_cfg(cfg: Config) -> Config:
+    """サムネは小さく表示されるので、細い字体（video.typeface）を外して太い角ゴシックのまま."""
+    import copy
+    raw = copy.deepcopy(cfg.raw)
+    for k in ("typeface", "weight_shift"):
+        (raw.get("video") or {}).pop(k, None)
+    return Config(raw=raw, root=cfg.root, path=cfg.path)
+
+
 def brackets(d: ImageDraw.ImageDraw, box, color, L: int = 36, w: int = 5) -> None:
     """四隅のカギ（解析画面の枠）."""
     x0, y0, x1, y1 = box
@@ -169,7 +184,7 @@ class Frame:
         d.rectangle([0, 0, W, 112], fill=_rgb(self.bg) + (235,))
         d.line([(0, 112), (W, 112)], fill=_rgb(acc) + (150,), width=2)
         d.polygon([(56, 34), (96, 34), (76, 78)], fill=acc)
-        d.text((112, 30), "PSYCH DATA LAB", font=_font(cfg, 30), fill=acc)
+        d.text((112, 30), "PSYCH DATA LAB", font=_font_en(cfg, 30, 600), fill=acc)
         d.text((112, 66), str(cfg.get("channel.name", "") or ""), font=_font(cfg, 26, 500), fill=pal.get("text_secondary", "#8FB3CC"))
         if title:
             f = _font(cfg, 34)
@@ -190,7 +205,7 @@ class Frame:
         brackets(od, (x0 - 10, y0 - 10, x1 + 10, y1 + 10), acc)
         red = pal.get("negative", "#FF4D7D")
         od.ellipse([x0 + 4, y1 + 30, x0 + 22, y1 + 48], fill=red)
-        od.text((x0 + 32, y1 + 24), "ANALYZING", font=_font(cfg, 24), fill=red)
+        od.text((x0 + 32, y1 + 24), "ANALYZING", font=_font_en(cfg, 24, 600), fill=red)
         od.text((x0 + 200, y1 + 24), "研究データで「よく聞く話」を確かめる", font=_font(cfg, 24, 500), fill=pal.get("text_secondary", "#8FB3CC"))
         self.over = over
         self._stage: dict[tuple[str, str], Image.Image] = {}
@@ -240,26 +255,24 @@ class Frame:
         return out.convert("RGB")
 
 
-def mouth_track(wav_bytes: bytes, fps: int = 12, blink_every: float = 3.6) -> list[tuple[float, float, str]]:
-    """声の音量から口の形の並び [(始まり秒, 長さ, 形)] を作る（同じ形が続くところはまとめる）。間が空いたらまばたき."""
-    import io
-    import wave
+def mouth_track(wav_bytes: bytes, cfg: Config | None = None, seed: int = 7) -> list[tuple[float, float, str]]:
+    """声から口の形の並び [(始まり秒, 長さ, 形)] を作る。経済チャンネルの立ち絵（character.py）と同じ速さ・同じ決め方:
 
-    import numpy as np
-    with wave.open(io.BytesIO(wav_bytes)) as w:
-        sr, n = w.getframerate(), w.getnframes()
-        a = np.frombuffer(w.readframes(n), dtype=np.int16).astype(np.float32) / 32768
-        if w.getnchannels() > 1:
-            a = a.reshape(-1, w.getnchannels()).mean(axis=1)
-    hop = max(1, sr // fps)
-    rms = np.array([np.sqrt(np.mean(a[i:i + hop] ** 2)) for i in range(0, len(a), hop)] or [0.0])
-    peak = max(float(np.percentile(rms, 95)), 1e-4)
-    states = []
-    for i, v in enumerate(rms / peak):
-        st = "mouth_open" if v > 0.55 else ("mouth_half" if v > 0.18 else "base")
-        if st == "base" and i > 0 and (i / fps) % blink_every < 1.5 / fps:
-            st = "blink"
-        states.append(st)
+    1 秒 20 回で音量を測り（ピークを 0.7 くらいに正規化）、閉じるのを少し遅らせてバタつかせない。
+    閾値は character.mouth_half_threshold / mouth_open_threshold、まばたきは character.apply_blinks と同じ.
+    """
+    import tempfile
+
+    from . import character
+    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+        tmp.write(wav_bytes)
+        tmp.flush()
+        env = character.envelope(Path(tmp.name))
+    fps = character.FPS
+    if cfg is None:
+        from .config import load_config
+        cfg = load_config()
+    states = character.apply_blinks(cfg, character.mouth_states(cfg, env), fps=fps, seed=seed)
     out: list[tuple[float, float, str]] = []
     for i, st in enumerate(states):
         if out and out[-1][2] == st:
@@ -312,13 +325,14 @@ def thumbnail(cfg: Config, data: dict[str, Any], out) -> Path:
     """解析画面のサムネ: 大きな問い（初心者が一瞬で分かる言葉）＋「データで検証」＋めたん."""
     from .assets import palette
     from .quiz import Parts, theme
+    logo_cfg, cfg = cfg, _bold_cfg(cfg)
     pal = palette(cfg)
     TW, TH = 1280, 720
     img = backdrop((TW, TH), pal, [(0.15, 0.2, 0.35), (0.85, 0.9, 0.35)])
     d = ImageDraw.Draw(img)
     acc = pal.get("accent", "#22D3EE")
     d.polygon([(40, 34), (70, 34), (55, 66)], fill=acc)
-    d.text((84, 30), "PSYCH DATA LAB", font=_font(cfg, 30), fill=acc)
+    d.text((84, 30), "PSYCH DATA LAB", font=_font_en(logo_cfg, 30, 600), fill=acc)
     # めたん（右）
     m = presenter(cfg, "指", 560, 680)
     if m is not None:
