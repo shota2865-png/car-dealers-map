@@ -29,9 +29,18 @@ cfg = load_config(channel="psych")
 CYAN, VIO, MAG, GOLD = (34, 211, 238), (124, 92, 255), (255, 61, 154), (255, 200, 87)
 WHITE, SUB, RED, INK = (234, 246, 255), (150, 186, 210), (255, 77, 125), (3, 6, 12)
 
+# 3D の点の画面上の位置。META に小さい画面（例 640x360）で測ったものがあれば、W に合わせて拡大して使う
+META, META_W = os.environ.get("META", FR), int(os.environ.get("META_W", W))
+
+
+def _scale(v):
+    k = W / META_W
+    return {a: ([round(b[0] * k), round(b[1] * k), b[2]] if isinstance(b, list) and len(b) == 3 else b) for a, b in v.items()}
+
+
 meta = {}
-for f in glob.glob(f"{M}/{FR}/meta_*.json"):
-    meta.update({int(k): v for k, v in json.load(open(f)).items()})
+for f in glob.glob(f"{M}/{META}/meta_*.json"):
+    meta.update({int(k): _scale(v) for k, v in json.load(open(f)).items()})
 
 
 def clamp(x, a=0.0, b=1.0):
