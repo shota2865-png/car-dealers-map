@@ -44,11 +44,11 @@ COUNT_TICK = 0.85          # カウントダウン 1 拍
 # 台本（LLM）
 # ----------------------------------------------------------------------
 _SYSTEM = """あなたは YouTube Shorts の構成作家です。{field}のチャンネルで、視聴者が最初の 1 秒で指を止め、3 秒後に「選ぶ」参加型テストの型を書きます。
-字幕は出ません。1 人のナレーター（落ち着いた女性の声）が話し、画面には短い言葉の箱・矢印・ハイライトだけが出ます。
+{subs_line}
 だから **画面の文字は短く（箱の中は 12 字以内）、ナレーションは 1 文節 25 字以内** にしてください。
 おすすめに広く出るかは「最初の 1 秒で止まったか」と「最後まで見られたか（もう一周されたか）」でほぼ決まります。短く、密に。
 
-# 型（この順。場面は 5〜6 個、全体で 35〜45 秒 = ナレーション合計 170〜220 字）
+# 型（この順。場面は 5〜6 個、全体で {seconds} 秒 = ナレーション合計 {chars}）
 1. question  : **最初の文節は、常識をひっくり返す結論の言い切り**（例:「先延ばしは、意志の弱さではありません。」）。
                heading はその結論を 12 字以内に縮めたもの（例:「先延ばしは性格じゃない」）。「3秒で選んでください」は使わない。
                続けて「あなたはどっち？」→ 状況を 1 行 → A と B の選択肢。どちらも「自分もそうだ」と思える日常の行動にする
@@ -125,7 +125,13 @@ def write_quiz(cfg: Config, topic: str, angle: str = "") -> dict[str, Any]:
         "この形（例）と同じ JSON で書いてください。例の内容は使わず、テーマに合わせて全部書き換えること:\n"
         + json.dumps(_EXAMPLE, ensure_ascii=False, indent=1)
     )
-    data = llm.complete_json(_SYSTEM.format(field=domain.field(cfg)), user, _SCHEMA,
+    subs = bool(cfg.get("shorts.subtitles", False))
+    system = _SYSTEM.format(
+        field=domain.field(cfg),
+        seconds=str(cfg.get("shorts.quiz_seconds", "35〜45")), chars=str(cfg.get("shorts.quiz_chars", "170〜220 字")),
+        subs_line=("1 人のナレーター（落ち着いた女性の声）が話し、声は下に字幕で出ます。画面の上には短い言葉の箱・矢印・ハイライトが出ます。" if subs
+                   else "字幕は出ません。1 人のナレーター（落ち着いた女性の声）が話し、画面には短い言葉の箱・矢印・ハイライトだけが出ます。"))
+    data = llm.complete_json(system, user, _SCHEMA,
                              model=str(cfg.get("shorts.model", cfg.get("script.model", llm.DEFAULT_MODEL))),
                              effort=str(cfg.get("shorts.effort", "medium")))
     return normalize(data)
@@ -187,6 +193,7 @@ class Theme:
     body_top: int = 230          # これより下が中身（縦中央に寄せる対象）
     brand_size: int = 28
     chip: str = ""               # 右上の小さなラベル（本編の章など）
+    clear: bool = False          # 地を透明にする（後ろに動く背景を敷く。研究所の宇宙の解析室）
 
 
 def theme(cfg: Config) -> Theme:
@@ -315,7 +322,7 @@ class Scene:
 
     def render(self, step: int, elapsed: float) -> Image.Image:
         th = self.th
-        img = Image.new("RGBA", (th.W, th.H), th.bg)
+        img = Image.new("RGBA", (th.W, th.H), (0, 0, 0, 0) if th.clear else th.bg)
         d = ImageDraw.Draw(img)
         if th.brand:
             d.text((th.M, th.header_y), th.brand, font=font(self.cfg, th.brand_size, 700), fill=th.text)
@@ -339,7 +346,7 @@ class Scene:
                     layer = moved
                 layer.putalpha(layer.getchannel("A").point(lambda v: int(v * p)))
             img = Image.alpha_composite(img, layer)
-        return img.convert("RGB")
+        return img if th.clear else img.convert("RGB")
 
 
 # --- 部品 ---------------------------------------------------------------
@@ -695,7 +702,10 @@ def _content_offset(scene: Scene, th: Theme, with_extra: bool = False) -> int:
         scene.extra(ImageDraw.Draw(img), 1.0, 3)
     bt = th.body_top
     body = img.crop((0, bt, th.W, th.H))
-    bbox = ImageChops.difference(body, Image.new("RGB", body.size, th.bg)).getbbox()
+    if body.mode == "RGBA":
+        bbox = body.getchannel("A").getbbox()
+    else:
+        bbox = ImageChops.difference(body, Image.new("RGB", body.size, th.bg)).getbbox()
     if not bbox:
         return 0
     top, bottom = bbox[1] + bt, bbox[3] + bt
@@ -709,9 +719,41 @@ def _shift(img: Image.Image, dy: int, th: Theme) -> Image.Image:
     bt = th.body_top
     body = img.crop((0, bt, th.W, th.H))
     out = img.copy()
+    if img.mode == "RGBA":
+        out.paste(Image.new("RGBA", body.size, (0, 0, 0, 0)), (0, bt))
+        out.alpha_composite(body, (0, bt + dy)) if bt + dy >= 0 else out.paste(body, (0, bt + dy), body)
+        return out
     out.paste(Image.new("RGB", body.size, th.bg), (0, bt))
     out.paste(body, (0, bt + dy))
     return out
+
+
+_SCAP: dict[str, Image.Image] = {}
+
+
+def _short_caption(cfg: Config, th: Theme, img: Image.Image, text: str) -> Image.Image:
+    """Shorts の字幕: 経済の Shorts と同じ大きさ（shorts.subtitle_size）で、画面の下（UI に隠れない所）に 2 行まで."""
+    if text not in _SCAP:
+        from .subtitles import phrase_split
+        size = int(cfg.get("shorts.subtitle_size", 76))
+        f = font(cfg, size, 800)                       # 研究所は細い字体（weight_shift で 500）
+        per = max(6, int((th.W - 120) / size))
+        lines = phrase_split(text, per)[:2] or [text]
+        lh = int(size * 1.28)
+        lay = Image.new("RGBA", (th.W, lh * len(lines) + 40), (0, 0, 0, 0))
+        d = ImageDraw.Draw(lay)
+        wmax = max(d.textlength(ln, font=f) for ln in lines)
+        d.rounded_rectangle([(th.W - wmax) / 2 - 34, 0, (th.W + wmax) / 2 + 34, lay.height - 1], radius=18, fill=(4, 9, 20, 205))
+        for i, ln in enumerate(lines):
+            d.text((th.W / 2, 20 + lh * i + lh / 2), ln, font=f, fill=th.text, anchor="mm",
+                   stroke_width=3, stroke_fill=(4, 9, 20))
+        if len(_SCAP) > 300:
+            _SCAP.clear()
+        _SCAP[text] = lay
+    lay = _SCAP[text]
+    out = img.convert("RGBA")
+    out.alpha_composite(lay, (0, int(cfg.get("shorts.subtitle_bottom", 1550)) - lay.height))
+    return out.convert("RGB")
 
 
 @dataclass
@@ -801,22 +843,37 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     frame = None
     back = None
     cur_kind = ""
+    cur_icon = ""
+    cur_chapter = 0
+    space = wide and lab_mod.space_enabled(cfg)          # 宇宙の解析室: 透明な重ね絵を作り、最後に動く背景の上に重ねる
+    shorts_subs = (not wide) and bool(cfg.get("shorts.subtitles", False))     # Shorts の字幕（経済の Shorts と同じ大きさ）
+    if shorts_subs:
+        th.safe_bottom = int(cfg.get("shorts.content_bottom", 1330))          # 中身は字幕の帯より上に
     if lab_mod.enabled(cfg):
         pal = palette(cfg)
-        if wide:
+        if space:
+            th.brand = ""
+            ol = quiz.get("outline") or {}
+            question = str(quiz.get("question") or ol.get("question") or ol.get("thumb_claim") or quiz.get("title") or "")
+            frame = lab_mod.SpaceFrame(cfg, pal, question, sum(1 for x in quiz["scenes"] if x.get("kind") == "chapter") or 4)
+        elif wide:
             th.brand = ""
             frame = lab_mod.Frame(cfg, pal, str(quiz.get("title") or ""))
         else:
             back = lab_mod.backdrop((th.W, th.H), pal)
 
-    def emit(img: Image.Image, dur: float, post: bool = True, mouth: str = "base") -> None:
+    def emit(img: Image.Image, dur: float, post: bool = True, mouth: str = "base", caption: str = "") -> None:
         nonlocal n
         if not post:
             pass
+        elif space:
+            img = frame.compose(img, cur_kind, mouth, caption, cur_icon, cur_chapter)
         elif frame is not None:
             img = frame.compose(img, cur_kind, mouth)
         elif back is not None:
             img = lab_mod.finish(img, th.bg, back)
+        if post and shorts_subs and caption:
+            img = _short_caption(cfg, th, img, caption)
         p = fr / f"f{n:04d}.png"
         img.save(p, compress_level=1)
         frames.extend([f"file '{p.name}'", f"duration {dur:.4f}"])
@@ -828,9 +885,20 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 return st
         return "base"
 
-    def animate(scene: Scene, step: int, seconds: float, dy: int, extra=None, static: bool = False, talk=None) -> None:
-        """talk = 口の形の並び（lab.mouth_track）。解析画面のときだけ、声に合わせてめたんの口を動かす."""
+    def cap_at(caps, t: float) -> str:
+        for s0, d0, txt in caps or []:
+            if s0 <= t < s0 + d0 + 0.25:          # 文の切れ目の間も少し残す（ちらつかせない）
+                return txt
+        return ""
+
+    def animate(scene: Scene, step: int, seconds: float, dy: int, extra=None, static: bool = False, talk=None,
+                caps=None) -> None:
+        """talk = 口の形の並び（lab.mouth_track）。解析画面のときだけ、声に合わせてめたんの口を動かす.
+
+        caps = 字幕の並び [(始まり秒, 長さ, 文)]（宇宙の解析室のときだけ。めたんの声を細い字で下に出す）.
+        """
         talk = talk if frame is not None else None
+        caps = caps if (space or shorts_subs) else None
         trans = min(seconds * 0.8, (0 if static else scene.max_delay(step)) + TRANS)
         k = max(1, int(trans * FPS))
         for i in range(k):
@@ -838,28 +906,31 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             img = scene.render(step, 99.0 if static else el)
             if extra:
                 extra(img, min(1.0, el / TRANS))
-            emit(_shift(img, dy, th), trans / k, mouth=mouth_at(talk, el))
+            emit(_shift(img, dy, th), trans / k, mouth=mouth_at(talk, el), caption=cap_at(caps, el))
         rest = seconds - trans
         if rest > 0.01:
             img = scene.render(step, 99.0)
             if extra:
                 extra(img, 1.0)
             img = _shift(img, dy, th)
-            if not talk:
+            if not talk and not caps:
                 emit(img, rest)
                 return
-            # 止まっている絵の間も、口の形が変わるところでコマを分ける（場面の絵は 1 回だけ作る）
-            cuts = sorted({trans, seconds} | {c for s0, d0, _ in talk for c in (s0, s0 + d0) if trans < c < seconds})
+            # 止まっている絵の間も、口の形・字幕が変わるところでコマを分ける（場面の絵は 1 回だけ作る）
+            marks = [c for s0, d0, _ in (talk or []) for c in (s0, s0 + d0)] + [c for s0, d0, _ in (caps or []) for c in (s0, s0 + d0 + 0.25)]
+            cuts = sorted({trans, seconds} | {c for c in marks if trans < c < seconds})
             pending, cur = 0.0, None
             for a, b in zip(cuts, cuts[1:]):
-                st = mouth_at(talk, (a + b) / 2)
+                mid = (a + b) / 2
+                st = (mouth_at(talk, mid), cap_at(caps, mid))
                 if cur is not None and st != cur:
-                    emit(img, pending, mouth=cur)
+                    emit(img, pending, mouth=cur[0], caption=cur[1])
                     pending = 0.0
                 cur = st
                 pending += b - a
             if pending > 0.001:
-                emit(img, pending, mouth=cur or "base")
+                cur = cur or ("base", "")
+                emit(img, pending, mouth=cur[0], caption=cur[1])
 
     def silence(sec: float) -> None:
         p = fr / f"a{len(wavs):03d}.wav"
@@ -874,6 +945,13 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     for sc in scenes:
         kind = sc.get("kind")
         cur_kind = str(kind or "")
+        if kind == "chapter":
+            cur_chapter += 1
+            cur_icon = str(sc.get("icon") or "")
+        elif kind not in ("countdown",) and sc.get("icon"):
+            cur_icon = str(sc.get("icon") or "")
+        elif kind in ("opening", "ending", "steps"):
+            cur_icon = ""
         if kind == "question":
             q_scene = sc
         if kind == "countdown":
@@ -908,6 +986,8 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             cd = builder(cfg, th, dict(sc, kind="countdown"))
             shared_dy = _content_offset(cd, th, with_extra=True)
             dy = shared_dy
+        elif space and kind in lab_mod.FULL_KINDS:
+            dy = 0                                   # 空間にじかに置く場面は、決めた位置のまま（床・字幕とそろえる）
         else:
             dy = _content_offset(scene, th)
         steps: dict[int, list[str]] = {}
@@ -931,7 +1011,9 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             else:
                 silence(voice + tail)
             talk = lab_mod.mouth_track(data, cfg, seed=len(wavs)) if (frame is not None and p is not None) else None
-            animate(scene, st, voice + tail, dy, talk=talk)
+            caps = (lab_mod.caption_chunks(0.0, voice, text, maxc=26 if space else 24)
+                    if ((space or shorts_subs) and p is not None) else None)
+            animate(scene, st, voice + tail, dy, talk=talk, caps=caps)
             total += voice + tail
         # 台本にない段階（要素だけの段階）が残っていれば最後にまとめて出す
         last = scene.last_step()
@@ -943,8 +1025,8 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
 
     if outro > 0 and frames:
         # 静かな余韻: 最後の画面をゆっくり暗くして、音楽だけを流す（寝落ちした人の耳に急な無音や明るさを残さない）
-        last = Image.open(fr / frames[-2].split("'")[1]).convert("RGB")
-        dark = Image.new("RGB", last.size, "#101014")
+        last = Image.open(fr / frames[-2].split("'")[1]).convert("RGBA" if space else "RGB")
+        dark = Image.new(last.mode, last.size, "#101014")
         fade = min(8.0, outro)
         k = int(fade * 6)
         for i in range(k):
@@ -967,14 +1049,26 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     dst = outdir / "video.mp4"
     bgm = bgm_mod.resolve(cfg)
     vol = float(cfg.get("honpen.bgm_db", -20) if wide else cfg.get("shorts.bgm_db", -22))
-    cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(fr / "frames.txt"), "-i", str(voice_wav)]
+    cmd = [ffmpeg, "-y", "-loglevel", "error"]
+    vin, ain = 0, 1                       # 入力の番号（映像・声）
+    if space:
+        # 宇宙の解析室: 動く 3D の背景（星空のドームと床の輪。継ぎ目のないループ）の上に、透明な重ね絵を重ねる
+        from . import space as space_mod
+        cache = cfg.root / str(cfg.get("pipeline.workdir", "output")) / "cache"
+        loop = space_mod.background_loop(cache / f"space_loop_v{space_mod.LOOP_VERSION}.mp4", ffmpeg=ffmpeg)
+        cmd += ["-stream_loop", "-1", "-i", str(loop)]
+        vin, ain = 1, 2
+    cmd += ["-f", "concat", "-safe", "0", "-i", str(fr / "frames.txt"), "-i", str(voice_wav)]
+    vf = f"[{vin}:v]fps={FPS},format=yuv420p[v]"
+    if space:
+        vf = f"[{vin}:v]fps={FPS},format=rgba[fg];[0:v]fps={FPS}[bgv];[bgv][fg]overlay=0:0:format=auto:shortest=1,format=yuv420p[v]"
     if bgm:
         cmd += ["-stream_loop", "-1", "-i", str(bgm),
-                "-filter_complex", f"[2:a]volume={vol}dB,afade=t=in:d=1.5,afade=t=out:st={max(0.0, total-(12 if wide else 3)):.2f}:d={12 if wide else 3}[bg];[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
-                "-map", "0:v", "-map", "[a]"]
+                "-filter_complex", vf + f";[{ain + 1}:a]volume={vol}dB,afade=t=in:d=1.5,afade=t=out:st={max(0.0, total-(12 if wide else 3)):.2f}:d={12 if wide else 3}[bg];[{ain}:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                "-map", "[v]", "-map", "[a]"]
     else:
-        cmd += ["-map", "0:v", "-map", "1:a"]
-    cmd += ["-vf", f"fps={FPS},format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        cmd += ["-filter_complex", vf, "-map", "[v]", "-map", f"{ain}:a"]
+    cmd += ["-c:v", "libx264", "-preset", "faster" if space else "medium", "-crf", "20",
             "-c:a", "aac", "-b:a", "160k", "-t", f"{total:.2f}", "-movflags", "+faststart", str(dst)]
     subprocess.run(cmd, check=True)
     (outdir / "quiz.json").write_text(json.dumps(quiz, ensure_ascii=False, indent=1), encoding="utf-8")

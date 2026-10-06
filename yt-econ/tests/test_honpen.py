@@ -30,10 +30,10 @@ def test_assemble_adds_greeting_and_closing_for_listeners(cfg):
     assert kinds[0] == "opening" and kinds[-2:] == ["steps", "ending"]
     first = " ".join(t for t, _ in data["scenes"][0]["narration"])
     assert "現代人のための心理学" in first and "声だけ" in first
-    assert first.startswith("今日の検証テーマは、" + OUTLINE["title"])          # 何の話かを最初の一言で
+    assert first.startswith("今日の問いは、" + OUTLINE["title"])          # 何の話か（今日の問い）を最初の一言で
     assert "長い説明文" not in first and "眠" not in first
     last = " ".join(t for t, _ in data["scenes"][-1]["narration"])
-    assert "一言を書いて寝る" in last and "三日坊主" in last and "20:00" in last and "静かな音楽" not in last
+    assert "一言を書いて寝る" in last and "三日坊主" in last and "19:00" in last and "静かな音楽" not in last
     assert "チャンネル登録" in last
 
 

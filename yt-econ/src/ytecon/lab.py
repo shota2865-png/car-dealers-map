@@ -362,3 +362,191 @@ def thumbnail(cfg: Config, data: dict[str, Any], out) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out, quality=92)
     return out
+
+
+# ----------------------------------------------------------------------
+# 宇宙の解析室（video.lab_style: space）: 後ろに動く 3D の背景（space.background_loop）を敷く前提の、透明な重ね絵
+# ----------------------------------------------------------------------
+GLASS = (48, 150, 1400, 910)          # 説明の場面を置くガラスの板（16:9、0.704 倍）
+FULL_KINDS = ("opening", "chapter", "data", "verdict")       # 板を使わず、宇宙の空間にじかに置く場面
+STEP_OF_KIND = {"chapter": 0, "question": 0, "countdown": 0, "result": 0, "point": 1, "meter": 1, "flow": 1,
+                "branch": 1, "versus": 1, "data": 2, "verdict": 3}
+STEP_NAMES = ["問い", "しくみ", "データ", "判定"]
+
+
+def space_enabled(cfg: Config) -> bool:
+    return enabled(cfg) and str(cfg.get("video.lab_style", "") or "") == "space"
+
+
+def caption_chunks(start: float, dur: float, text: str, maxc: int = 26) -> list[tuple[float, float, str]]:
+    """字幕を読点・句点で区切り、1 回に出す長さを maxc 字までにする（字数に比例して時間を割る）."""
+    pieces, cur = [], ""
+    for p in text.replace("、", "、\n").replace("。", "。\n").replace("？", "？\n").split("\n"):
+        if not p:
+            continue
+        if cur and len(cur + p) > maxc:
+            pieces.append(cur)
+            cur = p
+        else:
+            cur += p
+        if cur.endswith(("。", "？")):
+            pieces.append(cur)
+            cur = ""
+    if cur:
+        pieces.append(cur)
+    # 「です」「でした」だけが 1 回の字幕にならないよう、短い切れ端は前につなぐ
+    merged: list[str] = []
+    for p in pieces:
+        if merged and len(p.rstrip("、。？")) <= 5 and not merged[-1].endswith(("。", "？")):
+            merged[-1] += p
+        else:
+            merged.append(p)
+    pieces = merged
+    total = sum(len(p) for p in pieces) or 1
+    out, t = [], start
+    for p in pieces:
+        d = dur * len(p) / total
+        out.append((t, d, p.rstrip("、。")))
+        t += d
+    return out
+
+
+class SpaceFrame:
+    """quiz.build(wide=True) の 1 コマを、宇宙の解析室の重ね絵（RGBA。地は透明）にする.
+
+    上: 今日の問い（動画全体の軸）と、いまどこを話しているか（問い → しくみ → データ → 判定）
+    左: 説明の場面はガラスの板に、データ・判定・章の扉は空間にじかに
+    右: めたん（口パク）と、例え話のホログラム / 下: 細い字の字幕
+    """
+
+    def __init__(self, cfg: Config, pal: dict[str, str], question: str = "", chapters_total: int = 4) -> None:
+        self.cfg, self.pal = cfg, pal
+        self.acc = _rgb(pal.get("accent", "#22D3EE"))
+        self.text = _rgb(pal.get("text", "#EAF6FF"))
+        self.sub = _rgb(pal.get("text_secondary", "#8FB3CC"))
+        self.question = question
+        self.total = max(1, chapters_total)
+        self._head: dict[tuple, Image.Image] = {}
+        self._glass = self._make_glass()
+        self._stage: dict[tuple[str, str], Image.Image | None] = {}
+        self._icon: dict[str, Image.Image | None] = {}
+        self._cap: dict[str, Image.Image] = {}
+        self._key = None
+        self._mid = None
+
+    # --- 部品 ---
+    def _make_glass(self) -> Image.Image:
+        x0, y0, x1, y1 = GLASS
+        lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(glow).rounded_rectangle([x0 - 3, y0 - 3, x1 + 3, y1 + 3], radius=18, outline=self.acc + (110,), width=6)
+        lay.alpha_composite(glow.filter(ImageFilter.GaussianBlur(9)))
+        d = ImageDraw.Draw(lay)
+        d.rounded_rectangle([x0, y0, x1, y1], radius=16, fill=(5, 11, 22, 178), outline=self.acc + (120,), width=2)
+        brackets(d, (x0 - 10, y0 - 10, x1 + 10, y1 + 10), self.acc + (220,), L=30, w=3)
+        return lay
+
+    def header(self, chapter: int, step: int) -> Image.Image:
+        key = (chapter, step)
+        if key in self._head:
+            return self._head[key]
+        cfg = self.cfg
+        lay = Image.new("RGBA", (W, 132), (0, 0, 0, 0))
+        grad = Image.linear_gradient("L").rotate(180).resize((W, 132)).point(lambda v: int(v * 0.75))
+        shade = Image.new("RGBA", (W, 132), (3, 6, 14, 0))
+        shade.putalpha(grad)
+        lay.alpha_composite(shade)
+        d = ImageDraw.Draw(lay)
+        d.text((56, 26), "PSYCH DATA LAB", font=_font_en(cfg, 22, 600), fill=self.acc)
+        if chapter > 0:
+            d.text((56, 60), f"検証 {chapter:02d} / {self.total:02d}", font=_font(cfg, 30, 700), fill=self.text)
+        else:
+            d.text((56, 60), "はじめに", font=_font(cfg, 30, 700), fill=self.text)
+        if self.question:
+            x = 330
+            d.line([(x - 26, 30), (x - 26, 100)], fill=self.acc + (90,), width=2)
+            d.text((x, 24), "今日の問い", font=_font(cfg, 22, 700), fill=self.acc)
+            f = _font(cfg, 38, 600)
+            q = self.question
+            while d.textlength(q, font=f) > 900 and len(q) > 4:
+                q = q[:-2] + "…"
+            d.text((x, 54), q, font=f, fill=self.text)
+        # いまどこを話しているか（軸の上の位置）
+        if chapter > 0:
+            pw, gap, x0, y0 = 118, 14, W - 56 - (118 * 4 + 14 * 3), 40
+            for i, name in enumerate(STEP_NAMES):
+                x = x0 + i * (pw + gap)
+                box = [x, y0, x + pw, y0 + 50]
+                f = _font(cfg, 26, 800 if i == step else 600)
+                if i == step:
+                    d.rounded_rectangle(box, radius=25, fill=self.acc + (235,))
+                    d.text(((box[0] + box[2]) / 2, y0 + 25), name, font=f, fill=(4, 10, 20), anchor="mm")
+                elif i < step:
+                    d.rounded_rectangle(box, radius=25, outline=self.acc + (200,), width=2)
+                    d.text(((box[0] + box[2]) / 2, y0 + 25), name, font=f, fill=self.acc, anchor="mm")
+                else:
+                    d.rounded_rectangle(box, radius=25, outline=self.sub + (90,), width=2)
+                    d.text(((box[0] + box[2]) / 2, y0 + 25), name, font=f, fill=self.sub + (150,), anchor="mm")
+                if i < 3:
+                    d.line([(x + pw + 2, y0 + 25), (x + pw + gap - 2, y0 + 25)], fill=self.acc + (120 if i < step else 60,), width=2)
+        self._head[key] = lay
+        return lay
+
+    def stage(self, expr: str, state: str = "base") -> Image.Image | None:
+        k = (expr, state)
+        if k not in self._stage:
+            self._stage[k] = presenter(self.cfg, expr, 500, 700, state=state)
+        return self._stage[k]
+
+    def icon(self, ch: str) -> Image.Image | None:
+        if ch not in self._icon:
+            from . import space
+            self._icon[ch] = space.holo_icon(ch, 150, self.acc)
+        return self._icon[ch]
+
+    def caption(self, text: str) -> Image.Image:
+        if text in self._cap:
+            return self._cap[text]
+        f = _font(self.cfg, 42, 700)                     # 細い字体（weight_shift で 400）
+        tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+        tw = tmp.textlength(text, font=f)
+        while tw > 1280 and f.size > 28:
+            f = _font(self.cfg, f.size - 2, 700)
+            tw = tmp.textlength(text, font=f)
+        lay = Image.new("RGBA", (int(tw) + 80, 76), (0, 0, 0, 0))
+        d = ImageDraw.Draw(lay)
+        d.rounded_rectangle([0, 0, lay.width - 1, 75], radius=10, fill=(4, 9, 20, 200))
+        d.line([(0, 6), (0, 69)], fill=self.acc + (255,), width=4)
+        d.text((lay.width / 2, 38), text, font=f, fill=self.text, anchor="mm")
+        if len(self._cap) > 400:
+            self._cap.clear()
+        self._cap[text] = lay
+        return lay
+
+    # --- 組み立て ---
+    def compose(self, scene_img: Image.Image, kind: str = "", mouth: str = "base", caption: str = "",
+                icon: str = "", chapter: int = 0) -> Image.Image:
+        key = (id(scene_img), kind, icon, chapter)
+        if key != self._key or self._mid is None:
+            out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            sc = scene_img if scene_img.mode == "RGBA" else scene_img.convert("RGBA")
+            if kind in FULL_KINDS:
+                out.alpha_composite(sc.resize((W, H)) if sc.size != (W, H) else sc)
+            else:
+                x0, y0, x1, y1 = GLASS
+                out.alpha_composite(self._glass)
+                out.alpha_composite(sc.resize((x1 - x0, y1 - y0), Image.LANCZOS), (x0, y0))
+            out.alpha_composite(self.header(chapter, STEP_OF_KIND.get(kind, 0)), (0, 0))
+            if icon and kind not in ("chapter", "opening"):
+                ic = self.icon(icon)
+                if ic is not None:
+                    out.alpha_composite(ic, (1685 - ic.width // 2, 128))
+            self._key, self._mid = key, out
+        out = self._mid.copy()
+        m = self.stage(EXPR_BY_KIND.get(kind, "通常"), mouth)
+        if m is not None:
+            out.alpha_composite(m, (W - m.width + 20, H - m.height))
+        if caption:
+            c = self.caption(caption)
+            out.alpha_composite(c, (int(724 - c.width / 2), 948))
+        return out

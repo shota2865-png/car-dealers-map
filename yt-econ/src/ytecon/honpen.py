@@ -68,18 +68,34 @@ _KINDS_LAB = """- data     : 研究のデータを横棒グラフで。heading�
 
 _OUTLINE_LAB = """
 # 番組の型（研究所の解析画面）
-- 「よく聞く心理学の話」を、解析担当のめたんが研究のデータで 1 つずつ検証する番組
-- 部ごとに、検証する話（claim。例:「怒りは6秒で消える」「選択肢が多いと選べない」）を 1 つ決め、
-  研究で分かったことから判定（verdict: "本当" / "半分本当" / "ウソ"）を出す。全部が「本当」にならないようにする
+- 「よく聞く心理学の話」を、解析担当のめたんが研究のデータで検証する番組
+- **動画全体の軸は 1 本**。question に「今日の問い」を 1 つ決める（20 字以内の疑問形。例:「選択肢が多いと、人は選べなくなる？」）。
+  画面の上にずっと出ていて、全部の部がこの問いに答えるための一歩になる
+- 部はこの順番で、今日の問いに少しずつ答えていく（前の部の結論をひっくり返したり、前の話に戻ったりしない）:
+  1. 本当に起きる？（有名な実験やデータで確かめる）
+  2. なぜ起きる？（頭や心のしくみ）
+  3. どんなときに強く・弱くなる？（条件。あとの研究で分かったこと）
+  4. じゃあ、どうする？（今日から試せること）
+- 部ごとに、検証する話（claim）を 1 つ決め、研究で分かったことから判定（verdict: "本当" / "半分本当" / "ウソ"）を出す。全部が「本当」にならないようにする
+- 部ごとに、説明に使う身近な例え（店・職場・スマホ・家など）を 1 つ決め、その部の中では同じ例えを使い続ける。
+  icon にその例えを表す絵文字を 1 つ（例: ジャムの売り場 → 🍓、職場 → 💼、スマホ → 📱、買い物 → 🛒）
 - data_hint に、その部で見せられる研究の数字（研究者か大学・年・何と何を比べて何%か）を書く。確かな数字が無ければ空にする
 - thumb_claim はサムネの大きな問い（14 字以内、疑問形）。初心者が一瞬で分かる言葉にし、率や専門語は使わない
   （例:「怒りは6秒で消える？」「スマホを置くと集中できる？」）。thumb_hl はその中のいちばん大事な語"""
 
 _PART_LAB = """
-# 研究所の解析画面のとき
-- chapter の heading は、この部で検証する話を問いの形で（例:「選択肢が多いと選べない？」）
-- 説明の場面に data を 1 つ以上入れる（研究の数字があるとき）。部の最後の場面は verdict にする
+# 研究所の解析画面のとき（話の軸をぶらさない）
+- 今日の問いは「{question}」。この部は、そのうちの「{role}」を確かめる部
+- 場面の順番は固定: chapter → question → result → 説明の場面（1〜3 個）→ data（研究の数字があるとき）→ verdict。前の場面の話に戻らない
+- chapter: heading はこの部で確かめる話を問いの形で（例:「本当に選べなくなる？」）。sub は今日の問いとのつながり
+  （例:「まず、本当に起きるのかを確かめる」）。icon はこの部の例えの絵文字「{icon}」
+- この部の例え（{icon}）を最初から最後まで使う。途中で別の例えに乗りかえない。例えを話す場面には icon「{icon}」を付ける
+- 数字は data で見せる（比べる 2〜3 本の棒。「何の何%か」が見出しと棒の名前だけで分かるように）
+- 部の最後の場面は verdict。最後の文節は「ここまでで分かったのは、〜。」と今日の問いへの答えの一部を言い、
+  次の部があれば「次は、〜を確かめます。」でつなぐ
 - 「データ」「検証」「研究」の言葉を自然に使い、科学番組のような落ち着いた口調で"""
+
+_ROLES = ["本当に起きるのか", "なぜ起きるのか", "どんなときに強く・弱くなるのか", "じゃあ、どうするか"]
 
 _OUTLINE_SYSTEM = """あなたは YouTube の{field}チャンネルの構成作家です。約 {minutes} 分の本編の骨組みを作ります。
 全体は {parts} 部。各部は「2 択クイズ → 答え合わせ → 研究と説明」で進み、最後に全体のまとめと「今日のひとつ」を置きます。
@@ -114,7 +130,9 @@ _OUTLINE_SCHEMA = {
             "points": {"type": "array", "items": {"type": "string"}},
             "research": {"type": "array", "items": {"type": "string"}},
             "claim": {"type": "string"}, "verdict": {"type": "string"}, "data_hint": {"type": "string"},
+            "icon": {"type": "string"},
         }}},
+        "question": {"type": "string"},
         "thumb_claim": {"type": "string"},
         "thumb_hl": {"type": "string"},
         "recap": {"type": "array", "items": {"type": "string"}},
@@ -161,16 +179,17 @@ _EXAMPLE_PART = {"scenes": [
 
 
 _EXAMPLE_PART_LAB = {"scenes": [
-    {"kind": "chapter", "label": "検証 01", "heading": "選択肢が多いと選べない？", "heading_hl": "選べない", "sub": "有名な「ジャムの実験」を確かめる",
+    {"kind": "chapter", "label": "検証 01", "heading": "本当に選べなくなる？", "heading_hl": "選べなくなる", "sub": "まず、本当に起きるのかを確かめる", "icon": "🍓",
      "narration": [["最初の検証は、選択肢が多いと、人は選べなくなる、という話です。", 0], ["有名な、ジャムの実験から、確かめていきます。", 1]]},
     {"kind": "data", "heading": "ジャムを買った人の割合", "heading_hl": "買った人", "source": "コロンビア大学 アイエンガー教授ら（2000年）",
      "bars": [{"label": "24種類の売り場", "value": 3, "unit": "%"}, {"label": "6種類の売り場", "value": 30, "unit": "%", "hl": True}],
-     "note": "少ないほうが、よく買われた",
+     "note": "少ないほうが、よく買われた", "icon": "🍓",
      "narration": [["コロンビア大学の、アイエンガー教授たちの研究です。", 0], ["24種類のジャムを並べた売り場では、買った人は、およそ3%。", 1],
                    ["6種類だけの売り場では、およそ30%でした。", 2], ["少ないほうが、ずっとよく買われたんです。", 3]]},
     {"kind": "verdict", "claim": "選択肢が多いと、人は選べなくなる", "result": "半分本当", "reason": "あとの研究では、いつも起きるとは限らなかった",
      "narration": [["では、検証結果です。", 0], ["選択肢が多いと選べなくなる、という話は、半分本当でした。", 1],
-                   ["あとの研究をまとめると、いつも起きるとは限らないと分かってきています。", 2]]},
+                   ["ここまでで分かったのは、選択肢が多いと選べなくなることは、ある、ということです。", 2],
+                   ["次は、なぜ迷ってしまうのかを確かめます。", 2]]},
 ]}
 
 
@@ -247,13 +266,22 @@ def write_part(cfg: Config, ol: dict[str, Any], k: int, chars: tuple[int, int] =
     if _lab(cfg):
         system = system.replace("画面は白地に短い言葉の箱・矢印・黄色いマーカーだけ。",
                                 "画面は暗い研究所の解析画面（短い言葉の箱・矢印・グラフ・判定のスタンプ）。右に解析担当のめたんが立っている。")
-        system = system.replace("\nJSON だけを返す。", _PART_LAB + "\n\nJSON だけを返す。")
+        lab_rules = _PART_LAB.format(question=_question(ol), role=_ROLES[-1] if k == len(ol["parts"]) - 1 else _ROLES[min(k, 2)],
+                                     icon=str(part.get("icon") or "🔬"))
+        system = system.replace("\nJSON だけを返す。", lab_rules + "\n\nJSON だけを返す。")
     data = llm.complete_json(system, user, _PART_SCHEMA, model=_model(cfg), effort=str(cfg.get("honpen.effort", "high")))
     scenes = [s for s in (data.get("scenes") or []) if isinstance(s, dict) and s.get("kind")]
     for s in scenes:
         if s["kind"] == "chapter":
             s["label"] = f"検証 {k + 1:02d}" if _lab(cfg) else f"第{k + 1}章"
+            if _lab(cfg) and not s.get("icon") and part.get("icon"):
+                s["icon"] = str(part["icon"])
     return scenes
+
+
+def _question(ol: dict[str, Any]) -> str:
+    """動画全体の軸（今日の問い）。無ければサムネの問い・タイトル."""
+    return str(ol.get("question") or ol.get("thumb_claim") or ol.get("title") or "")
 
 
 def _lab(cfg: Config) -> bool:
@@ -297,7 +325,14 @@ def opening(cfg: Config, ol: dict[str, Any]) -> dict[str, Any]:
     name = str(cfg.get("channel.name", ""))
     theme = str(ol.get("title") or ol.get("theme") or "")      # theme は長い説明文になりがちなので、声と画面はタイトルで
     lines = cfg.get("honpen.greeting") or GREETING
+    q = _question(ol)
+    if _lab(cfg) and q:
+        theme = q.rstrip("？?")                                 # 声も「今日の問いは、〜のか、です。」で軸から始める
+        if q.endswith(("？", "?")) and not theme.endswith(("か", "の")):
+            theme += "のか"
+    parts = ol.get("parts") or []
     return {"kind": "opening", "lines": list(cfg.get("honpen.greeting_lines") or GREETING_LINES), "theme": theme,
+            "question": q, "icon": str((parts[0] if parts else {}).get("icon") or ""),
             "narration": _fill(lines, name=name, theme=theme)}
 
 
@@ -319,10 +354,39 @@ def closing(cfg: Config, ol: dict[str, Any]) -> list[dict[str, Any]]:
 
 def assemble(cfg: Config, ol: dict[str, Any], parts: list[list[dict[str, Any]]]) -> dict[str, Any]:
     scenes = [opening(cfg, ol)]
-    for p in parts:
+    # 章の扉に「今日の検証」の道のり（4 つの見出しと、済んだ部の判定）を持たせる → どこを話しているか迷わない
+    road = []
+    for k, p in enumerate(parts):
+        ch = next((s for s in p if s.get("kind") == "chapter"), {})
+        vd = next((s for s in reversed(p) if s.get("kind") == "verdict"), {})
+        road.append({"heading": str(ch.get("heading") or (ol.get("parts") or [{}] * (k + 1))[k].get("heading") or ""),
+                     "result": str(vd.get("result") or "")})
+    for k, p in enumerate(parts):
+        for s in p:
+            if s.get("kind") == "chapter":
+                s["index"] = k
+                s["roadmap"] = [{"heading": r["heading"], "result": r["result"] if i < k else ""} for i, r in enumerate(road)]
         scenes += p
     scenes += closing(cfg, ol)
-    return {"title": str(ol.get("title") or ""), "hook": "", "scenes": scenes, "outline": ol}
+    return {"title": str(ol.get("title") or ""), "question": _question(ol), "hook": "", "scenes": scenes, "outline": ol}
+
+
+def trim_to(data: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    """ナレーションが長すぎる（20 分を超えそうな）とき、説明の場面を後ろの部から 1 つずつ外す.
+
+    章の扉・クイズ・答え合わせ・データ・判定・冒頭・締めは残す（話の軸が切れないように）.
+    """
+    keep = {"opening", "chapter", "question", "countdown", "result", "data", "verdict", "steps", "ending"}
+    scenes = list(data.get("scenes") or [])
+    while narration_chars({"scenes": scenes}) > max_chars:
+        cand = [i for i, s in enumerate(scenes) if s.get("kind") not in keep]
+        if not cand:
+            break
+        # 同じ部に説明が多いところから（後ろの部ほど先に）
+        i = max(cand, key=lambda j: (sum(len(str(t)) for t, _ in scenes[j].get("narration") or []), j))
+        log.info("本編が長いので、説明の場面を 1 つ外します: %s", scenes[i].get("heading") or scenes[i].get("kind"))
+        scenes.pop(i)
+    return dict(data, scenes=scenes)
 
 
 def narration_chars(data: dict[str, Any]) -> int:
@@ -340,6 +404,9 @@ def write_honpen(cfg: Config, topic: dict[str, Any]) -> dict[str, Any]:
         log.info("第%d章: 場面 %d / %d 字", k + 1, len(sc), sum(len(str(t)) for s in sc for t, _ in (s.get("narration") or [])))
         parts.append(sc)
     data = assemble(cfg, ol, parts)
+    cap = int(cfg.get("honpen.max_chars", 0) or 0)            # 20 分以内に収める上限（声の速さから決めた字数）
+    if cap and narration_chars(data) > cap:
+        data = trim_to(data, cap)
     log.info("本編の台本: %d 場面 / ナレーション %d 字", len(data["scenes"]), narration_chars(data))
     return data
 

@@ -29,10 +29,18 @@ def theme_wide(cfg: Config) -> Theme:
     th.W, th.H, th.M = 1920, 1080, 120
     th.header_y, th.header_line, th.body_top, th.brand_size = 56, 110, 130, 30
     th.safe_top, th.safe_bottom = 170, 1010
+    from . import lab
+    th.clear = lab.space_enabled(cfg)        # 宇宙の解析室: 地を透明にして、後ろに動く 3D の背景を敷く
+    if th.clear:
+        th.brand = ""                         # 上の帯（今日の問い・現在地）は SpaceFrame が描く
     return th
 
 
 def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
+    from . import lab
+    if th.clear and sc.get("kind") in lab.FULL_KINDS:
+        from . import labscene
+        return labscene.build(cfg, th, sc)
     P = Parts(cfg, th)
     s = Scene(cfg, th)
     kind = sc.get("kind")
