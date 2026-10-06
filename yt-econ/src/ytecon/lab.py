@@ -394,6 +394,14 @@ def caption_chunks(start: float, dur: float, text: str, maxc: int = 26) -> list[
             cur = ""
     if cur:
         pieces.append(cur)
+    # 「です」「でした」だけが 1 回の字幕にならないよう、短い切れ端は前につなぐ
+    merged: list[str] = []
+    for p in pieces:
+        if merged and len(p.rstrip("、。？")) <= 5 and not merged[-1].endswith(("。", "？")):
+            merged[-1] += p
+        else:
+            merged.append(p)
+    pieces = merged
     total = sum(len(p) for p in pieces) or 1
     out, t = [], start
     for p in pieces:

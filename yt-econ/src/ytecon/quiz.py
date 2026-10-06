@@ -986,6 +986,8 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
             cd = builder(cfg, th, dict(sc, kind="countdown"))
             shared_dy = _content_offset(cd, th, with_extra=True)
             dy = shared_dy
+        elif space and kind in lab_mod.FULL_KINDS:
+            dy = 0                                   # 空間にじかに置く場面は、決めた位置のまま（床・字幕とそろえる）
         else:
             dy = _content_offset(scene, th)
         steps: dict[int, list[str]] = {}

@@ -70,7 +70,7 @@ def test_frame_shows_question_step_and_caption():
 
 def test_caption_chunks_are_short():
     cs = lab.caption_chunks(0.0, 6.0, "24種類のジャムを並べた売り場では、立ち止まった人のうち、買った人は、およそ3%でした。")
-    assert all(len(t) <= 26 for _, _, t in cs)
+    assert all(len(t) <= 32 for _, _, t in cs)
     assert abs(sum(d for _, d, _ in cs) - 6.0) < 1e-6
 
 
