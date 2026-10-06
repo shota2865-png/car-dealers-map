@@ -96,7 +96,7 @@ def test_assemble_keeps_one_axis_and_trims_to_twenty_minutes():
     assert honpen.narration_chars(trimmed) <= 2500
     kinds = [s["kind"] for s in trimmed["scenes"]]
     assert kinds.count("chapter") == 4 and kinds.count("verdict") == 4     # 軸（章の扉と判定）は残る
-    assert cfg.get("honpen.max_chars") and int(cfg.get("honpen.max_chars")) <= 6000
+    assert cfg.get("honpen.max_chars") and int(cfg.get("honpen.max_chars")) <= 7000      # 1 分 ≒ 350 字 → 20 分未満
 
 
 def test_psych_shorts_have_subtitles_like_economy_and_no_presenter():
@@ -104,9 +104,40 @@ def test_psych_shorts_have_subtitles_like_economy_and_no_presenter():
     main = load_config()
     assert cfg.get("shorts.subtitles") is True
     assert cfg.get("shorts.subtitle_size") == main.get("shorts.subtitle_size")
-    assert "45" in str(cfg.get("shorts.quiz_seconds")) or "40〜50" == cfg.get("shorts.quiz_seconds")
+    assert "45" in str(cfg.get("shorts.quiz_seconds")) or "47" in str(cfg.get("shorts.quiz_seconds"))
     th = quiz.theme(cfg)
     img = Image.new("RGB", (th.W, th.H), th.bg)
     out = quiz._short_caption(cfg, th, img, "先延ばしは、意志の弱さではありません")
     bb = Image.fromarray((np.abs(np.asarray(out, dtype=np.int16) - np.asarray(img, dtype=np.int16)).sum(axis=2) > 0).astype(np.uint8) * 255).getbbox()
     assert bb and bb[1] > 1250 and bb[3] <= 1560                    # 中身の下、Shorts の UI に隠れない所
+
+
+def test_failed_shorts_are_kept_and_uploaded_next_time(tmp_path, monkeypatch):
+    """1 日の上限などで上げられなかった Shorts は残しておき、次の実行で本編の公開より後の枠に上げる（二度は上げない）."""
+    import json
+
+    from ytecon.pipeline import Pipeline
+    from ytecon.state import Store
+    cfg = _psych()
+    cfg.raw["pipeline"]["workdir"] = str(tmp_path / "w")
+    cfg.root = tmp_path                                       # リポジトリ側の pending_shorts も tmp に
+    store = Store(tmp_path / "s.sqlite3")
+    pipe = Pipeline(cfg, store=store)
+    store.create_video("p1", None, "本編")
+    store.update_video("p1", status="uploaded", youtube_id="P", publish_at="2026-10-07T10:00:00+00:00")
+    q = tmp_path / "q"
+    q.mkdir()
+    (q / "video.mp4").write_bytes(b"x")
+    (q / "metadata.json").write_text(json.dumps({"title": "t #Shorts", "description": "d", "tags": [], "category_id": "27", "language": "ja"}))
+    pipe._keep_pending_short("p1-short3", "p1", 2, q)
+    calls = []
+
+    def fake_publish(cfg_, store_, video, meta, **kw):
+        calls.append((meta.title, kw["slot_index"], kw["after"]))
+        return {"video_id": f"S{len(calls)}", "url": "u", "publish_at": "2026-10-07T22:00:00+00:00"}
+    monkeypatch.setattr("ytecon.youtube.publish", fake_publish)
+    assert pipe.upload_pending_shorts() == 1
+    assert calls[0][1] == 2 and calls[0][2].isoformat().startswith("2026-10-07T10:00")
+    assert store.get_video("p1-short3").youtube_id == "S1"
+    assert not (cfg.workdir / "pending_shorts" / "p1-short3").exists()
+    assert pipe.upload_pending_shorts() == 0                  # 二度は上げない

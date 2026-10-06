@@ -184,6 +184,7 @@ jobs:
           path: |
             yt-econ/${{ matrix.workdir }}/state.sqlite3
             yt-econ/${{ matrix.workdir }}/goal
+            yt-econ/${{ matrix.workdir }}/pending_shorts
           key: ${{ matrix.state_key }}-${{ github.run_id }}
           restore-keys: ${{ matrix.state_key }}-
 
@@ -244,6 +245,7 @@ jobs:
           path: |
             yt-econ/${{ matrix.workdir }}/state.sqlite3
             yt-econ/${{ matrix.workdir }}/goal
+            yt-econ/${{ matrix.workdir }}/pending_shorts
           key: ${{ matrix.state_key }}-${{ github.run_id }}
 
       # 投稿しない設定のときは、できた mp4 をここからダウンロードできる

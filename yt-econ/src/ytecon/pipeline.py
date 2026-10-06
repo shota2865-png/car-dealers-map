@@ -433,7 +433,64 @@ class Pipeline:
             except Exception as exc:              # Shorts の失敗で本編の結果は壊さない
                 log.error("Shorts %d の作成・投稿に失敗: %s", k + 1, exc)
                 out.append({"error": str(exc)})
+                if upload and (qdir / "video.mp4").exists():
+                    self._keep_pending_short(sslug, parent_slug, k, qdir)
         return out
+
+    # --- 上げられなかった Shorts（1 日の上限など）を次の実行で上げ直す -----------------
+    def _pending_dirs(self) -> list[Path]:
+        """作業場所の pending_shorts（状態と一緒にキャッシュされる）と、リポジトリに置いた pending_shorts/<チャンネル>."""
+        return [self.cfg.workdir / "pending_shorts", self.cfg.root / "pending_shorts" / self.cfg.channel_key]
+
+    def _keep_pending_short(self, sslug: str, parent_slug: str, k: int, qdir: Path) -> None:
+        import shutil
+        d = self._pending_dirs()[0] / sslug
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(qdir / "video.mp4", d / "video.mp4")
+            if (qdir / "metadata.json").exists():
+                shutil.copy2(qdir / "metadata.json", d / "metadata.json")
+            (d / "info.json").write_text(json.dumps({"slug": sslug, "parent": parent_slug, "slot": k}, ensure_ascii=False),
+                                         encoding="utf-8")
+            log.info("Shorts %s は次の実行で上げ直します（%s）", sslug, d)
+        except OSError as exc:
+            log.warning("上げ直し用に Shorts を残せませんでした: %s", exc)
+
+    def upload_pending_shorts(self) -> int:
+        """前の実行で上げられなかった Shorts を、本編の公開より後の枠で予約投稿する。上げた本数を返す."""
+        import shutil
+        from .metadata import Metadata
+        times = self.cfg.get("shorts.publish_times_jst") or None
+        n = 0
+        for base in self._pending_dirs():
+            for info_p in sorted(base.glob("*/info.json")):
+                d = info_p.parent
+                try:
+                    info = json.loads(info_p.read_text(encoding="utf-8"))
+                    sslug, parent_slug, k = str(info["slug"]), str(info["parent"]), int(info.get("slot", 0))
+                    rec = self.store.get_video(sslug)
+                    if rec and rec.youtube_id:
+                        if base == self._pending_dirs()[0]:
+                            shutil.rmtree(d, ignore_errors=True)
+                        continue
+                    parent = self.store.get_video(parent_slug)
+                    after = None
+                    if parent and parent.publish_at:
+                        after = dt.datetime.fromisoformat(str(parent.publish_at).replace("Z", "+00:00"))
+                    meta = Metadata(**json.loads((d / "metadata.json").read_text(encoding="utf-8")))
+                    res = youtube.publish(self.cfg, self.store, d / "video.mp4", meta, thumbnail=None, srt=None,
+                                          slot_index=k, publish_times=times, playlist=False, after=after)
+                    if not rec:
+                        self.store.create_video(sslug, parent.topic_id if parent else None, meta.title)
+                    self.store.update_video(sslug, status="uploaded", youtube_id=res["video_id"], publish_at=res["publish_at"],
+                                            stage={"kind": "short", "parent": parent_slug, "url": res["url"]})
+                    log.info("上げ直した Shorts: %s %s（公開予定 %s）", sslug, res["url"], res["publish_at"])
+                    n += 1
+                    if base == self._pending_dirs()[0]:
+                        shutil.rmtree(d, ignore_errors=True)
+                except Exception as exc:                # 上限がまだなら次の実行でもう一度
+                    log.warning("Shorts の上げ直しに失敗（次の実行で再挑戦）: %s %s", d.name, exc)
+        return n
 
     # --- 当日分をまとめて ------------------------------------------------
     def scheduled_long_on(self, day: dt.date) -> list[Any]:
@@ -468,6 +525,10 @@ class Pipeline:
                 self.post_pending_comments()
             except Exception as exc:                 # コメントで本編づくりを止めない
                 log.warning("コメントの投稿でエラー: %s", exc)
+            try:
+                self.upload_pending_shorts()
+            except Exception as exc:
+                log.warning("Shorts の上げ直しでエラー: %s", exc)
         count = count or int(self.cfg.get("pipeline.videos_per_day", 2))
         # 開始日より前は作らない（鍵を先に登録しておいても、初回の日までは投稿しない）
         start = str(self.cfg.get("pipeline.start_date", "") or "").strip()
