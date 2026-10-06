@@ -330,7 +330,7 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         s.add(0, title)
         source = str(sc.get("source") or "")
         if source:
-            s.add(0, lambda d, p: d.text((M, TY - 10), "◆ " + source, font=P.f(40, 500), fill=th.blue), delay=0.2)
+            s.add(0, lambda d, p: d.text((M, TY - 10), "出典：" + source, font=P.f(40, 500), fill=th.blue), delay=0.2)
         bars = [b for b in (sc.get("bars") or []) if isinstance(b, dict)][:4]
         vals = []
         for b in bars:
@@ -387,7 +387,7 @@ def build_scene_wide(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
             tw = d.textlength("検証結果", font=f)
             d.rounded_rectangle([M, 170, M + tw + 48, 170 + 74], radius=8, outline=th.blue, width=3)
             d.text((M + 24, 170 + 37), "検証結果", font=f, fill=th.blue, anchor="lm")
-            f2, lines = P.fit(d, f"「{claim}」", CW - 520, 84)
+            f2, lines = P.fit(d, f"「{claim}」", CW - 760, 84)      # 右のスタンプ（幅 約700）にかからない幅
             y = 300
             for ln in lines:
                 d.text((M, y), ln, font=f2, fill=th.text)

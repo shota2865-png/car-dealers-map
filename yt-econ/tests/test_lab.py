@@ -89,3 +89,29 @@ def test_frame_mouth_states_differ_when_presenter_exists():
     a = fr.compose(scene, "data", "base")
     b = fr.compose(scene, "data", "mouth_open")
     assert list(a.crop((1430, 300, 1920, 1080)).getdata()) != list(b.crop((1430, 300, 1920, 1080)).getdata())
+
+
+def test_psych_uses_thin_typeface_but_thumbnail_stays_bold():
+    from ytecon import lab, quiz
+    cfg = load_config(channel="psych")
+    f = quiz.font(cfg, 40, 700)
+    assert "MPLUS1" in f.path
+    assert quiz.font_en(cfg, 30).path.endswith("Orbitron[wght].ttf")
+    # どの太さも 300 細く（700 → 400）
+    assert quiz.font(cfg, 40, 700) is quiz.font(cfg, 40, 700)
+    assert ("{}@400".format(f.path), 40) in quiz._font_cache
+    # サムネは太字の角ゴシック
+    bold = lab._bold_cfg(cfg)
+    assert "MPLUS1" not in quiz.font(bold, 40, 900).path
+    # 経済チャンネルは今までどおり
+    assert "MPLUS1" not in quiz.font(load_config(), 40, 700).path
+
+
+def test_thin_typeface_replaces_missing_arrows():
+    from PIL import ImageDraw
+    from ytecon import quiz
+    cfg = load_config(channel="psych")
+    f = quiz.font(cfg, 40, 700)
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    # 矢印は ▶ に置き換わる（豆腐にならない）
+    assert d.textlength("A→B", font=f) == d.textlength("A▶B", font=f)

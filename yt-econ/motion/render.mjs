@@ -7,7 +7,8 @@ const port = 8700 + Math.floor(Math.random() * 200);
 const types = {'.js':'text/javascript','.mjs':'text/javascript','.html':'text/html','.png':'image/png','.json':'application/json'};
 const srv = http.createServer((q, s) => { const f = path.join(root, decodeURIComponent(q.url.split('?')[0])); fs.readFile(f, (e, d) => { if (e) { s.writeHead(404); s.end(); return; } s.writeHead(200, {'Content-Type': types[path.extname(f)] || 'application/octet-stream'}); s.end(d); }); }).listen(port);
 const br = await chromium.launch({executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']});
-const p = await br.newPage({viewport: {width: 1920, height: 1080}});
+const VW = +(process.env.VW || 1920), VH = +(process.env.VH || 1080);   // 書き出しの大きさ（1440p なら VW=2560 VH=1440）
+const p = await br.newPage({viewport: {width: VW, height: VH}});
 p.on('pageerror', e => console.log('err:', e.message));
 await p.goto(`http://127.0.0.1:${port}/${page_}`); await p.waitForFunction('window.ready===true', {timeout: 120000});
 await p.waitForTimeout(1500);

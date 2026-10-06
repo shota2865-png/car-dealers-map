@@ -56,6 +56,11 @@ video:
   # 見た目: 研究所の解析画面（黒に近い紺・シアン。config/design_tokens.yaml の lab。src/ytecon/lab.py）
   #   本編は場面を左の「解析モニター」に縮めて置き、右に解析担当のめたん（presenter）を立たせる
   design: "lab"
+  # 字体: 近未来の細い字。日本語は M PLUS 1（可変）、英字の飾りは Orbitron。
+  #   どの太さも 300 だけ細くする（見出し 900→600、本文 700→400）。サムネは小さく見えるので太字のまま
+  typeface: "assets/fonts/MPLUS1[wght].ttf"
+  typeface_en: "assets/fonts/Orbitron[wght].ttf"
+  weight_shift: -300
   target_minutes_min: 15.0
   target_minutes_max: 20.0
 

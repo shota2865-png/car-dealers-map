@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import sys
 import urllib.parse
 import urllib.request
 import wave
@@ -14,15 +15,19 @@ LINES = [
     (34.4, "その思いこみ、データで確かめてみませんか。"),
     (56.0, "毎日20時に、お会いしましょう。"),
 ]
-os.makedirs(f"{M}/audio", exist_ok=True)
+SUB = "audio"
+if len(sys.argv) > 1 and sys.argv[1] == "3":      # v3（データ検証のサンプル）: audio3/lines3.json の台本と時刻で作り直す
+    SUB = "audio3"
+    LINES = [(x["t"], x["text"]) for x in json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "audio3/lines3.json")))]
+os.makedirs(f"{M}/{SUB}", exist_ok=True)
 out = []
 for i, (t, txt) in enumerate(LINES):
     q = json.loads(urllib.request.urlopen(urllib.request.Request(f"{URL}/audio_query?speaker=2&text={urllib.parse.quote(txt)}", method="POST")).read())
     q.update(speedScale=1.05, intonationScale=1.15, prePhonemeLength=0.05, postPhonemeLength=0.1)
     wav = urllib.request.urlopen(urllib.request.Request(f"{URL}/synthesis?speaker=2", data=json.dumps(q).encode(),
                                                         headers={"Content-Type": "application/json"}, method="POST")).read()
-    p = f"{M}/audio/v{i}.wav"
+    p = f"{M}/{SUB}/v{i}.wav"
     open(p, "wb").write(wav)
     with wave.open(io.BytesIO(wav)) as w:
         out.append({"t": t, "text": txt, "file": p, "dur": w.getnframes() / w.getframerate()})
-json.dump(out, open(f"{M}/audio/lines.json", "w"), ensure_ascii=False, indent=1)
+json.dump(out, open(f"{M}/{SUB}/" + ("lines3.json" if SUB == "audio3" else "lines.json"), "w"), ensure_ascii=False, indent=1)
