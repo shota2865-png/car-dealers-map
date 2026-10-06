@@ -166,8 +166,11 @@ def test_psych_profile_overrides_and_inherits(psych):
     assert domain.field(psych) == "心理学" and "心理学" in psych.get("upload.title_suffix")
     assert psych.get("channel.listening_mode") == "daytime"
     assert psych.get("video.design") == "lab" and design.tokens(psych)["name"] == "lab"      # 研究所の解析画面
-    assert psych.get("render.bgm.file") != load_config().get("render.bgm.file")
-    assert psych.get("upload.publish_times_jst") == ["20:00"]
+    main0 = load_config()
+    assert psych.get("render.bgm.file") != main0.get("render.bgm.file")
+    # 経済と同じ時刻（本編 19:00、Shorts 6 本）
+    assert psych.get("upload.publish_times_jst") == main0.get("upload.publish_times_jst") == ["19:00"]
+    assert psych.get("shorts.publish_times_jst") == main0.get("shorts.publish_times_jst")
     assert len(psych.get("shorts.publish_times_jst")) == psych.get("shorts.per_video") == 6
     assert psych.get("thumbnail.style") == "lab"
     assert finals.prefix(psych) == "ps"

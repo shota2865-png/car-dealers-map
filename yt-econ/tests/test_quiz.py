@@ -118,7 +118,14 @@ def test_wide_scenes_render_in_16x9_and_stay_in_safe_area(cfg):
         assert img.size == (1920, 1080)
         dy = quiz._content_offset(s, th, with_extra=sc["kind"] == "question")
         body = quiz._shift(img, dy, th).crop((0, th.body_top, 1920, 1080))
-        bb = ImageChops.difference(body, Image.new("RGB", body.size, th.bg)).getbbox()
+        if body.mode == "RGBA":                     # 宇宙の解析室は地が透明（後ろに動く背景）
+            bb = body.getchannel("A").getbbox()
+        else:
+            bb = ImageChops.difference(body, Image.new("RGB", body.size, th.bg)).getbbox()
+        from ytecon import lab
+        if th.clear and sc["kind"] in lab.FULL_KINDS:      # 空間にじかに置く場面は、右のめたんにかからない範囲
+            assert bb and bb[3] + th.body_top <= 1080 - 20 and bb[0] >= 60 and bb[2] <= 1400, (sc["kind"], bb)
+            continue
         assert bb and bb[3] + th.body_top <= 1080 - 20 and bb[0] >= th.M - 12 and bb[2] <= 1920 - th.M + 12, (sc["kind"], bb)
 
 

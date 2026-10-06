@@ -3,8 +3,8 @@ name: 毎日 本編1本 + Shorts 6本を自動生成して予約投稿
 # ------------------------------------------------------------
 # GitHub のサーバーで動くので、あなたのパソコンには何も入れません。
 # JST 16:10 に生成を始め、チャンネルごとに本編と Shorts を予約公開します。
-#   main  : おやすみ経済学   本編 19:00 / Shorts 12:00・18:00・0:00
-#   psych : 心理学（2 つ目）  本編 20:00 / Shorts 7:30・12:30・21:30（config/channels/psych/channel.yaml）
+#   main  : おやすみ経済学   本編 19:00 / Shorts 21:30・0:00・7:00・12:00・15:00・18:00
+#   psych : 心理学（2 つ目）  本編 19:00 / Shorts 同じ 6 回（config/channels/psych/channel.yaml）
 #
 # 必要な設定（リポジトリの Settings → Secrets and variables → Actions）:
 #   CLAUDE_CODE_OAUTH_TOKEN   claude setup-token で作る（サブスクの枠で台本生成）
@@ -136,7 +136,7 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-noto-color-emoji
 
       - name: Python 依存を入れる
         if: steps.gate.outputs.skip != 'true'

@@ -331,7 +331,7 @@ def caption(img, t):
         return
     a0, a1, s = cur[-1]
     k = seg(t, a0 - 0.05, a0 + 0.12) * (1 - seg(t, a1 + 0.05, a1 + 0.15))
-    f = F(54, 500)
+    f = F(54, 400)      # 字幕も本編と同じ細さ
     tw = tlen(s, f)
     cx, cy = 1120, H - 168
     lay = Image.new("RGBA", img.size, (0, 0, 0, 0))
