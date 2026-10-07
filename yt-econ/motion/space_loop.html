@@ -1,0 +1,98 @@
+<!doctype html><html><body style="margin:0;background:#000;overflow:hidden">
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+// 心理学の本編の後ろに敷く「継ぎ目のない背景ループ」。ショーリール（reel3.html）と同じ星空ドーム・光る床・光の当て方。
+//   ?tess=1 で 4D のテッセラクト（章の扉・冒頭用）を足す。
+//   カメラは src/ytecon/space.py の Camera と同じ（床の上に立体グラフを重ねてもずれない）。レンズのゆがみは付けない。
+//   動きはすべて PERIOD 秒でぴったり元に戻る（星は 6 回対称に置いて 1/6 回転、光とテッセラクトは 1 周期で 1 回転）。
+import * as THREE from 'three';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+
+const _q = new URLSearchParams(location.search), W = +(_q.get('w') || 1920), H = +(_q.get('h') || 1080);
+const TESS = _q.get('tess') === '1', PERIOD = +(_q.get('period') || 40), FOLD = 6;
+const renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
+renderer.setSize(W, H); renderer.setPixelRatio(1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x020409);
+scene.fog = new THREE.FogExp2(0x020409, 0.018);
+const cam = new THREE.PerspectiveCamera(44, W / H, 0.02, 400);
+cam.position.set(1.9, 3.1, 10.0); cam.lookAt(1.9, 1.45, 0); cam.updateProjectionMatrix();
+scene.add(new THREE.AmbientLight(0x4a6a8a, 1.0));
+const keyL = new THREE.PointLight(0x22d3ee, 22, 40, 1.6); scene.add(keyL);
+const rimL = new THREE.PointLight(0xff3d9a, 14, 40, 1.6); scene.add(rimL);
+const topL = new THREE.DirectionalLight(0xbfe9ff, 1.2); topL.position.set(2, 8, 4); scene.add(topL);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, cam));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W, H), 0.9, 0.5, 0.3));
+const vig = new ShaderPass({
+  uniforms: {tDiffuse: {value: null}, aspect: {value: W / H}},
+  vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float aspect; varying vec2 vUv;
+    void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb; vec2 q = (vUv - 0.5) * vec2(aspect, 1.0); c *= smoothstep(1.3, 0.3, length(q)); gl_FragColor = vec4(c, 1.0); }`
+});
+composer.addPass(vig); composer.addPass(new OutputPass());
+
+let seed = 21;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+const CYAN = new THREE.Color(0x22d3ee), MAG = new THREE.Color(0xff3d9a), VIO = new THREE.Color(0x7c5cff);
+function dotTex() { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.3, 'rgba(255,255,255,.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
+const DOT = dotTex();
+const pmat = (size, opacity = 1) => new THREE.PointsMaterial({size, map: DOT, vertexColors: true, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, fog: false});
+// fold 回の回転対称にした点の雲（1/fold 回転でぴったり元に戻る）
+function symCloud(n, fill, size, opacity) {
+  const m = Math.floor(n / FOLD), g = new THREE.BufferGeometry(), p = new Float32Array(m * FOLD * 3), c = new Float32Array(m * FOLD * 3);
+  const base = []; for (let i = 0; i < m; i++) base.push(fill());
+  for (let k = 0; k < FOLD; k++) { const a = k * 2 * Math.PI / FOLD, ca = Math.cos(a), sa = Math.sin(a);
+    base.forEach(([x, y, z, col, v], i) => { const j = k * m + i; p.set([x * ca - z * sa, y, x * sa + z * ca], j * 3); c.set([col.r * v, col.g * v, col.b * v], j * 3); }); }
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(c, 3)); return new THREE.Points(g, pmat(size, opacity));
+}
+// 星空ドーム（reel3 と同じ数・色・大きさ）。1 つ目の扇形の中だけに置いて 6 つに写す
+const domePts = symCloud(30000, () => { const u = rnd() * 2 - 1, th = rnd() * 2 * Math.PI / FOLD, s = Math.sqrt(1 - u * u), r = 60 * (0.8 + rnd() * 0.4);
+  return [s * Math.cos(th) * r, u * r, s * Math.sin(th) * r, rnd() < .62 ? CYAN : (rnd() < .5 ? VIO : MAG), 0.3 + rnd() * 0.7]; }, 0.5, 0.95);
+scene.add(domePts);
+// 斜めの帯（天の川）: 帯の面の中で回す
+const bandAxis = new THREE.Vector3(1, 0, 0.3).normalize();
+const bandHold = new THREE.Group(); bandHold.quaternion.setFromAxisAngle(bandAxis, 0.9); scene.add(bandHold);
+const band = symCloud(16000, () => { const a = rnd() * 2 * Math.PI / FOLD, w = (rnd() - .5) * (rnd() < .5 ? 4 : 12), r = 55;
+  return [Math.cos(a) * r, w, Math.sin(a) * r, rnd() < .5 ? MAG : VIO, 0.25 + rnd() * 0.5]; }, 0.38, 0.9);
+bandHold.add(band);
+// 床（reel3 と同じ格子・円盤・光る輪）
+const grid = new THREE.GridHelper(36, 72, 0x22d3ee, 0x0b3446); grid.material.transparent = true; grid.material.opacity = 0.3; scene.add(grid);   // 遠くの格子が地平線で白い帯にならないよう、狭く薄く
+const disc = new THREE.Mesh(new THREE.CircleGeometry(6.5, 96), new THREE.MeshStandardMaterial({color: 0x061826, metalness: 0.3, roughness: 0.8, transparent: true, opacity: 0.85}));
+disc.rotation.x = -Math.PI / 2; disc.position.y = 0.002; scene.add(disc);
+const ringFloor = new THREE.Mesh(new THREE.RingGeometry(6.35, 6.45, 160), new THREE.MeshBasicMaterial({color: 0x22d3ee, transparent: true, opacity: 0.8, side: THREE.DoubleSide}));
+ringFloor.rotation.x = -Math.PI / 2; ringFloor.position.y = 0.004; scene.add(ringFloor);
+
+// 4D のテッセラクト（reel3 と同じ作り）。章の扉の右寄り・宙に浮かせる
+const four = new THREE.Group(); four.position.set(3.8, 2.9, -1.5); four.scale.setScalar(0.62); four.visible = TESS; scene.add(four);
+const tv = []; for (let i = 0; i < 16; i++) tv.push([(i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1, (i & 8) ? 1 : -1]);
+const te = []; for (let i = 0; i < 16; i++) for (let b = 0; b < 4; b++) { const j = i ^ (1 << b); if (j > i) te.push([i, j]); }
+const SUB = 24, tessGeo = new THREE.BufferGeometry(), tessPos = new Float32Array(te.length * SUB * 6), tessCol = new Float32Array(te.length * SUB * 6);
+te.forEach(([a, b], k) => { const c = (tv[a][3] + tv[b][3]) > 0 ? MAG : CYAN; for (let s = 0; s < SUB; s++) tessCol.set([c.r, c.g, c.b, c.r, c.g, c.b], (k * SUB + s) * 6); });
+tessGeo.setAttribute('position', new THREE.BufferAttribute(tessPos, 3)); tessGeo.setAttribute('color', new THREE.BufferAttribute(tessCol, 3));
+four.add(new THREE.LineSegments(tessGeo, new THREE.LineBasicMaterial({vertexColors: true, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false})));
+const lerp = (a, b, k) => a + (b - a) * k;
+function rot4(p, a, b, c) { let [x, y, z, w] = p; let ca = Math.cos(a), sa = Math.sin(a); [x, w] = [x * ca - w * sa, x * sa + w * ca];
+  let cb = Math.cos(b), sb = Math.sin(b); [y, w] = [y * cb - w * sb, y * sb + w * cb]; let cc = Math.cos(c), sc = Math.sin(c); [z, w] = [z * cc - w * sc, z * sc + w * cc]; return [x, y, z, w]; }
+function updateFour(a, b, c) { let o = 0; te.forEach(([i, j]) => { for (let s = 0; s < SUB; s++) for (const f of [s / SUB, (s + 1) / SUB]) {
+  const p = tv[i].map((v, n) => lerp(v, tv[j][n], f)); const r = rot4(p, a, b, c); const k = 3.4 / (3.2 - r[3]);
+  tessPos[o++] = r[0] * k; tessPos[o++] = r[1] * k; tessPos[o++] = r[2] * k; } }); tessGeo.attributes.position.needsUpdate = true; }
+
+window.renderAt = (t) => {
+  const ph = (t % PERIOD) / PERIOD, A = 2 * Math.PI * ph;
+  domePts.rotation.y = A / FOLD; band.rotation.y = A / FOLD;
+  keyL.position.set(Math.sin(A) * 6, 5, Math.cos(A) * 6); rimL.position.set(-Math.sin(A) * 6, 3, -Math.cos(A) * 6);
+  if (TESS) { updateFour(A, A * 2, A); four.rotation.y = A; }
+  composer.render();
+  return {};
+};
+window.ready = true;
+</script></body></html>

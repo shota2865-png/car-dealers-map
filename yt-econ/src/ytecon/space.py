@@ -148,6 +148,20 @@ def background_frame(t: float, period: float, stars, base: Image.Image, cam: Cam
     return ImageChops.add(out, glow)
 
 
+def loop_paths(cfg, ffmpeg: str = "ffmpeg") -> tuple[Path, Path | None]:
+    """本編の後ろに敷くループ動画（ふだん用, 章の扉・冒頭用）.
+
+    assets/space/loop_a.mp4（星空ドームと光る床）と loop_b.mp4（＋4D のテッセラクト）は、ショーリールと同じ three.js の絵
+    （motion/space_loop.html を 40 秒ぶん書き出したもの）。無いときだけ、ここで numpy の簡易版を作る.
+    """
+    d = cfg.root / "assets" / "space"
+    a, b = d / "loop_a.mp4", d / "loop_b.mp4"
+    if a.exists():
+        return a, (b if b.exists() else None)
+    cache = cfg.root / str(cfg.get("pipeline.workdir", "output")) / "cache"
+    return background_loop(cache / f"space_loop_v{LOOP_VERSION}.mp4", ffmpeg=ffmpeg), None
+
+
 def background_loop(out: str | Path, seconds: float = 60.0, fps: int = 30, ffmpeg: str = "ffmpeg",
                     cam: Camera = CAM) -> Path:
     """継ぎ目のない背景ループ（mp4）。同じ版のものがあれば作り直さない."""
