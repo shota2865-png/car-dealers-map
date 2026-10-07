@@ -177,6 +177,16 @@ jobs:
 
       # --- 状態 -----------------------------------------------------------
       # 過去に扱った話題・投稿済みの動画 ID・目標の記録を持ち越す（チャンネルごとに別）。これが無いと毎回同じテーマを作る
+      # 注意: 状態のキャッシュの path は変えないこと。path が変わると別物扱いになり、前回までの状態が読めなくなる
+      #       （10/7 に pending_shorts を足して読めなくなり、心理学の本編が同じ日に 2 本予約された）
+      - name: 上げ直し待ちの Shorts を復元
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: yt-econ/${{ matrix.workdir }}/pending_shorts
+          key: ytecon-pending-${{ matrix.channel }}-${{ github.run_id }}
+          restore-keys: ytecon-pending-${{ matrix.channel }}-
+
       - name: 前回までの状態を復元
         if: steps.gate.outputs.skip != 'true'
         uses: actions/cache/restore@v4
@@ -184,7 +194,6 @@ jobs:
           path: |
             yt-econ/${{ matrix.workdir }}/state.sqlite3
             yt-econ/${{ matrix.workdir }}/goal
-            yt-econ/${{ matrix.workdir }}/pending_shorts
           key: ${{ matrix.state_key }}-${{ github.run_id }}
           restore-keys: ${{ matrix.state_key }}-
 
@@ -238,6 +247,13 @@ jobs:
         run: |
           { echo "## 掘り起こし（${{ matrix.channel }}）"; echo '```'; cat revive-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
+      - name: 上げ直し待ちの Shorts を保存
+        if: always() && steps.gate.outputs.skip != 'true' && hashFiles(format('yt-econ/{0}/pending_shorts/**', matrix.workdir)) != ''
+        uses: actions/cache/save@v4
+        with:
+          path: yt-econ/${{ matrix.workdir }}/pending_shorts
+          key: ytecon-pending-${{ matrix.channel }}-${{ github.run_id }}
+
       - name: 状態を保存
         if: always() && steps.gate.outputs.skip != 'true'
         uses: actions/cache/save@v4
@@ -245,7 +261,6 @@ jobs:
           path: |
             yt-econ/${{ matrix.workdir }}/state.sqlite3
             yt-econ/${{ matrix.workdir }}/goal
-            yt-econ/${{ matrix.workdir }}/pending_shorts
           key: ${{ matrix.state_key }}-${{ github.run_id }}
 
       # 投稿しない設定のときは、できた mp4 をここからダウンロードできる
