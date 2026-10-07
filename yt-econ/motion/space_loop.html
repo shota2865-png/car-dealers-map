@@ -65,14 +65,14 @@ const band = symCloud(16000, () => { const a = rnd() * 2 * Math.PI / FOLD, w = (
   return [Math.cos(a) * r, w, Math.sin(a) * r, rnd() < .5 ? MAG : VIO, 0.25 + rnd() * 0.5]; }, 0.38, 0.9);
 bandHold.add(band);
 // 床（reel3 と同じ格子・円盤・光る輪）
-const grid = new THREE.GridHelper(80, 160, 0x22d3ee, 0x0b3446); grid.material.transparent = true; grid.material.opacity = 0.55; scene.add(grid);
+const grid = new THREE.GridHelper(36, 72, 0x22d3ee, 0x0b3446); grid.material.transparent = true; grid.material.opacity = 0.3; scene.add(grid);   // 遠くの格子が地平線で白い帯にならないよう、狭く薄く
 const disc = new THREE.Mesh(new THREE.CircleGeometry(6.5, 96), new THREE.MeshStandardMaterial({color: 0x061826, metalness: 0.3, roughness: 0.8, transparent: true, opacity: 0.85}));
 disc.rotation.x = -Math.PI / 2; disc.position.y = 0.002; scene.add(disc);
 const ringFloor = new THREE.Mesh(new THREE.RingGeometry(6.35, 6.45, 160), new THREE.MeshBasicMaterial({color: 0x22d3ee, transparent: true, opacity: 0.8, side: THREE.DoubleSide}));
 ringFloor.rotation.x = -Math.PI / 2; ringFloor.position.y = 0.004; scene.add(ringFloor);
 
 // 4D のテッセラクト（reel3 と同じ作り）。章の扉の右寄り・宙に浮かせる
-const four = new THREE.Group(); four.position.set(3.4, 2.7, -1.2); four.scale.setScalar(0.62); four.visible = TESS; scene.add(four);
+const four = new THREE.Group(); four.position.set(3.8, 2.9, -1.5); four.scale.setScalar(0.62); four.visible = TESS; scene.add(four);
 const tv = []; for (let i = 0; i < 16; i++) tv.push([(i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1, (i & 8) ? 1 : -1]);
 const te = []; for (let i = 0; i < 16; i++) for (let b = 0; b < 4; b++) { const j = i ^ (1 << b); if (j > i) te.push([i, j]); }
 const SUB = 24, tessGeo = new THREE.BufferGeometry(), tessPos = new Float32Array(te.length * SUB * 6), tessCol = new Float32Array(te.length * SUB * 6);

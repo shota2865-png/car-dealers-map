@@ -75,7 +75,7 @@ def build(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         def head(d, p):
             d.text((X0, 250), "TODAY'S QUESTION", font=_en(cfg, 26, 600), fill=acc)
             d.text((X0 + 330, 248), "今日の問い", font=P.f(30, 700), fill=sub)
-            f, ls = P.fit(d, q, 1000, 96, 600, min_size=56)          # 右の宙は 4D のテッセラクト
+            f, ls = P.fit(d, q, 900, 96, 600, min_size=56)           # 右の宙は 4D のテッセラクト
             y = 310
             for ln in ls[:3]:
                 d.text((X0, y), ln, font=f, fill=text)
@@ -92,7 +92,7 @@ def build(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         subt = str(sc.get("sub") or "")
         road = [r for r in (sc.get("roadmap") or []) if isinstance(r, dict)]
         idx = int(sc.get("index") or 0)
-        tw = 1000                                  # 右寄りの宙に 4D のテッセラクト（背景）が浮かぶので、見出しは左に
+        tw = 860                                   # 右寄りの宙に 4D のテッセラクト（背景）が浮かぶので、見出しは左に
 
         def head(d, p):
             d.text((X0, 190), label, font=P.f(40, 700), fill=acc)

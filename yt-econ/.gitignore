@@ -54,3 +54,5 @@ assets/fonts/NotoSansJP-Medium.ttf
 
 # 上げ直し待ちの Shorts（pipeline.upload_pending_shorts）は動画もリポジトリに置く
 !pending_shorts/**/*.mp4
+# 心理学の本編の背景ループ（motion/space_loop.html を書き出したもの）
+!assets/space/*.mp4
