@@ -126,8 +126,10 @@ cast:
 render:
   bgm:
     enabled: true
-    # 本体（Up to No Good）と別の曲。素材 zip の assets/bgm/ に入れておくこと（無ければ置いてある曲に落ちる）
-    file: "Roie Shpigler - Hush Move.mp3"
+    # ニュース番組っぽい曲（Mixkit「Delayed Flight」112 BPM・一定のビート。Mixkit のフリー楽曲ライセンス）。
+    # リポジトリは公開なので曲は置かず、無ければ url から取ってくる
+    file: "Mixkit - Delayed Flight.mp3"
+    url: "https://assets.mixkit.co/music/1024/1024.mp3"
     volume_db: -9
     ducking: true
     mood_timeline: true
@@ -139,7 +141,7 @@ tts:
   provider: "voicevox"
   voicevox:
     speaker: 2
-    speed: 1.02
+    speed: 1.25           # ニュースの読みに近い速さ（Shorts もこの速さ）
     pitch: 0.0
     intonation: 1.05
 
@@ -171,16 +173,16 @@ honpen:
   effort: "high"
   minutes: 18
   parts: 4                  # 章の数（各章に 2 択クイズが 1 問）。今日の問い 1 つに、4 つの検証で順に答える
-  part_chars_min: 1500      # 4 章 × この字数 + 冒頭と締め ≒ 17〜19 分（実測: 5060 字で 14.5 分 → 1 分 ≒ 350 字）
-  part_chars_max: 1700
-  max_chars: 6800           # これを超えたら説明の場面を外して 20 分以内（≒ 19.5 分）に収める（honpen.trim_to）
-  speed: 1.02               # Shorts と同じ
-  seg_gap: 0.25             # 文節の間
-  scene_tail: 0.8           # 場面の終わりの余韻
-  count_tick: 1.1           # カウントダウン 1 拍（数も声で読む。画面を見ない人向け）
+  part_chars_min: 1800      # 4 章 × この字数 + 冒頭と締め ≒ 17〜19 分（速さ 1.22 で 1 分 ≒ 430 字の見込み）
+  part_chars_max: 2000
+  max_chars: 8200           # これを超えたら説明の場面を外して 20 分以内（≒ 19 分）に収める（honpen.trim_to）
+  speed: 1.22               # ニュースの読みに近い速さ（前は 1.02 で「遅い」と言われた）
+  seg_gap: 0.15             # 文節の間（テンポよく）
+  scene_tail: 0.5           # 場面の終わりの余韻
+  count_tick: 0.9           # カウントダウン 1 拍（数も声で読む。画面を見ない人向け）
   voice_countdown: true
   outro_seconds: 0          # 寝落ち向けの「暗くして音楽だけ」はやらない
-  bgm_db: -20
+  bgm_db: -18               # ニュースの曲を少し前に
   title_prefix: ""
   thumb_note: "ながら聴きOK・声だけでわかる"
   # 研究所の解析画面: 本編を左のモニター、右にめたん（lab.Frame / video.lab_style: space なら lab.SpaceFrame）
@@ -212,7 +214,7 @@ shorts:
   mode: quiz
   model: "claude-opus-5"
   effort: "medium"
-  bgm_db: -22
+  bgm_db: -20
   cta:
     - "続きは本編で。"
     - "本編は毎日19時。下のリンクから。"
@@ -222,9 +224,9 @@ shorts:
   publish_times_jst: ["21:30", "00:00", "07:00", "12:00", "15:00", "18:00"]
   # 字幕を出す（めたんの立ち絵は出さない）。大きさは経済の Shorts と同じ subtitle_size（76）
   subtitles: true
-  # 長さは 45 秒くらい（実測: 230〜260 字で 50〜52 秒 → 200〜225 字）
+  # 長さは 45 秒くらい（声の速さ 1.25 の実測: 292 字で 44 秒）
   quiz_seconds: "42〜47"
-  quiz_chars: "200〜225 字"
+  quiz_chars: "270〜300 字"
 
 thumbnail:
   # サムネは手で作ったもの（thumbnails/psych/）が優先。無い日は lab（解析画面＋大きな問い＋めたん）で自動生成

@@ -277,6 +277,24 @@ def build_timeline(cfg: Config, script, track, outdir: Path) -> Path:
     return out
 
 
+def _download(url: str, dest: Path) -> None:
+    """配布元の直リンク（Mixkit など。リポジトリには曲を置かない）から、無いときだけ取ってくる."""
+    import urllib.request
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+            f.write(r.read())
+        if tmp.stat().st_size > 100_000:
+            tmp.replace(dest)
+            log.info("BGM を取得しました: %s", dest.name)
+        else:
+            tmp.unlink(missing_ok=True)
+    except Exception as exc:                        # 取れなければ置いてある曲に落ちる
+        log.warning("BGM を取得できませんでした（%s）: %s", url, exc)
+
+
 def resolve(cfg: Config, script=None, track=None, outdir: Path | None = None) -> Path | None:
     """使う BGM のパスを返す。無効・曲なしなら None（BGM なしで作る）.
 
@@ -292,6 +310,8 @@ def resolve(cfg: Config, script=None, track=None, outdir: Path | None = None) ->
     name = str(cfg.get("render.bgm.file", "") or "").strip()
     if name:
         p = cfg.root / "assets" / "bgm" / name
+        if not p.exists() and cfg.get("render.bgm.url"):
+            _download(str(cfg.get("render.bgm.url")), p)
         if p.exists():
             return p
         log.warning("BGM が見つかりません: %s", p)

@@ -739,6 +739,15 @@ def _short_caption(cfg: Config, th: Theme, img: Image.Image, text: str) -> Image
         f = font(cfg, size, 800)                       # 研究所は細い字体（weight_shift で 500）
         per = max(6, int((th.W - 120) / size))
         lines = phrase_split(text, per)[:2] or [text]
+        if len(lines) > 1 and min(len(x) for x in lines) <= 3:
+            # 「あるけ / れど」のような泣き別れを避ける: 少しだけはみ出すなら 1 行のまま字を小さく、そうでなければ切り直す
+            if len(text) <= per + 4:
+                lines = [text]
+            else:
+                lines = phrase_split(text, per - 3)[:2] or [text]
+        d0 = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+        while max(d0.textlength(x, font=f) for x in lines) > th.W - 100 and f.size > 56:
+            f = font(cfg, f.size - 4, 800)                 # はみ出すときだけ少し小さく
         lh = int(size * 1.28)
         lay = Image.new("RGBA", (th.W, lh * len(lines) + 40), (0, 0, 0, 0))
         d = ImageDraw.Draw(lay)

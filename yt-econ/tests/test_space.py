@@ -99,7 +99,7 @@ def test_assemble_keeps_one_axis_and_trims_to_twenty_minutes():
     assert honpen.narration_chars(trimmed) <= 2500
     kinds = [s["kind"] for s in trimmed["scenes"]]
     assert kinds.count("chapter") == 4 and kinds.count("verdict") == 4     # 軸（章の扉と判定）は残る
-    assert cfg.get("honpen.max_chars") and int(cfg.get("honpen.max_chars")) <= 7000      # 1 分 ≒ 350 字 → 20 分未満
+    assert cfg.get("honpen.max_chars") and int(cfg.get("honpen.max_chars")) <= 8600      # 速さ 1.22 で 1 分 ≒ 430 字 → 20 分未満
 
 
 def test_psych_shorts_have_subtitles_like_economy_and_no_presenter():

@@ -13,7 +13,7 @@
 | 設定 | `yt-econ/config/channel.yaml` | `yt-econ/config/channels/psych/channel.yaml`（本体を extends） |
 | 本編の公開 | 毎日 19:00 | 毎日 19:00（経済と同じ） |
 | Shorts | 本編 1 本につき 6 本（21:30 / 0:00 / 7:00 / 12:00 / 15:00 / 18:00） | 6 本（経済と同じ時刻）。約 45 秒、めたんは出さず字幕だけ（経済の Shorts と同じ大きさ・細い字） |
-| 声 | VOICEVOX（ずんだもん＆めたんの掛け合い） | VOICEVOX（四国めたんの一人語り） |
+| 声 | VOICEVOX（ずんだもん＆めたんの掛け合い） | VOICEVOX（四国めたんの一人語り）。ニュースの読みの速さ（本編 1.22・Shorts 1.25）。BGM はニュースっぽい Mixkit「Delayed Flight」（公開リポジトリなので曲は置かず `render.bgm.url` から取得） |
 | 見た目 | ずんだもん解説の定番 | **宇宙の解析室**（`video.design: lab` + `lab_style: space`）。背景はショーリールと同じ three.js の星空ドームと光る床（`assets/space/loop_a.mp4`、冒頭と章の扉は 4D テッセラクト入りの `loop_b.mp4`。元は `motion/space_loop.html`）。データは床に立つ光る角柱＋「約N倍」、判定はメーター、右にめたん（口パク）、下に細い字の字幕。**上の帯・ホログラムの絵・字幕の左の棒は出さない**（ユーザーが「ごちゃごちゃ」と却下）。字は M PLUS 1＋英字 Orbitron＋数字 Oxanium |
 | 番組の型 | 経済ニュースの掛け合い解説 | **今日の問い 1 つを、4 つの検証で順に答える**（①本当に起きる？②なぜ？③どんなとき？④どうする？。各章: 扉 → クイズ → 説明 → データ → 判定。章の中は同じ例え・前に戻らない）。本編は 20 分以内（`honpen.max_chars`） |
 | サムネ | `panel`（コマ割り＋ぱくたそ写真＋ずんだもん）を自動生成 | 手で作ったもの優先、無い日は `lab`（大きな問い＋「データで検証」＋めたん） |
@@ -30,6 +30,7 @@
 | `replace-thumbnails.yml` | `yt-econ/thumbnails/replace/<main\|psych>/<動画ID>.jpg` が main に入ったとき | その動画のサムネを差し替え |
 | `publish-file.yml` | 手動 | 手で仕上げた mp4 を投稿 |
 
+- **状態のキャッシュ（state.sqlite3 と goal）の path は変えない**。変えると前回までの状態が読めなくなる（10/7 に起きて心理学の本編が同じ日に 2 本予約された）
 - YouTube の鍵は GitHub Secrets だけにある（`YOUTUBE_*`, `PSY_YOUTUBE_*`）。クラウドのコンテナには無いので、
   YouTube に書き込む作業（サムネ差し替え・コメントなど）は **Actions 経由** でやる
 - 進捗や再生数は、daily-upload のジョブログの「目標の進捗と打ち手」に出る（Analytics は 2〜3 日遅れ）
