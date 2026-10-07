@@ -414,9 +414,8 @@ def caption_chunks(start: float, dur: float, text: str, maxc: int = 26) -> list[
 class SpaceFrame:
     """quiz.build(wide=True) の 1 コマを、宇宙の解析室の重ね絵（RGBA。地は透明）にする.
 
-    上: 今日の問い（動画全体の軸）と、いまどこを話しているか（問い → しくみ → データ → 判定）
     左: 説明の場面はガラスの板に、データ・判定・章の扉は空間にじかに
-    右: めたん（口パク）と、例え話のホログラム / 下: 細い字の字幕
+    右: めたん（口パク） / 下: 細い字の字幕。上の帯や飾りは置かない（見る所を中身だけにする）
     """
 
     def __init__(self, cfg: Config, pal: dict[str, str], question: str = "", chapters_total: int = 4) -> None:
@@ -516,7 +515,6 @@ class SpaceFrame:
         lay = Image.new("RGBA", (int(tw) + 80, 76), (0, 0, 0, 0))
         d = ImageDraw.Draw(lay)
         d.rounded_rectangle([0, 0, lay.width - 1, 75], radius=10, fill=(4, 9, 20, 200))
-        d.line([(0, 6), (0, 69)], fill=self.acc + (255,), width=4)
         d.text((lay.width / 2, 38), text, font=f, fill=self.text, anchor="mm")
         if len(self._cap) > 400:
             self._cap.clear()
@@ -536,11 +534,7 @@ class SpaceFrame:
                 x0, y0, x1, y1 = GLASS
                 out.alpha_composite(self._glass)
                 out.alpha_composite(sc.resize((x1 - x0, y1 - y0), Image.LANCZOS), (x0, y0))
-            out.alpha_composite(self.header(chapter, STEP_OF_KIND.get(kind, 0)), (0, 0))
-            if icon and kind not in ("chapter", "opening"):
-                ic = self.icon(icon)
-                if ic is not None:
-                    out.alpha_composite(ic, (1685 - ic.width // 2, 128))
+            # 上の帯（今日の問い・現在地）と例え話のホログラムは出さない（画面をすっきりさせ、見る所を中身だけにする）
             self._key, self._mid = key, out
         out = self._mid.copy()
         m = self.stage(EXPR_BY_KIND.get(kind, "通常"), mouth)

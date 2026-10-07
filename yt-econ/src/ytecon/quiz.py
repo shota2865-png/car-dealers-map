@@ -942,9 +942,11 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     scenes = quiz["scenes"]
     q_scene = None                      # カウントダウンは直前の question の画面で数える
     shared_dy = None
+    tess_ranges: list[tuple[float, float]] = []     # 4D のテッセラクトの背景にする時間（冒頭・章の扉）
     for sc in scenes:
         kind = sc.get("kind")
         cur_kind = str(kind or "")
+        sc_start = total
         if kind == "chapter":
             cur_chapter += 1
             cur_icon = str(sc.get("icon") or "")
@@ -1022,6 +1024,8 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
                 silence(1.0)
                 animate(scene, st, 1.0, dy)
                 total += 1.0
+        if kind in ("opening", "chapter"):
+            tess_ranges.append((sc_start, total))
 
     if outro > 0 and frames:
         # 静かな余韻: 最後の画面をゆっくり暗くして、音楽だけを流す（寝落ちした人の耳に急な無音や明るさを残さない）
@@ -1051,17 +1055,27 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
     vol = float(cfg.get("honpen.bgm_db", -20) if wide else cfg.get("shorts.bgm_db", -22))
     cmd = [ffmpeg, "-y", "-loglevel", "error"]
     vin, ain = 0, 1                       # 入力の番号（映像・声）
+    loop_b = None
     if space:
-        # 宇宙の解析室: 動く 3D の背景（星空のドームと床の輪。継ぎ目のないループ）の上に、透明な重ね絵を重ねる
+        # 宇宙の解析室: ショーリールと同じ 3D の背景（星空のドームと光る床。継ぎ目のないループ）の上に、透明な重ね絵を重ねる。
+        # 冒頭と章の扉の間だけ、4D のテッセラクトが浮かぶ版に切り替える
         from . import space as space_mod
-        cache = cfg.root / str(cfg.get("pipeline.workdir", "output")) / "cache"
-        loop = space_mod.background_loop(cache / f"space_loop_v{space_mod.LOOP_VERSION}.mp4", ffmpeg=ffmpeg)
+        loop, loop_b = space_mod.loop_paths(cfg, ffmpeg=ffmpeg)
         cmd += ["-stream_loop", "-1", "-i", str(loop)]
         vin, ain = 1, 2
+        if loop_b is not None and tess_ranges:
+            cmd += ["-stream_loop", "-1", "-i", str(loop_b)]
+            vin, ain = 2, 3
+        else:
+            loop_b = None
     cmd += ["-f", "concat", "-safe", "0", "-i", str(fr / "frames.txt"), "-i", str(voice_wav)]
     vf = f"[{vin}:v]fps={FPS},format=yuv420p[v]"
     if space:
-        vf = f"[{vin}:v]fps={FPS},format=rgba[fg];[0:v]fps={FPS}[bgv];[bgv][fg]overlay=0:0:format=auto:shortest=1,format=yuv420p[v]"
+        bg = f"[0:v]fps={FPS}[bgv]"
+        if loop_b is not None:
+            when = "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in tess_ranges)
+            bg = f"[0:v]fps={FPS}[bga];[1:v]fps={FPS}[bgb];[bga][bgb]overlay=0:0:enable='{when}'[bgv]"
+        vf = f"{bg};[{vin}:v]fps={FPS},format=rgba[fg];[bgv][fg]overlay=0:0:format=auto:shortest=1,format=yuv420p[v]"
     if bgm:
         cmd += ["-stream_loop", "-1", "-i", str(bgm),
                 "-filter_complex", vf + f";[{ain + 1}:a]volume={vol}dB,afade=t=in:d=1.5,afade=t=out:st={max(0.0, total-(12 if wide else 3)):.2f}:d={12 if wide else 3}[bg];[{ain}:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",

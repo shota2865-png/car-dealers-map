@@ -2,7 +2,7 @@
 
 どれも地は透明（後ろに space.background_loop の動く背景が来る）。右はめたんが立つので、中身は x=80〜1380 に収める。
   opening  今日の問い（動画全体の軸）を大きく
-  chapter  「検証 02」と見出し。下に 4 つの検証の道のり（済んだものは判定つき）、右にホログラムの絵
+  chapter  「検証 02」と見出し。下に 4 つの検証の道のり（済んだものは判定つき）。右の宙には背景の 4D テッセラクト
   data     床に立つ光る角柱で数字を比べる。2 本なら「約 N 倍」を自動で出す
   verdict  主張・判定メーター（ウソ ← 半分本当 → 本当）の針・スタンプ・理由
 """
@@ -75,23 +75,16 @@ def build(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         def head(d, p):
             d.text((X0, 250), "TODAY'S QUESTION", font=_en(cfg, 26, 600), fill=acc)
             d.text((X0 + 330, 248), "今日の問い", font=P.f(30, 700), fill=sub)
-            f, ls = P.fit(d, q, X1 - X0, 96, 600, min_size=56)
+            f, ls = P.fit(d, q, 1000, 96, 600, min_size=56)          # 右の宙は 4D のテッセラクト
             y = 310
             for ln in ls[:3]:
                 d.text((X0, y), ln, font=f, fill=text)
                 y += int(f.size * 1.3)
         s.add(0, head)
-        ic = str(sc.get("icon") or "")
         if lines:
             s.add(1, lambda d, p: d.text((X0, 690), lines[0], font=P.f(46, 700), fill=sub))
         if len(lines) > 1:
             s.add(2, lambda d, p: d.text((X0, 760), lines[1], font=P.f(40, 700), fill=sub))
-        if ic:
-            def icon_(d, p):
-                im = space.holo_icon(ic, 260, acc)
-                if im is not None:
-                    d._image.alpha_composite(im, (1180 - im.width // 2, 520 - im.height // 2))
-            s.add(0, icon_, slide=False, delay=0.3)
 
     elif kind == "chapter":
         label = str(sc.get("label") or "")
@@ -99,8 +92,7 @@ def build(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
         subt = str(sc.get("sub") or "")
         road = [r for r in (sc.get("roadmap") or []) if isinstance(r, dict)]
         idx = int(sc.get("index") or 0)
-        ic = str(sc.get("icon") or "")
-        tw = 900 if ic else X1 - X0
+        tw = 1000                                  # 右寄りの宙に 4D のテッセラクト（背景）が浮かぶので、見出しは左に
 
         def head(d, p):
             d.text((X0, 190), label, font=P.f(40, 700), fill=acc)
@@ -139,12 +131,6 @@ def build(cfg: Config, th: Theme, sc: dict[str, Any]) -> Scene:
                     if cur:
                         d.polygon([(X0 - 30, y + 8), (X0 - 30, y + 30), (X0 - 12, y + 19)], fill=acc)
             s.add(0, roadmap, slide=False, delay=0.4)
-        if ic:
-            def icon_(d, p):
-                im = space.holo_icon(ic, 280, acc)
-                if im is not None:
-                    d._image.alpha_composite(im, (1170 - im.width // 2, 400 - im.height // 2))
-            s.add(0, icon_, slide=False, delay=0.3)
 
     elif kind == "data":
         heading, hl = str(sc.get("heading") or ""), str(sc.get("heading_hl") or "")

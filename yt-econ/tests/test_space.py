@@ -55,17 +55,20 @@ def test_space_scenes_are_transparent_and_keep_left_of_metan():
         assert bb and bb[2] <= 1400, (sc["kind"], bb)
 
 
-def test_frame_shows_question_step_and_caption():
+def test_frame_is_clean_only_metan_and_caption():
+    """上の帯（今日の問い・現在地）・例え話の絵・字幕の左の棒は出さない。めたんと字幕だけ."""
     cfg = _psych()
     fr = lab.SpaceFrame(cfg, palette(cfg), "選択肢が多いと、人は選べなくなる？", 4)
     scene = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
-    plain = fr.compose(scene, "data", "base", "", "", 2)
+    plain = fr.compose(scene, "data", "base", "", "🍓", 2)
+    assert plain.mode == "RGBA" and plain.size == (1920, 1080)
+    bb = plain.getchannel("A").getbbox()
+    assert bb is None or (bb[1] > 200 and bb[0] > 1300)          # 上と左は空（右下のめたんだけ）
     out = fr.compose(scene, "data", "mouth_open", "24種類の売り場では、買った人は3%", "🍓", 2)
-    assert out.mode == "RGBA" and out.size == (1920, 1080)
-    assert out.getchannel("A").getbbox()[1] < 60                   # 上に今日の問いと現在地
     diff = np.abs(np.asarray(out, dtype=np.int16) - np.asarray(plain, dtype=np.int16))[940:1030, 100:1300].sum()
     assert diff > 0                                                  # 下に字幕
-    assert lab.STEP_NAMES[lab.STEP_OF_KIND["data"]] == "データ"
+    cap = fr.caption("テスト")
+    assert cap.getpixel((1, 38))[:3] != fr.acc                       # 左の棒は無い
 
 
 def test_caption_chunks_are_short():
