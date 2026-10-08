@@ -355,6 +355,22 @@ def cmd_revive(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retitle(args: argparse.Namespace) -> int:
+    """伸びなかった本編のタイトルを、YouTube で検索されている言葉から付け直す."""
+    from .config import load_config
+    from .retitle import format_report, run
+    from .state import Store
+
+    cfg = load_config(args.config, channel=args.channel)
+    if not cfg.get("retitle.enabled", False):
+        print("retitle.enabled が false です（このチャンネルでは付け直さない）")
+        return 0
+    store = Store(cfg.workdir / "state.sqlite3")
+    apply = args.apply or bool(cfg.get("retitle.auto_apply", False))
+    print(format_report(run(cfg, store, apply=apply), apply))
+    return 0
+
+
 def cmd_portfolio(args: argparse.Namespace) -> int:
     """flow / bridge / stock の偏りと、掘り起こし待ちの在庫を見る."""
     from .config import load_config
@@ -589,6 +605,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--apply", action="store_true",
                    help="タイトル・サムネ・概要欄を YouTube に反映する")
     p.set_defaults(func=cmd_revive)
+
+    p = sub.add_parser("retitle", help="伸びなかった本編のタイトルを検索される言葉で付け直す")
+    p.add_argument("--apply", action="store_true", help="YouTube のタイトルを書き換える")
+    p.set_defaults(func=cmd_retitle)
 
     p = sub.add_parser("portfolio", help="flow/bridge/stock の偏りと在庫を見る")
     p.set_defaults(func=cmd_portfolio)

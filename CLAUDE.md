@@ -30,6 +30,8 @@
 | `replace-thumbnails.yml` | `yt-econ/thumbnails/replace/<main\|psych>/<動画ID>.jpg` が main に入ったとき | その動画のサムネを差し替え |
 | `publish-file.yml` | 手動 | 手で仕上げた mp4 を投稿 |
 
+- daily-upload の中で、経済の**伸びなかった本編のタイトルを付け直す**（`retitle.py`。公開 3 日以上・100 回未満の本編を 1 日 1 本、検索されている言葉を頭に。元のタイトルは状態 DB の `stage.old_title`）
+
 - **状態のキャッシュ（state.sqlite3 と goal）の path は変えない**。変えると前回までの状態が読めなくなる（10/7 に起きて心理学の本編が同じ日に 2 本予約された）
 - YouTube の鍵は GitHub Secrets だけにある（`YOUTUBE_*`, `PSY_YOUTUBE_*`）。クラウドのコンテナには無いので、
   YouTube に書き込む作業（サムネ差し替え・コメントなど）は **Actions 経由** でやる

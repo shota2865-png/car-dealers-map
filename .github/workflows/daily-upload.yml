@@ -237,6 +237,13 @@ jobs:
             ${{ github.event.inputs.upload == 'false' && '--no-upload' || '' }} | tee run-report.txt
           { echo "## 生成結果（${{ matrix.channel }}）"; echo '```'; tail -30 run-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
 
+      # 伸びなかった本編のタイトルを、検索されている言葉から付け直す（retitle.enabled のチャンネルだけ。1 日 1 本）
+      - name: 伸びなかった本編のタイトルを付け直す
+        if: always() && steps.gate.outputs.skip != 'true' && github.event.inputs.upload != 'false'
+        run: |
+          python -m ytecon retitle | tee retitle-report.txt || true
+          { echo "## タイトルの付け直し（${{ matrix.channel }}）"; echo '```'; cat retitle-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+
       # 寝かせた動画のテーマが日本で話題化していないか毎日照合する
       - name: 寝かせた動画の掘り起こし
         if: always() && steps.gate.outputs.skip != 'true'
