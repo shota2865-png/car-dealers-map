@@ -239,6 +239,10 @@ thumbnail:
 goal:
   file: "config/channels/psych/goals.yaml"
 
+# タイトルの付け直しは経済の本編だけ（心理学は今のまま）
+retitle:
+  enabled: false
+
 pipeline:
   # honpen = 寝落ち向け 30 分の本編（honpen.py + wide.py）と、章から作る参加型テストの Shorts
   format: "honpen"

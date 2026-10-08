@@ -475,6 +475,16 @@ shorts:
 # 寝かせた動画の掘り起こし（ytecon revive）
 # 企画時に決めた watch_keywords が日本のニュース見出しに出たら、
 # タイトル・サムネ・概要欄を作り替えて「いま探されている1本」にする
+# 伸びなかった本編のタイトルを、YouTube で検索されている言葉から付け直す（src/ytecon/retitle.py）。
+#   公開から min_age_days 日たっても再生が max_views 回未満の本編を、1 回の実行で per_run 本ずつ。同じ動画は 1 回だけ。
+#   元のタイトルは状態 DB の stage.old_title に残る
+retitle:
+  enabled: true
+  auto_apply: true
+  min_age_days: 3
+  max_views: 100
+  per_run: 1
+
 revive:
   enabled: true
   # --apply なしでも案だけは毎日作る。自動反映は urgency が now/this_week のときだけ

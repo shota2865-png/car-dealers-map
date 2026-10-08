@@ -80,3 +80,55 @@ def test_psych_long_is_news_style_but_shorts_stay_as_before():
     assert "Delayed Flight" in p.get("render.bgm.file") and "Hush Move" in p.get("shorts.bgm_file")
     assert not p.get("topics.search_first")            # 検索から作るのは経済の本編だけ
     assert load_config().get("topics.search_first") is True
+
+
+def _store_with_longs(tmp_path):
+    st = Store(tmp_path / "s.sqlite3")
+    rows = [("old-low", "L1", "日銀の利上げでなぜ円安？1.25%が奨学金に届く順番", "2026-10-01T10:00:00+00:00", {"kind": "long"}),
+            ("old-high", "L2", "生涯賃金とは？会社員の一生は億単位", "2026-10-01T10:00:00+00:00", {"kind": "long"}),
+            ("new-low", "L3", "住民税の話", "2026-10-07T10:00:00+00:00", {"kind": "long"}),
+            ("short", "S1", "ショート #Shorts", "2026-10-01T10:00:00+00:00", {"kind": "short"}),
+            ("done", "L4", "前に付け直した回", "2026-10-01T10:00:00+00:00", {"kind": "long", "retitled_at": "x"})]
+    for slug, vid, title, pub, stage in rows:
+        st.create_video(slug, None, title)
+        st.update_video(slug, status="uploaded", youtube_id=vid, publish_at=pub, stage=stage)
+    return st
+
+
+def test_retitle_picks_only_old_low_long_videos(tmp_path):
+    from ytecon import retitle
+    st = _store_with_longs(tmp_path)
+    views = {"L1": 70, "L2": 1245, "L3": 5, "S1": 10, "L4": 3}
+    got = retitle.candidates(load_config(), st, views, today=__import__("datetime").date(2026, 10, 8))
+    assert [r.slug for r in got] == ["old-low"]          # 新しすぎる・伸びた・Shorts・付け直し済みは外す
+
+
+def test_retitle_puts_a_searched_phrase_first_and_keeps_old_title(tmp_path, monkeypatch):
+    from ytecon import retitle, youtube
+    st = _store_with_longs(tmp_path)
+    monkeypatch.setattr(searchdemand, "suggest", lambda q, timeout=10.0: {"円安": ["円安", "円安 なぜ", "円安 生活"],
+                                                                          "奨学金": ["奨学金 返済"]}.get(q, []))
+    answers = iter([{"bases": ["円安", "奨学金"]},
+                    {"keyword": "円安 なぜ", "title": "円安 なぜ止まらない？利上げしても下がる理由", "hook_tag": "金利上げたのに"}])
+    monkeypatch.setattr("ytecon.llm.complete_json", lambda *a, **k: next(answers))
+
+    class Svc:
+        def videos(self):
+            return self
+
+        def list(self, **kw):
+            return self
+
+        def execute(self):
+            return {"items": [{"id": i, "statistics": {"viewCount": v}} for i, v in
+                              {"L1": "70", "L2": "1245", "L3": "5", "L4": "3"}.items()]}
+    monkeypatch.setattr(youtube, "build_service", lambda cfg: Svc())
+    updated = []
+    monkeypatch.setattr(youtube, "update_video_metadata", lambda cfg, store, vid, title=None, **k: updated.append((vid, title)))
+    import datetime as _dt
+    monkeypatch.setattr(retitle.dt, "date", type("D", (_dt.date,), {"today": staticmethod(lambda: _dt.date(2026, 10, 8))}))
+    rows = retitle.run(load_config(), st, apply=True)
+    assert updated and updated[0][0] == "L1" and updated[0][1].startswith("円安 なぜ")
+    rec = st.get_video("old-low")
+    assert rec.stage["old_title"].startswith("日銀の利上げ") and rec.stage["retitle_keyword"] == "円安 なぜ"
+    assert "円安 なぜ" in retitle.format_report(rows, True)
