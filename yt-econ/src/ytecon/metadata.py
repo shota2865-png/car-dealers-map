@@ -98,6 +98,9 @@ _TITLE_HORIZON = {
 def choose_title(cfg: Config, script: VideoScript,
                  horizon: str = "flow") -> tuple[str, dict[str, str]]:
     candidates = "\n".join(f"- {t}" for t in script.title_candidates) or "- (候補なし)"
+    kw = str(getattr(script, "search_keyword", "") or "").strip()
+    kw_line = (f"\n**keyword は「{kw}」**（YouTube で実際に検索されている言葉）。この表記のままタイトルの先頭に置き、"
+               f"keyword にもそのまま入れる。\n") if kw else ""
     user = f"""動画の内容:
 テーマ: {script.topic_title}
 導入: {script.hook}
@@ -107,7 +110,7 @@ def choose_title(cfg: Config, script: VideoScript,
 台本側のタイトル候補:
 {candidates}
 
-この動画に最適なタイトルを1つ決め、サムネ文言も併せて出してください。
+{kw_line}この動画に最適なタイトルを1つ決め、サムネ文言も併せて出してください。
 候補をそのまま使っても、書き直しても構いません。"""
     data = llm.complete_json(
         _TITLE_SYSTEM.format(
@@ -119,7 +122,7 @@ def choose_title(cfg: Config, script: VideoScript,
         model=cfg.get("script.model", llm.DEFAULT_MODEL),
         effort="medium",
     )
-    body = keyword_first(data.get("title") or script.topic_title, data.get("keyword") or "")
+    body = keyword_first(data.get("title") or script.topic_title, kw or data.get("keyword") or "")
     title = format_title(cfg, body, data.get("hook_tag") or "")
     thumb = {
         "main": (data.get("thumbnail_main") or "")[:20],

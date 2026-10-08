@@ -140,6 +140,7 @@ class VideoScript:
     research: dict[str, Any] = field(default_factory=dict)   # 台本前の「リサーチの木」
     block_cards: dict[str, list[Card]] = field(default_factory=dict)  # hook/proof/promise/closing の文字カード
     block_diagrams: dict[str, list[Diagram]] = field(default_factory=dict)  # 同じく図解
+    search_keyword: str = ""         # YouTube で検索されている言葉（企画の元。タイトルの頭に置く）
 
     @property
     def narration_blocks(self) -> list[tuple[str, str]]:
@@ -244,6 +245,7 @@ class VideoScript:
                     for g in (v or []) if g.get("items")]
                 for k, v in (d.get("block_diagrams") or {}).items()
             },
+            search_keyword=d.get("search_keyword", "") or "",
         )
 
     def save(self, path: str | Path) -> Path:
@@ -486,8 +488,10 @@ _SYSTEM = """あなたは日本語の{field}解説YouTube動画の構成作家�
 ## 冒頭 55 秒の書き方（ここで残るか決まる）
 
 1. **hook = S01 PARADOX_HOOK**: 「こんにちは」「今日は〜の話」から始めない。
-   「普通はこう思うのだ」→「でも、実際は逆なのだ」で違和感を突きつける。
-   **答えは言わない。**
+   **最初の 2 文で、タイトルの問いへの答え（結論）を、視聴者の暮らしの数字で言い切る**
+   （例:「手取り20万円なら、住民税は月およそ1万円引かれているのだ」）。
+   検索で来た人は答えを探しているので、先に渡すと残る（30 秒で残った割合: 答えを先に言い切った回 88%、言わなかった回 46〜57%）。
+   そのあと「でも、なぜそうなるのか。ここを知らない人が多いのだ」と違和感につなぐ。**理由・仕組みはまだ言わない。**
 2. **proof = S05a**: その違和感が本当にあることを、数字1つと出典で裏づける。
    「実際、〇〇によると△△は□□まで上がっているのだ」
 3. **promise = S02 QUESTION_LOCK**: 「では、なぜ〜なのか？」と問いを1つに固定し、
@@ -755,7 +759,7 @@ _HORIZON_GUIDE = {
 
 _USER = """# 今日つくる動画
 
-テーマ: {title}
+{search_line}テーマ: {title}
 切り口: {angle}
 この回の位置づけ: {horizon}（日本での普及段階 {stage}/3、一般化まで推定 {lag}ヶ月）
 なぜ今か: {why_now}
@@ -806,7 +810,9 @@ def research_tree(cfg: Config, topic: Topic) -> dict[str, Any]:
         lenses=bible.research_prompt_block(cfg),
         banned="、".join(cfg.get("channel.banned_topics", []) or []),
     )
+    kw = str(getattr(topic, "search_keyword", "") or "")
     user = _USER.split("# 台本の前に作った")[0].format(
+        search_line=f"検索されている言葉: 「{kw}」（この言葉で検索した人の疑問を、リサーチの木の問いにする）\n" if kw else "",
         title=topic.title, angle=topic.angle, horizon=topic.horizon,
         stage=topic.diffusion_stage, lag=f"{topic.lag_months:.0f}",
         bridge=topic.japan_bridge or "(指定なし)", why_now=topic.why_now or "(常設テーマ)",
@@ -976,7 +982,10 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
         mins_lo=cfg.get("video.target_minutes_min", 8),
         mins_hi=cfg.get("video.target_minutes_max", 10),
     )
+    kw = str(getattr(topic, "search_keyword", "") or "")
     user = _USER.format(
+        search_line=(f"検索されている言葉: 「{kw}」（この言葉で YouTube を検索した人の疑問に、正面から答える回。"
+                     f"hook の最初の 2 文でその答えを言い切る）\n") if kw else "",
         title=topic.title,
         angle=topic.angle,
         horizon=topic.horizon,
@@ -996,6 +1005,7 @@ def generate(cfg: Config, topic: Topic) -> VideoScript:
     data = llm.complete_json(system, user, _SCRIPT_SCHEMA, model=model, effort=effort)
     script = VideoScript.from_dict(data)
     script.topic_title = script.topic_title or topic.title
+    script.search_keyword = kw
     script.research = research
     _assign_beats(cfg, script)
 

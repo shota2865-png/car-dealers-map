@@ -73,6 +73,8 @@ script:
 
 topics:
   schedule_file: "config/channels/psych/schedule.yaml"
+  # 「検索されている言葉から作る」は経済の本編だけ（心理学は今日の問い 1 本の検証型）
+  search_first: false
   frontier_seeds:
     - "米国で広がった『セラピー用語の日常化』（gaslighting / boundaries）が日本の会話に入ってくる経路"
     - "海外の『ドーパミン断ち』ブームの科学的な裏づけと、日本での受け止め方"
@@ -141,7 +143,7 @@ tts:
   provider: "voicevox"
   voicevox:
     speaker: 2
-    speed: 1.25           # ニュースの読みに近い速さ（Shorts もこの速さ）
+    speed: 1.02           # Shorts の速さ（今までどおり）。本編は honpen.speed（1.22・ニュースの読みの速さ）
     pitch: 0.0
     intonation: 1.05
 
@@ -214,7 +216,7 @@ shorts:
   mode: quiz
   model: "claude-opus-5"
   effort: "medium"
-  bgm_db: -20
+  bgm_db: -22
   cta:
     - "続きは本編で。"
     - "本編は毎日19時。下のリンクから。"
@@ -224,9 +226,11 @@ shorts:
   publish_times_jst: ["21:30", "00:00", "07:00", "12:00", "15:00", "18:00"]
   # 字幕を出す（めたんの立ち絵は出さない）。大きさは経済の Shorts と同じ subtitle_size（76）
   subtitles: true
-  # 長さは 45 秒くらい（声の速さ 1.25 の実測: 292 字で 44 秒）
+  # 長さは 45 秒くらい（今までどおり。声の速さ 1.02 の実測: 230〜260 字で 50〜52 秒 → 200〜225 字）
   quiz_seconds: "42〜47"
-  quiz_chars: "270〜300 字"
+  quiz_chars: "200〜225 字"
+  # Shorts の BGM は今までどおり（ニュースっぽい曲にするのは本編だけ）
+  bgm_file: "Roie Shpigler - Hush Move.mp3"
 
 thumbnail:
   # サムネは手で作ったもの（thumbnails/psych/）が優先。無い日は lab（解析画面＋大きな問い＋めたん）で自動生成

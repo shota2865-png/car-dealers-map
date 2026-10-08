@@ -1061,6 +1061,10 @@ def build(cfg: Config, quiz: dict[str, Any], outdir: str | Path, provider=None, 
 
     dst = outdir / "video.mp4"
     bgm = bgm_mod.resolve(cfg)
+    if not wide and cfg.get("shorts.bgm_file"):          # Shorts だけ別の曲（心理学: 本編はニュース調、Shorts は今までどおり）
+        sb = cfg.root / "assets" / "bgm" / str(cfg.get("shorts.bgm_file"))
+        if sb.exists():
+            bgm = sb
     vol = float(cfg.get("honpen.bgm_db", -20) if wide else cfg.get("shorts.bgm_db", -22))
     cmd = [ffmpeg, "-y", "-loglevel", "error"]
     vin, ain = 0, 1                       # 入力の番号（映像・声）
