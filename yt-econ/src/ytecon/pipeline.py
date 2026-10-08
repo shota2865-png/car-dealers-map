@@ -60,6 +60,17 @@ class Artifacts:
     def meta(self) -> Path: return self.dir / "metadata.json"
 
 
+def topic_playlists(cfg: Config, keyword: str, title: str) -> list[str]:
+    """検索語（無ければタイトル）に合うテーマ別の再生リスト名（upload.topic_playlists: {再生リスト名: [言葉, ...]}）."""
+    table = cfg.get("upload.topic_playlists") or {}
+    text = keyword or title
+    out = []
+    for name, words in table.items():
+        if any(str(w) and str(w) in text for w in (words or [])):
+            out.append(str(name))
+    return out[:2]
+
+
 class Pipeline:
     def __init__(self, cfg: Config | None = None, store: Store | None = None):
         self.cfg = cfg or load_config()
@@ -170,6 +181,7 @@ class Pipeline:
         result = youtube.publish(
             self.cfg, self.store, art.video, meta,
             thumbnail=art.thumb, srt=art.srt, slot_index=slot_index,
+            extra_playlists=topic_playlists(self.cfg, s.search_keyword or "", meta.title),
         )
         self.store.update_video(
             slug, status="uploaded", title=meta.title,
