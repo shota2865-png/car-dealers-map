@@ -118,6 +118,14 @@ def run(cfg: Config, store: Store, apply: bool = False) -> list[dict[str, str]]:
             except Exception as exc:
                 log.warning("タイトルの付け直しに失敗: %s %s", r.youtube_id, exc)
                 continue
+            from .pipeline import topic_playlists
+            for name in topic_playlists(cfg, p["keyword"], p["title"]):      # テーマ別の再生リストにも入れる
+                try:
+                    pid = youtube.ensure_playlist(cfg, store, name)
+                    if pid:
+                        youtube.add_to_playlist(cfg, store, pid, r.youtube_id)
+                except Exception as exc:
+                    log.warning("テーマ別の再生リストに入れられませんでした: %s", exc)
             store.update_video(r.slug, title=p["title"], stage={
                 "retitled_at": dt.datetime.now(dt.timezone.utc).isoformat(), "old_title": r.title or "",
                 "retitle_keyword": p["keyword"]})

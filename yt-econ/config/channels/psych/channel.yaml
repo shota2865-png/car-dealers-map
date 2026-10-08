@@ -207,6 +207,7 @@ upload:
   publish_times_jst: ["19:00"]
   category_id: "27"      # Education
   playlist_title: "現代人のための心理学"
+  topic_playlists: null     # テーマ別の再生リストは経済だけ（{} だと本体の表と合成されるので null）
   title_hook_tag: true
   title_suffix: "【現代人のための心理学】"
 

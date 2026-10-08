@@ -391,6 +391,7 @@ def publish(
     publish_times: list[str] | None = None,
     playlist: bool = True,
     after: dt.datetime | None = None,
+    extra_playlists: list[str] | None = None,
 ) -> dict[str, Any]:
     """アップロード一式（本編 → サムネ → 字幕 → 再生リスト）.
 
@@ -417,6 +418,13 @@ def publish(
         pid = ensure_playlist(cfg, store, playlist_title)
         if pid:
             add_to_playlist(cfg, store, pid, video_id)
+    for extra in extra_playlists or []:              # テーマ別の再生リスト（検索結果にも出て、次の 1 本につながる）
+        try:
+            pid = ensure_playlist(cfg, store, extra)
+            if pid:
+                add_to_playlist(cfg, store, pid, video_id)
+        except Exception as exc:
+            log.warning("テーマ別の再生リストに入れられませんでした（%s）: %s", extra, exc)
 
     return {
         "video_id": video_id,

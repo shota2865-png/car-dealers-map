@@ -233,11 +233,29 @@ def subscribe_line(cfg: Config) -> str:
             f"https://www.youtube.com/channel/{cid}?sub_confirmation=1")
 
 
+def search_lead(script: VideoScript) -> str:
+    """概要欄の 1 行目: 検索されている言葉と、その答え（冒頭で言い切った 1 文）。検索結果の説明文に出る所なので短く."""
+    kw = str(getattr(script, "search_keyword", "") or "").strip()
+    if not kw:
+        return ""
+    from .script import strip_tags
+    hook = re.sub(r"\s+", " ", strip_tags(script.hook or "")).strip()
+    hook = re.sub(r"^[^「」:：]{1,12}[:：]", "", hook).strip()          # 「ずんだもん：」のような話者名
+    first = re.split(r"(?<=[。！？!?])", hook)[0].strip() if hook else ""
+    first = first.replace("のだ。", "。").replace("なのだ", "")
+    if kw in first:
+        return first[:120]
+    return f"【{kw}】{first}"[:120] if first else f"【{kw}】"
+
+
 def build(cfg: Config, script: VideoScript, track: VoiceTrack,
           title: str | None = None) -> Metadata:
     title = title or (script.title_candidates or [script.topic_title])[0]
 
     parts = [script.description.strip(), subscribe_line(cfg)]
+    lead = search_lead(script)
+    if lead:
+        parts.insert(0, lead)
 
     chapters = build_chapters(script, track)
     if chapters:
@@ -271,7 +289,12 @@ def build(cfg: Config, script: VideoScript, track: VoiceTrack,
 
     description = "\n\n".join(p for p in parts if p.strip())[:MAX_DESCRIPTION]
 
-    tags = [t.strip() for t in script.tags if t.strip()][:15]
+    tags = [t.strip() for t in script.tags if t.strip()]
+    kw = str(getattr(script, "search_keyword", "") or "").strip()
+    if kw:                                                # 検索されている言葉を先頭のタグに（その語の単語も）
+        front = [kw] + [w for w in kw.split() if w != kw]
+        tags = front + [t for t in tags if t not in front]
+    tags = tags[:15]
     return Metadata(
         title=title,
         description=description,

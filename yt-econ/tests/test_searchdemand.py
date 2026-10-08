@@ -132,3 +132,25 @@ def test_retitle_puts_a_searched_phrase_first_and_keeps_old_title(tmp_path, monk
     rec = st.get_video("old-low")
     assert rec.stage["old_title"].startswith("日銀の利上げ") and rec.stage["retitle_keyword"] == "円安 なぜ"
     assert "円安 なぜ" in retitle.format_report(rows, True)
+
+
+def test_description_starts_with_search_phrase_and_answer_and_tags_lead_with_it():
+    s = VideoScript.from_dict({"topic_title": "住民税", "hook": "ずんだもん：手取り20万円なら、住民税は月およそ1万円なのだ。でも、なぜかは知られていないのだ。",
+                               "sections": [], "closing": "c", "title_candidates": [], "description": "説明", "tags": ["税金", "住民税"],
+                               "thumbnail_copy": {}, "sources": [], "search_keyword": "住民税 計算"})
+    lead = metadata.search_lead(s)
+    assert lead.startswith("【住民税 計算】") and "月およそ1万円" in lead and "ずんだもん" not in lead
+    from pathlib import Path
+
+    from ytecon.tts import VoiceTrack
+    meta = metadata.build(load_config(), s, VoiceTrack(wav_path=Path("x.wav")))
+    assert meta.description.startswith("【住民税 計算】")
+    assert meta.tags[:3] == ["住民税 計算", "住民税", "計算"]
+
+
+def test_topic_playlists_follow_the_search_phrase():
+    from ytecon.pipeline import topic_playlists
+    cfg = load_config()
+    assert topic_playlists(cfg, "住民税 計算", "") == ["手取り・税金・社会保険のしくみ"]
+    assert "借りるお金（奨学金・ローン・カード）" in topic_playlists(cfg, "", "奨学金 返済はいつから？")
+    assert topic_playlists(load_config(channel="psych"), "住民税", "") == []
