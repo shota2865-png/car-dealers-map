@@ -1,0 +1,82 @@
+"""経済の本編を「検索されている言葉」から作る（searchdemand / topics.search_first / 台本・タイトル）."""
+from __future__ import annotations
+
+import copy
+
+from ytecon import metadata, searchdemand, topics
+from ytecon.config import load_config
+from ytecon.script import VideoScript
+from ytecon.state import Store
+
+FAKE = {
+    "手取り": ["手取り20万", "手取り", "手取り15万"],
+    "住民税": ["住民税非課税世帯", "住民税 計算", "住民税の"],
+    "生涯賃金": ["生涯賃金", "生涯賃金 両学長", "生涯賃金 大卒"],
+    "住民税 計算": ["住民税 計算", "住民税 計算方法"],
+    "日銀1.25%": [],
+}
+
+
+def _cfg(**topics_cfg):
+    cfg = copy.deepcopy(load_config())
+    cfg.raw.setdefault("topics", {}).update({"search_bases": ["手取り", "住民税", "生涯賃金"], "search_per_base": 3,
+                                             "search_exclude": ["両学長"], **topics_cfg})
+    return cfg
+
+
+def test_pool_takes_real_searches_skips_covered_names_and_fragments(monkeypatch):
+    monkeypatch.setattr(searchdemand, "suggest", lambda q, timeout=10.0: FAKE.get(q, []))
+    p = searchdemand.pool(_cfg(), history=["手取り20万円で一人暮らしはできる？"])
+    assert "手取り20万" not in p                       # もう扱った
+    assert "生涯賃金 両学長" not in p                   # 人名つき
+    assert "住民税の" not in p                          # 途中で切れた候補
+    assert p[:3] == ["手取り15万", "住民税非課税世帯", "生涯賃金"]     # 種ごとに 1 つずつ（多い順。「手取り」はもう扱った）
+    assert searchdemand.has_demand("住民税 計算") and not searchdemand.has_demand("日銀1.25%")
+
+
+def test_select_topics_builds_on_a_searched_phrase(tmp_path, monkeypatch):
+    monkeypatch.setattr(searchdemand, "suggest", lambda q, timeout=10.0: FAKE.get(q, []))
+    monkeypatch.setattr(topics, "fetch_rss", lambda cfg: [])
+    seen = {}
+
+    def fake_llm(system, user, schema, **kw):
+        seen["user"] = user
+        return {"topics": [
+            {"title": "住民税はいくら？手取り20万円の人の6月", "angle": "a", "kind": "evergreen", "search_keyword": "住民税 計算",
+             "horizon": "flow", "diffusion_stage": 3, "lag_months": 0, "score": 80},
+        ]}
+    monkeypatch.setattr("ytecon.llm.complete_json", fake_llm)
+    cfg = _cfg(search_first=True)
+    store = Store(tmp_path / "s.sqlite3")
+    got = topics.select_topics(cfg, store, 1)
+    assert "検索されている言葉" in seen["user"] and "住民税非課税世帯" in seen["user"]
+    assert got[0].search_keyword == "住民税 計算"
+
+
+def test_unsearched_keyword_is_dropped(tmp_path, monkeypatch):
+    monkeypatch.setattr(searchdemand, "suggest", lambda q, timeout=10.0: FAKE.get(q, []))
+    monkeypatch.setattr(topics, "fetch_rss", lambda cfg: [])
+    monkeypatch.setattr("ytecon.llm.complete_json", lambda *a, **k: {"topics": [
+        {"title": "日銀の利上げで円安？", "angle": "a", "kind": "news", "search_keyword": "日銀1.25%",
+         "horizon": "flow", "diffusion_stage": 3, "lag_months": 0, "score": 50}]})
+    got = topics.select_topics(_cfg(search_first=True), Store(tmp_path / "s.sqlite3"), 1)
+    assert got[0].search_keyword == ""                 # 検索候補に出ない言葉はタイトルの頭に置かない
+
+
+def test_title_starts_with_the_searched_phrase(monkeypatch):
+    s = VideoScript.from_dict({"topic_title": "住民税", "hook": "h", "sections": [], "closing": "c",
+                               "title_candidates": [], "description": "", "tags": [], "thumbnail_copy": {}, "sources": [],
+                               "search_keyword": "住民税 計算"})
+    assert VideoScript.from_dict(s.to_dict()).search_keyword == "住民税 計算"
+    monkeypatch.setattr("ytecon.llm.complete_json", lambda *a, **k: {
+        "title": "6月に手取りが減る理由", "keyword": "住民税", "hook_tag": "", "thumbnail_main": "", "thumbnail_sub": "", "thumbnail_bubble": ""})
+    title, _ = metadata.choose_title(load_config(), s)
+    assert title.startswith("住民税 計算")
+
+
+def test_psych_long_is_news_style_but_shorts_stay_as_before():
+    p = load_config(channel="psych")
+    assert p.get("honpen.speed") >= 1.2 and p.get("tts.voicevox.speed") == 1.02
+    assert "Delayed Flight" in p.get("render.bgm.file") and "Hush Move" in p.get("shorts.bgm_file")
+    assert not p.get("topics.search_first")            # 検索から作るのは経済の本編だけ
+    assert load_config().get("topics.search_first") is True

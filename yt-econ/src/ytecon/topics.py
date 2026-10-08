@@ -43,6 +43,7 @@ class Topic:
     lag_months: float = 0.0         # 日本で一般化するまでの推定ヶ月数
     watch_keywords: list[str] = field(default_factory=list)  # 話題化を検知する語
     japan_bridge: str = ""          # 海外の話を日本の視聴者に接続する一文
+    search_keyword: str = ""        # YouTube で実際に検索されている言葉（topics.search_first のとき。タイトルの頭に置く）
 
 
 # ----------------------------------------------------------------------
@@ -163,6 +164,20 @@ stock の評価軸は今日の再生数ではなく、「日本で話題化し�
 - 数字を断定せず、確認すべき一次情報を sources に入れる
 """
 
+_SEARCH_FIRST = """
+# YouTube で実際に検索されている言葉（検索候補。上ほど多く検索されている）
+{demand}
+
+# 本編は「検索される疑問」から作る（いちばん大事）
+- このチャンネルの本編は、Shorts のフィードからはほとんど来ない。**検索と関連動画で見つけてもらう**しかない
+- これまで伸びた本編は「生涯賃金」「スマホ代」のような、人が検索する暮らしのお金の言葉の回。
+  ニュースの速報的な回（「日銀1.25%」「消費税1%」）は伸びなかった
+- だから各企画は、上の一覧から言葉を 1 つ選んで search_keyword にそのまま入れ、**その言葉で検索した人の疑問に正面から答える**企画にする
+  （例: 「住民税 計算」→ 手取り20万円の人の住民税はいくらで、なぜ6月に変わるのか）
+- ニュースは、その疑問に答えるための材料（いま知る理由）として使う。ニュースそのものを主役にしない
+- 一覧に合う言葉が無いときだけ、視聴者が検索窓に打ちそうな暮らしの言葉（2〜10 字）を自分で入れる
+"""
+
 _SELECT_SCHEMA = llm.obj(
     {
         "topics": llm.arr(
@@ -181,6 +196,7 @@ _SELECT_SCHEMA = llm.obj(
                     "lag_months": llm.NUM,
                     "watch_keywords": llm.arr(llm.STR),
                     "japan_bridge": llm.STR,
+                    "search_keyword": llm.STR,
                 }
             )
         )
@@ -367,6 +383,15 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
         if not is_duplicate(t, history, threshold)
     ) or "(先行テーマの在庫なし)"
 
+    # 検索されている言葉（本編は検索と関連動画で見つけてもらうしかないので、検索候補に出る疑問から作る）
+    search_first = bool(cfg.get("topics.search_first", False))
+    demand: list[str] = []
+    if search_first:
+        from . import searchdemand
+        demand = searchdemand.pool(cfg, history)
+        log.info("検索されている言葉: %d 個（%s ...）", len(demand), " / ".join(demand[:6]))
+    demand_block = "\n".join(f"- {d}" for d in demand) or "(取得できず。視聴者が検索しそうな暮らしの言葉を自分で選ぶ)"
+
     recent = store.horizon_counts(30)
     balance_block = (
         f"直近30日の内訳: flow {recent['flow']}本 / bridge {recent['bridge']}本 / "
@@ -390,6 +415,7 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
 # これまでのポートフォリオ
 {balance_block}
 
+{_SEARCH_FIRST.format(demand=demand_block) if search_first else ""}
 # 依頼
 合計 {count} 本ぶんの企画を作ってください。内訳の目安は
 **flow {plan['flow']}本 / bridge {plan['bridge']}本 / stock {plan['stock']}本** です。
@@ -418,7 +444,14 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
         if not title or is_duplicate(title, history, threshold):
             log.info("重複のためスキップ: %s", title)
             continue
+        kw = str(item.get("search_keyword") or "").strip()
+        if search_first and kw and kw not in demand:
+            from . import searchdemand
+            if not searchdemand.has_demand(kw):
+                log.info("検索候補に出ない言葉なので使いません: %s", kw)
+                kw = ""
         topic = Topic(
+            search_keyword=kw if search_first else "",
             title=title,
             angle=(item.get("angle") or "").strip(),
             kind=item.get("kind", "evergreen"),
