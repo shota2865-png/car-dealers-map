@@ -3,6 +3,9 @@
 このリポジトリの本体は `yt-econ/`。YouTube チャンネルを台本から投稿まで全自動で回している。
 ほかのフォルダ（`ai-video-system/` `oyasumi/` `shota-video-editor/` `index.html`）は別件で、今は触らない。
 
+`yt-clip/` は別チャンネル「むらいクリップ【切り抜き】」（マックスむらいの切り抜き Shorts、毎日 10 本を 18:00 に予約）。
+`.github/workflows/clip-daily.yml` が動かす。Claude のクレジットは使わない作り（場面選びは YouTube のチャット・ヒートマップ・字幕、タイトルは GitHub Models）。詳しくは `yt-clip/README.md`。
+
 ユーザーとは日本語で、短く・専門用語を避けて話す。数字や結果は先に言う。
 
 ## チャンネルと目標

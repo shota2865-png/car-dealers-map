@@ -1,0 +1,4 @@
+out/
+state/
+*.mp4
+.env
