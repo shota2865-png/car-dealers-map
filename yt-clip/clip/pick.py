@@ -22,11 +22,11 @@ PROMPT = """あなたは YouTube Shorts の切り抜き編集者です。マッ�
 やること:
 1. この中から、前置きなしで見て意味が分かり、オチ・驚き・笑い・役に立つ一言のどれかで終わる {min_sec}〜{max_sec} 秒の範囲を 1 つ選ぶ（start_line から end_line まで。各行の秒数を見て長さを合わせる）
 2. Shorts のタイトル（全角 28 字以内）。冒頭で興味を引く言い方。誇張・ウソ・他人を貶める表現は禁止。「マックスむらい」を入れる
-3. 画面の上に出す一言（全角 14 字以内。タイトルの言い換えでよい）
+3. 画面の上の帯に出す見出し 2 行。band1 は何の話か（全角 13 字以内。例「TOPIX除外銘柄は買い?」「ビール大手4社カルテル疑惑」）、band2 はむらいさんの結論や一言（全角 11 字以内。例「バカなの!?」「今後どうなる!?」「皆んな気にしすぎ」）
 4. 切り抜きとしての面白さ 1〜10（内輪の話・挨拶・雑音だけなら 1〜3）
 5. 投資の話なら is_investment を true
 
-JSON だけを返す: {{"start_line": 数, "end_line": 数, "title": "...", "hook": "...", "score": 数, "is_investment": true/false}}
+JSON だけを返す: {{"start_line": 数, "end_line": 数, "title": "...", "band1": "...", "band2": "...", "score": 数, "is_investment": true/false}}
 
 元の動画: {video_title}
 字幕:
@@ -80,7 +80,7 @@ def fallback(cfg: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any]:
     # 自動字幕の一言はタイトルにすると崩れやすいので、タイトルは元動画の題名から作る
     base = re.sub(r"【[^】]*】|\[[^\]]*\]", "", cand["info_title"]).strip()[:26]
     return {"start_line": i, "end_line": j, "title": f"{base}【マックスむらい切り抜き】",
-            "hook": _clean(best["text"], 14) or base[:14], "score": 5,
+            "band1": base[:13], "band2": _clean(best["text"], 11), "score": 5,
             "is_investment": "株" in cand["info_title"]}
 
 
@@ -109,7 +109,9 @@ def decide(cfg: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any] | None:
         if "#shorts" not in title.lower():
             title = f"{title} #shorts"
         return {**cand, "start": max(0.0, start), "end": end, "title": title,
-                "hook": str(ans.get("hook", "")).strip()[:16], "rating": float(ans.get("score", 5)),
+                "band1": str(ans.get("band1", "")).strip()[:16], "band2": str(ans.get("band2", "")).strip()[:14],
+                "hook": " ".join(x for x in (str(ans.get("band1", "")).strip(), str(ans.get("band2", "")).strip()) if x),
+                "rating": float(ans.get("score", 5)),
                 "is_investment": bool(ans.get("is_investment")), "llm": used_llm}
     except (KeyError, ValueError, TypeError) as e:
         log.warning("範囲を決められませんでした: %s", e)

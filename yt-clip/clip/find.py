@@ -145,6 +145,8 @@ def candidates(video: dict[str, Any], workdir: Path, cfg: dict[str, Any], want: 
     if info.get("availability") not in (None, "public") or info.get("live_status") == "is_live":
         log.info("対象外（%s / %s）: %s", info.get("availability"), info.get("live_status"), video["title"])
         return []
+    if video.get("live_only") and info.get("live_status") != "was_live":
+        return []
     dur = int(info.get("duration") or 0)
     if dur < c["max_sec"] + 30:
         return []
@@ -157,7 +159,7 @@ def candidates(video: dict[str, Any], workdir: Path, cfg: dict[str, Any], want: 
         sc, how = heatmap_scores(info, dur), "heatmap"
     if sc is None:
         sc, how = caption_scores(lines, dur), "captions"
-    head = 180 if how == "chat" else 5      # 配信の冒頭の挨拶ラッシュ・終わりの「おつ」ラッシュを避ける
+    head = 180 if how == "chat" else 20      # 配信の冒頭の挨拶ラッシュ・終わりの「おつ」ラッシュを避ける
     tail = 150 if how == "chat" else 5
     lead = c["lead_sec"] if how == "chat" else 25
     tl = c["tail_sec"] if how == "chat" else 25
@@ -168,6 +170,7 @@ def candidates(video: dict[str, Any], workdir: Path, cfg: dict[str, Any], want: 
         if len(near) < 5:
             continue
         out.append({"video": video, "info_title": info.get("title", video["title"]), "duration": dur,
+                    "upload_date": info.get("upload_date") or "", "is_live": info.get("live_status") == "was_live",
                     "start": float(start), "end": float(end), "peak": p, "how": how,
                     "score": sum(sc[max(0, start):end]) / max(1, end - start), "lines": near})
     log.info("%s: 山 %d 個（%s）", video["title"][:40], len(out), how)

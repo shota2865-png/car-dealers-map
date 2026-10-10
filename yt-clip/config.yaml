@@ -18,8 +18,15 @@ schedule:
 sources:
   # 新しい配信・動画（RSS で最新 15 本を見る）
   fresh:
-    - {name: マックスむらいの宇宙株LIVE, id: UC3FHK8a17BbU7bWOZnRxM7Q, max_age_days: 4, per_video: 6}
-    - {name: マックスむらい, id: UC5Y35HzjHnxi2Dk8Xk8Cllw, max_age_days: 4, per_video: 2}
+    # face: 顔カメラの場所（左上 x, y と幅, 高さ。画面に対する割合）。あると「顔アップ＋画面全体」の 2 段になる
+    - name: マックスむらいの宇宙株LIVE
+      id: UC3FHK8a17BbU7bWOZnRxM7Q
+      max_age_days: 4
+      per_video: 6
+      show: マックスむらいの宇宙株LIVE【切り抜き】
+      live_only: true          # 生配信のアーカイブだけ（顔カメラの場所が決まっているもの）
+      face: [0.6536, 0.5815, 0.3464, 0.4185]
+    - {name: マックスむらい, id: UC5Y35HzjHnxi2Dk8Xk8Cllw, max_age_days: 4, per_video: 2, show: マックスむらい【切り抜き】}
   # 1 日のうち何本を「黄金期のアーカイブ」から出すか（新しい素材が足りない日はさらに増える）
   archive_per_day: 3
   # アーカイブ: 本チャンネルの人気動画から「よく見返された場所（ヒートマップ）」を切る
@@ -41,8 +48,8 @@ render:
   width: 1080
   height: 1920
   fps: 30
-  font_black: ../yt-econ/assets/fonts/NotoSansJP-Black.ttf
-  font_bold: ../yt-econ/assets/fonts/NotoSansJP-Bold.ttf
+  # 角ゴシックの極太（Noto Sans JP Black）。タイトルも字幕もこれ
+  font_gothic: ../yt-econ/assets/fonts/NotoSansJP-Black.ttf
   max_height: 1080        # 取り込む元動画の最大画質
 
 llm:

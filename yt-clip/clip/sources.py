@@ -50,7 +50,8 @@ def fresh_videos(src: dict[str, Any], exclude_words: list[str]) -> list[dict[str
             continue
         if (now - v["published"]).days > int(src.get("max_age_days", 4)):
             continue
-        out.append({**v, "source_name": src["name"], "per_video": int(src.get("per_video", 3)), "kind": "fresh"})
+        out.append({**v, "source_name": src["name"], "per_video": int(src.get("per_video", 3)), "kind": "fresh",
+                    "show": src.get("show"), "face": src.get("face"), "live_only": bool(src.get("live_only"))})
     return out
 
 

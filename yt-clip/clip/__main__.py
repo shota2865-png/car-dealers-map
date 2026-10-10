@@ -88,7 +88,7 @@ def gather_archive(cfg: dict[str, Any], st: State, work: Path, need: int) -> lis
     for v in rest:
         if len(got) >= need:
             break
-        v = {**v, "kind": "archive", "source_name": "マックスむらい", "per_video": 1}
+        v = {**v, "kind": "archive", "source_name": "マックスむらい", "per_video": 1, "show": "マックスむらい【切り抜き】"}
         try:
             cands = find.candidates(v, work / v["id"], cfg, 1)
         except Exception as e:  # noqa: BLE001
@@ -102,6 +102,18 @@ def gather_archive(cfg: dict[str, Any], st: State, work: Path, need: int) -> lis
                 got.append(d)
                 break
     return got
+
+
+def dress(clip: dict[str, Any]) -> dict[str, Any]:
+    """画面に出す飾り（番組名・配信日・切り抜き元）を足す."""
+    d = clip.get("upload_date") or ""
+    label = ""
+    if len(d) == 8:
+        y, mo, da = int(d[:4]), int(d[4:6]), int(d[6:])
+        this_year = dt.date.today().year
+        label = f"配信日:{mo}月{da}日" if y == this_year else f"{y}年{mo}月の動画"
+    return {**clip, "show": clip["video"].get("show"), "source_name": clip["video"].get("source_name"),
+            "date_label": label}
 
 
 def description(cfg: dict[str, Any], clip: dict[str, Any]) -> str:
@@ -138,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
     out = Path(args.out)
     work = out / "work"
-    fonts = {"black": (ROOT / cfg["render"]["font_black"]).resolve(), "bold": (ROOT / cfg["render"]["font_bold"]).resolve()}
+    fonts = {"gothic": (ROOT / cfg["render"]["font_gothic"]).resolve()}
 
     token = None
     if not args.no_upload:
@@ -172,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             src = work / clip["video"]["id"] / f"sec_{int(clip['start'])}.mp4"
             render.download_section(clip["video"]["url"], clip["start"], clip["end"], src, cfg["render"]["max_height"])
-            mp4 = render.render_short(clip, src, out / f"{name}.mp4", fonts, cfg["render"]["fps"])
+            mp4 = render.render_short(dress(clip), src, out / f"{name}.mp4", fonts, cfg["render"]["fps"])
         except Exception as e:  # noqa: BLE001
             log.warning("作れませんでした（%s）: %s", clip["title"], e)
             continue
