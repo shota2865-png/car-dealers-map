@@ -166,3 +166,64 @@ def decide(cfg: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any] | None:
     return {**cand, "start": segs[0]["start"], "end": segs[-1]["end"], "segments": segs, "length": total,
             "title": title, "band1": b1, "band2": b2, "hook": " ".join(x for x in (b1, b2) if x),
             "rating": float(ans.get("score", 5)), "is_investment": bool(ans.get("is_investment")), "llm": used_llm}
+
+
+PROOF = """YouTube Shorts の字幕を校正します。同じ音声を 2 つの方法で文字起こししたものを渡します。どちらにも誤字があります。
+A は行ごとに番号が付いています。B は同じ音声の別の文字起こし（つながった文章）です。
+
+やること: A の各行を、実際に話されたはずの言葉に直す。
+- A と B を見比べ、文脈に合うほうを採る（例: A「証券講座」B「正権講座」→ 文脈から「証券口座」）
+- 同音の誤変換・聞き間違い・固有名詞を直す（銘柄・会社・ゲームの名前は元の動画の題名も手がかりにする）
+- 言い回しは変えない。要約・言い換え・付け足しはしない。話していないことは書かない
+- 「えー」「あのー」などの言いよどみと、同じ言葉の言い直しの重複は消してよい
+- A にあって B にまったく無い言葉は、編集で音声が切られた部分の可能性が高い。前後がつながらないなら消す
+- 行の数と順番は A と同じにする（消したい行は空文字にする）。句読点は付けなくてよい
+
+JSON だけを返す: {{"lines": ["1 行目", "2 行目", ...]}}（ちょうど {n} 行）
+
+元の動画の題名: {title}
+
+A:
+{a}
+
+B:
+{b}"""
+
+
+def apply_fixes(cfg: dict[str, Any], text: str) -> str:
+    """config の subtitle_fixes（よくある誤字の置き換え表）を当てる."""
+    for bad, good in (cfg.get("subtitle_fixes") or {}).items():
+        text = text.replace(bad, good)
+    return text
+
+
+def proofread(cfg: dict[str, Any], lines: list[str], heard: str, title: str) -> list[str]:
+    """字幕の誤字を直す。GitHub Models が使えないとき・返事の行数が合わないときは、置き換え表だけ当てて返す."""
+    base = [apply_fixes(cfg, x) for x in lines]
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_MODELS_TOKEN")
+    if not token or cfg["llm"].get("provider") != "github_models" or not lines:
+        return base
+    prompt = PROOF.format(n=len(lines), title=title, b=heard,
+                          a="\n".join(f"{i + 1}: {x}" for i, x in enumerate(lines)))
+    try:
+        r = requests.post("https://models.github.ai/inference/chat/completions", timeout=90,
+                          headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                          json={"model": cfg["llm"]["model"], "temperature": 0.1,
+                                "response_format": {"type": "json_object"},
+                                "messages": [{"role": "user", "content": prompt}]})
+        if r.status_code != 200:
+            log.warning("校正できませんでした（GitHub Models %s）", r.status_code)
+            return base
+        got = json.loads(re.search(r"\{.*\}", r.json()["choices"][0]["message"]["content"], re.S).group(0))["lines"]
+        if len(got) != len(lines):
+            log.warning("校正の行数が合わないので使いません（%d → %d）", len(lines), len(got))
+            return base
+        out = []
+        for old, new in zip(base, got):
+            new = re.sub(r"\s+", "", str(new))
+            # 直しすぎ（長さが大きく変わる＝言い換え・付け足し）は採らない
+            out.append(apply_fixes(cfg, new) if 0.5 * len(old) <= len(new) <= 1.3 * len(old) + 2 or not new else old)
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("校正できませんでした: %s", e)
+        return base

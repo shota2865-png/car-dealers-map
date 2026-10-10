@@ -187,7 +187,8 @@ def main(argv: list[str] | None = None) -> int:
             dl0 = max(0.0, clip["start"] - 0.5)
             render.download_section(clip["video"]["url"], dl0, clip["end"] + 0.5, src, cfg["render"]["max_height"])
             clip = {**clip, "segments": clip.get("segments"), "dl_start": dl0}
-            mp4 = render.render_short(dress(clip), src, out / f"{name}.mp4", fonts, cfg["render"]["fps"])
+            mp4 = render.render_short(dress(clip), src, out / f"{name}.mp4", fonts, cfg["render"]["fps"],
+                                      proof=lambda lines, heard, title: pick.proofread(cfg, lines, heard, title))
         except Exception as e:  # noqa: BLE001
             log.warning("作れませんでした（%s）: %s", clip["title"], e)
             continue

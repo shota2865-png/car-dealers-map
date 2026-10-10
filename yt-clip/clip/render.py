@@ -362,7 +362,8 @@ def shots_for(src: Path, a: float, b: float, lay: dict[str, Any], flip: int) -> 
     return out
 
 
-def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Path], fps: int = 30) -> Path:
+def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Path], fps: int = 30,
+                 proof: Any = None) -> Path:
     """src は clip["start"]〜clip["end"] を落としたもの。その中の segments をジャンプカットでつなぐ."""
     work = out.parent / (out.stem + "_parts")
     work.mkdir(parents=True, exist_ok=True)
@@ -380,7 +381,7 @@ def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Pa
     t = 0.0
     nv = na = 0
     spans: list[tuple[float, float]] = []
-    yt_words: list[dict[str, Any]] = []
+    yt_lines: list[dict[str, Any]] = []
     for seg in segs:
         a, b = max(0.0, seg["start"] - base), min(src_dur, seg["end"] - base)
         if b - a < 0.5:
@@ -399,16 +400,14 @@ def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Pa
         if lay["subs"]:
             for s in subtitle_chunks(clip["lines"], seg["start"], seg["end"]):
                 subs.append({"text": s["text"], "t0": t + s["t0"], "t1": min(t + s["t1"], t + (b - a))})
-        # 自動字幕の単語を、つないだ後の時間軸に並べておく（あとで聞き取りの時刻に合わせ直す）
+        # 自動字幕の行（1 行＝ 1 つの発話）を、つないだ後の時間軸に並べておく。相づちだけの行（「うん」「はい」）は字幕にしない
         for ln in clip["lines"]:
-            # 相づちだけの行（「うん」「はい」）は字幕にしない。自動字幕の 1 行は 1 つの発話なので、行の頭で字幕も改める
-            if re.fullmatch(r"(うん|はい|ええ|へえ|ああ|え|あ|そう|おお)[。、 ]*", re.sub(r"\[[^\]]*\]", "", ln["text"]).strip() or "うん"):
+            ws = [w for w in ln["words"] if seg["start"] <= w["t"] < seg["end"]]
+            txt = re.sub(r"\[[^\]]*\]|\s+", "", "".join(w["w"] for w in ws))
+            if not txt or re.fullmatch(r"(うん|はい|ええ|へえ|ああ|え|あ|そう|おお)[。、]*", txt):
                 continue
-            head = True
-            for w in ln["words"]:
-                if seg["start"] <= w["t"] < seg["end"]:
-                    yt_words.append({"t": t + w["t"] - seg["start"], "w": w["w"], "brk": head})
-                    head = False
+            yt_lines.append({"t": t + ws[0]["t"] - seg["start"], "e": t + min(seg["end"], ln["end"]) - seg["start"],
+                             "text": txt})
         spans.append((a, b))
         t += b - a
     if not na or not nv:
@@ -418,9 +417,19 @@ def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Pa
         # YouTube の自動字幕は時刻が最大 1 秒ほどずれるので、つないだ音を聞き取り直して話し始めに合わせる。
         # 聞き取れなかったとき（Whisper が無いなど）だけ、自動字幕の時刻のまま出す
         log.info("字幕の時刻を合わせています")
-        # 文字は自動字幕のまま（固有名詞に強い）、時刻だけ聞き取りに合わせる。突き合わせられないときは聞き取りの文字を使う
+        # 文字: 自動字幕と聞き取りの 2 つを見比べて誤字を直す（proof。使えないときは自動字幕のまま）。
+        # 時刻: 聞き取りに合わせる。突き合わせられないときは聞き取りの文字と時刻をそのまま使う
         heard = listen.words(src, spans, work / "cut.wav", clip.get("info_title", ""))
         if heard:
+            texts = [ln["text"] for ln in yt_lines]
+            if proof:
+                texts = proof(texts, "".join(h["text"] for h in heard), clip.get("info_title", "")) or texts
+            yt_words: list[dict[str, Any]] = []
+            for ln, txt in zip(yt_lines, texts):
+                # 1 行の中の文字のだいたいの時刻（突き合わせる範囲を絞るのに使うだけ。行の長さに沿って等分）
+                span = max(0.3, ln["e"] - ln["t"])
+                for k, ch in enumerate(txt):
+                    yt_words.append({"t": ln["t"] + span * k / max(1, len(txt)), "w": ch, "brk": k == 0})
             fixed = listen.retime(yt_words, heard)
             subs = subtitle_chunks([{"words": fixed}] if fixed else heard, 0.0, dur)
     f.append("".join(f"[v{i}]" for i in range(nv)) + f"concat=n={nv}:v=1:a=0[vc]")
