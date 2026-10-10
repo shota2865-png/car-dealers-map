@@ -59,7 +59,8 @@ llm:
   base_url: https://generativelanguage.googleapis.com/v1beta/openai
   key_env: GEMINI_API_KEY
   # 上から順に試す（無料枠の回数切れ・モデルの入れ替わりに備える）。1 日に使うのは 40 回ほど
-  models: [gemini-3.5-flash-lite, gemini-3.1-flash-lite, gemini-2.5-flash-lite, gemini-2.5-flash]
+  # 賢いモデルから。無料枠は賢いものほど 1 日の回数が少ないので、切れたら下の軽いモデルに落ちる
+  models: [gemini-3.8-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-flash-lite-latest]
 
 upload:
   privacy_after_publish: public
