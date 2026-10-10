@@ -5,7 +5,7 @@
   - 生配信（宇宙株LIVE）: 基本は顔カメラ（横長のまま）。話している人のほうへ画角を寄せる。
                           チャートや画面の話をしている区間だけ画面全体に切り替える。
                           字幕あり（色つきの箱・1 行 12 字まで・文節で区切る）。区間はジャンプカットでつなぐ
-  - 生配信でない動画    : 中央を 4:3 に切り出した 1 段。字幕は付けず、タイトルと小見出しだけ
+  - 生配信でない動画    : 元の画面を切り出さずにそのまま（横長）。字幕は付けず、タイトルと小見出しだけ
 
 字は角ゴシックの極太（Noto Sans JP Black）。字幕は自動字幕の単語の時刻から作り、Pillow で PNG に描いて重ねる
 （ffmpeg に libass / drawtext が無い環境でも同じ見た目になる）。
@@ -30,7 +30,7 @@ BAR_H = 100            # いちばん上の黒帯（番組名）
 BAND_H = 236           # 水色の帯（タイトル 2 行）
 TOP = BAR_H + BAND_H   # 映像の上端
 BAND = "#2FB4F2"
-BOX = {"normal": "#1F3BFF", "strong": "#E3122D", "ask": "#8A1FB8"}
+SUB_BOX = "#1F3BFF"    # 字幕の箱の色（1 色に統一。話し手や内容で変えない）
 SUB_MAX = 12           # 字幕 1 行の最大文字数
 
 
@@ -126,7 +126,7 @@ def frame_layer(clip: dict[str, Any], layout: dict[str, Any], fonts: dict[str, P
         asc, desc = f.getmetrics()
         _center(d, y0 + BAR_H + k * rh + (rh - asc - desc) // 2, t, f, "#FFFFFF", "#0B4E86", 5)
     # 配信日（映像の左上）
-    if clip.get("date_label"):
+    if clip.get("date_label") and layout.get("face_crop") and not layout.get("panel"):
         f = _font(font, 38)
         tw = f.getlength(clip["date_label"])
         d.rectangle([0, top, tw + 36, top + 62], fill=(0, 0, 0, 200))
@@ -145,18 +145,12 @@ def frame_layer(clip: dict[str, Any], layout: dict[str, Any], fonts: dict[str, P
             _center(d, y_end + 40 + k * 130, t, f, "#FFE600", "#000000", 10)
     # 切り抜き元（いちばん下）
     credit = f"切り抜き元：{clip.get('source_name') or 'マックスむらい'}"
+    if clip.get("date_label") and not (layout.get("face_crop") and not layout.get("panel")):
+        credit += f"（{clip['date_label']}）"
     f = _fit(credit, font, 38, W - 80, 28)
     _center(d, layout["credit_y"], credit, f, "#FFFFFF", "#000000", 4)
     im.save(out)
     return out
-
-
-def _box_kind(text: str) -> str:
-    if re.search(r"[?？]", text):
-        return "ask"
-    if re.search(r"[!！]|やば|マジ|嘘|うそ|すご|えぐ|最悪|最高|爆|暴落|急騰", text):
-        return "strong"
-    return "normal"
 
 
 def subtitle_png(text: str, font_path: Path, out: Path) -> Path:
@@ -168,7 +162,7 @@ def subtitle_png(text: str, font_path: Path, out: Path) -> Path:
     h = asc + desc + pad_y * 2
     im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w, h], fill=BOX[_box_kind(text)])
+    d.rectangle([0, 0, w, h], fill=SUB_BOX)
     d.text((pad_x, pad_y), text, font=font, fill="#FFFFFF")
     im.save(out)
     return out
@@ -298,14 +292,18 @@ CREDIT_H = 70
 
 def _place(lay: dict[str, Any]) -> dict[str, Any]:
     """かたまり（黒帯＋水色の帯＋映像＋字幕／小見出し＋切り抜き元）を、上下の余白が同じになる高さに置く."""
-    zone = SUB_ZONE if lay["subs"] else 300          # 字幕なし（生配信以外）は小見出しを 2 行まで出す
+    zone = SUB_ZONE if lay["subs"] else (190 if lay.get("panel") else 300)   # 字幕なしは小見出しを出す（2 行まで）
     block = TOP + lay["vid_h"] + zone + CREDIT_H
     y0 = max(0, (H - block) // 2)
     end_y = y0 + TOP + lay["vid_h"]
     return {**lay, "y0": y0, "end_y": end_y, "sub_y": end_y + 26, "credit_y": end_y + zone + 6}
 
 
-def plan_layout(face: list[float] | None, is_live: bool, src_w: int, src_h: int) -> dict[str, Any]:
+PANEL_H = 960          # ゲーム画面つきの動画: ゲーム画面とカメラを横に並べるときの高さ
+
+
+def plan_layout(face: list[float] | None, is_live: bool, src_w: int, src_h: int,
+                panel: tuple[str, float] | None = None) -> dict[str, Any]:
     """映像の置き方を決める。view は 1 カットぶんの見せ方（顔カメラ／画面全体）を ffmpeg のフィルタにして返す."""
     if face:
         x, y, w, h = face
@@ -325,12 +323,32 @@ def plan_layout(face: list[float] | None, is_live: bool, src_w: int, src_h: int)
             return [f"{src}crop={cw}:{ch}:{x0}:{y0},scale={W}:{box_h}:flags=lanczos,setsar=1[v{i}]"]
 
         return _place({"view": view, "face_crop": (fx, fy, fw // 2 * 2, fh // 2 * 2), "vid_h": box_h, "subs": is_live})
-    # 顔カメラの場所が決まっていない動画: 中央を 4:3 に切り出して大きく見せる
-    cw = min(src_w, int(src_h * 4 / 3) // 2 * 2)
-    vid_h = int(W * src_h / cw) // 2 * 2
+    if panel:
+        # ゲーム画面つき: スマホの画面を縦いっぱいに大きく、その横にカメラ（話している人）を並べる
+        side, frac = panel
+        gw = int(src_w * (frac if side == "left" else 1 - frac)) // 2 * 2
+        gx = 0 if side == "left" else src_w - gw
+        cam_x0, cam_w = (gw, src_w - gw) if side == "left" else (0, src_w - gw)
+        out_gw = min(int(PANEL_H * gw / src_h) // 2 * 2, W - 360)
+        out_cw = W - out_gw
+        ccw = min(cam_w, int(src_h * out_cw / PANEL_H) // 2 * 2)
+
+        def view(i: int, src: str, screen: bool, shot: dict[str, Any] | None = None) -> list[str]:
+            cx = cam_x0 + (shot["cx"] if shot else 0.5) * cam_w
+            x0 = int(min(max(cam_x0, cx - ccw / 2), cam_x0 + cam_w - ccw))
+            g = f"[g{i}]crop={gw}:{src_h}:{gx}:0,scale={out_gw}:{PANEL_H}:flags=lanczos,setsar=1[gg{i}]"
+            c = f"[c{i}]crop={ccw}:{src_h}:{x0}:0,scale={out_cw}:{PANEL_H}:flags=lanczos,setsar=1[cc{i}]"
+            order = f"[gg{i}][cc{i}]" if side == "left" else f"[cc{i}][gg{i}]"
+            return [f"{src}split[g{i}][c{i}]", g, c, f"{order}hstack[v{i}]"]
+
+        return _place({"view": view, "face_crop": (cam_x0, 0, cam_w // 2 * 2, src_h // 2 * 2), "panel": True,
+                       "vid_h": PANEL_H, "subs": is_live})
+    # 顔カメラの場所が決まっていない動画: 切り出さず、元の画面を縦横比そのままで全部見せる。
+    # （中央だけ切り出すと、端にあるスマホの画面やテロップが切れて何が起きているか分からなくなる）
+    vid_h = int(W * src_h / src_w) // 2 * 2
 
     def view(i: int, src: str, screen: bool, shot: dict[str, Any] | None = None) -> list[str]:
-        return [f"{src}crop={cw}:{src_h}:(iw-{cw})/2:0,scale={W}:{vid_h}:flags=lanczos,setsar=1[v{i}]"]
+        return [f"{src}scale={W}:{vid_h}:flags=lanczos,setsar=1[v{i}]"]
 
     return _place({"view": view, "face_crop": None, "vid_h": vid_h, "subs": is_live})
 
@@ -353,7 +371,9 @@ def shots_for(src: Path, a: float, b: float, lay: dict[str, Any], flip: int) -> 
         return [{"start": a, "end": b, "shot": None}]
     out = []
     for k, f in enumerate(found):
-        if f["people"] >= 2:
+        if lay.get("panel"):
+            shot = {"cx": f["cx"], "cy": f["cy"], "zoom": 1.0}       # カメラ側は常に話している人を中心に
+        elif f["people"] >= 2:
             shot = {"cx": f["cx"], "cy": f["cy"], "zoom": ZOOM_TWO}
         else:
             # 1 人のときは、カットごとに引きと寄りを入れ替える（ジャンプカットが自然に見える）
@@ -368,7 +388,8 @@ def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Pa
     work = out.parent / (out.stem + "_parts")
     work.mkdir(parents=True, exist_ok=True)
     sw_, sh_, src_dur = probe(src)
-    lay = plan_layout(clip["video"].get("face"), bool(clip.get("is_live")), sw_, sh_)
+    face = clip["video"].get("face")
+    lay = plan_layout(face, bool(clip.get("is_live")), sw_, sh_, None if face else speaker.game_panel(src))
     frame = frame_layer(clip, lay, fonts, work / "frame.png")
     bg = background(work / "bg.png")
     segs = clip.get("segments") or [{"start": clip["start"], "end": clip["end"], "screen": False}]

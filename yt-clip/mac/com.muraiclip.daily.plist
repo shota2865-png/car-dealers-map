@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.muraiclip.daily</string>
+  <key>ProgramArguments</key><array><string>/bin/zsh</string><string>/Users/YOU/muraiclip/run.sh</string></array>
+  <!-- この Mac の時計（マレーシア時間）で 8:20 / 12:00 / 15:00 ＝ 日本時間 9:20 / 13:00 / 16:00。
+       1 回目で 10 本そろえば、あとの 2 回は何もしない（Mac が寝ていた日の取りこぼし用） -->
+  <key>StartCalendarInterval</key><array>
+    <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>/Users/YOU/muraiclip/logs/launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/muraiclip/logs/launchd.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict></plist>
