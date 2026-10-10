@@ -5,3 +5,4 @@ pyyaml
 budoux
 opencv-python-headless
 numpy
+faster-whisper
