@@ -1,7 +1,8 @@
 # yt-clip — マックスむらい 切り抜き Shorts の全自動投稿
 
 むらいクリップ【切り抜き】（@maxmuraiclip / UCzHObRAWlTh97yX1XSfumcw）に、毎日 10 本の Shorts を **18:00（日本時間）に予約投稿**する。
-GitHub Actions（`.github/workflows/clip-daily.yml`）が毎朝 9:20 ごろに動くので、Mac も Claude も起動していなくていい。
+**動かす場所は Mac**（launchd のタイマー。`yt-clip/mac/`）。毎日 9:20 / 13:00 / 16:00（日本時間）に動き、10 本そろえば残りの回は何もしない。Claude は起動していなくていい。
+GitHub のサーバーは YouTube にボット扱いされて動画を取れない（2026-10-10 に 10 通りの取り方で確認）ので、`.github/workflows/clip-daily.yml` は止めてある。
 
 ## Claude のクレジットは使わない
 
@@ -10,7 +11,7 @@ GitHub Actions（`.github/workflows/clip-daily.yml`）が毎朝 9:20 ごろに�
 | 新しい素材 | 宇宙株LIVE・本チャンネルの RSS（直近 4 日） | 無料 |
 | 盛り上がり探し | 生配信＝チャットの勢い（「ｗ」「草」・スパチャは重め）／人気動画＝よく見返された場所（ヒートマップ）／それ以外＝自動字幕の [笑い] | 無料 |
 | つなぐ場所・タイトル・見出し | Google の Gemini API の無料枠（鍵は Secret `GEMINI_API_KEY`。GitHub Models は 2026-07-30 に終了）が、山の前後 3 分ほどの字幕から「起承転結になる区間」を 2〜8 個選ぶ（ジャンプカット）。小見出しは文章（例「果たしてバレるのか！？」）。使えない日は山の周りを間（ま）で刻んでつなぐ | 無料 |
-| 縦型にする | 黒帯（番組名）→ 水色の帯（タイトル）→ 映像 → 濃紺の背景。生配信は顔カメラを横長のまま映し、話している人のほうへ画角を寄せる（顔検出＋口の動き。1 人のときはカットごとに引きと寄りを入れ替える）。チャート・画面の話の区間だけ画面全体に切り替える。字幕は生配信だけ（映像の下に色つきの箱・1 行 12 字まで・文節で区切る。文字は自動字幕、時刻は切り抜いた音を Whisper で聞き取り直して話し始めに合わせる）。かたまり全体は上下の余白が同じになる高さに置く。生配信でない動画は字幕なしでタイトルと小見出しだけ。字は角ゴシックの極太 | 無料 |
+| 縦型にする | 黒帯（番組名）→ 水色の帯（タイトル）→ 映像 → 濃紺の背景。生配信は顔カメラを横長のまま映し、話している人のほうへ画角を寄せる（顔検出＋口の動き。1 人のときはカットごとに引きと寄りを入れ替える）。チャート・画面の話の区間だけ画面全体に切り替える。字幕は生配信だけ（映像の下に色つきの箱・1 行 12 字まで・文節で区切る。文字は自動字幕、時刻は切り抜いた音を Whisper で聞き取り直して話し始めに合わせる）。かたまり全体は上下の余白が同じになる高さに置く。生配信でない動画は字幕なしでタイトルと小見出しだけ。画面は切り出さずに全部見せ、片側にスマホのゲーム画面がある動画（パズドラ・モンスト）は、ゲーム画面を縦いっぱいに大きくしてカメラと横に並べる。字は角ゴシックの極太 | 無料 |
 | 投稿 | YouTube Data API（private＋publishAt で予約） | 無料 |
 
 1 日の内訳は「新しい配信から 7 本＋パズドラ・モンスト時代などのアーカイブから 3 本」（`config.yaml` の `archive_per_day`）。
@@ -49,3 +50,13 @@ GitHub Actions（`.github/workflows/clip-daily.yml`）が毎朝 9:20 ごろに�
 cd yt-clip && pip install -r requirements.txt
 python -m clip --no-upload --count 2 --state /tmp/clip-state.json   # out/ に mp4 ができる
 ```
+
+## Mac での動かし方（いまの本番）
+
+- 置き場所: `~/muraiclip/`（`repo/` はこのリポジトリの main、`venv/` は実行環境、`state/` は投稿履歴、`out/` は作った動画、`logs/` は日ごとのログ）
+- 鍵: `~/.muraiclip/`（client_id / client_secret / refresh_token / gemini_key。自分だけ読める）
+- タイマー: `~/Library/LaunchAgents/com.muraiclip.daily.plist`（ひな形は `yt-clip/mac/`）。動くたびに main の最新を取り込む
+- 止める: `launchctl bootout gui/$(id -u)/com.muraiclip.daily`　／　また動かす: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.muraiclip.daily.plist`
+- いますぐ動かす: `~/muraiclip/run.sh`（同じ日に何度動かしても、足りない本数だけ作る）
+- Mac のふたが閉じている・電源が切れている間は動かない（起きたあとの回で取り戻す）
+- YouTube の鍵は OAuth 同意画面が「テスト中」だと 7 日で切れる（2026-10-10 に発行）。切れたら `python3 yt-clip/scripts/auth.py` で取り直す

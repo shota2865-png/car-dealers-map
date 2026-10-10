@@ -117,3 +117,31 @@ def follow(src: Path, a: float, b: float, crop: tuple[int, int, int, int], windo
         else:
             calm.append(o)
     return calm
+
+
+def game_panel(src: Path) -> tuple[str, float] | None:
+    """画面の左か右に「スマホのゲーム画面」が貼ってある動画なら、その境目を返す（("left", 0.315) など）.
+
+    パズドラ・モンストの動画は「片側にゲーム画面、残りにカメラ」の決まった配置。境目は全部のコマで動かない縦線になるので、
+    横方向の明るさの差が「どのコマ・どの行でも大きい列」を探す。はっきりした線が無ければ None。
+    """
+    try:
+        import numpy as np
+        w, h = 480, 270
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(src), "-vf", f"fps=1,scale={w}:{h}",
+                              "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True).stdout
+        n = len(raw) // (w * h)
+        if n < 4:
+            return None
+        f = np.frombuffer(raw[:n * w * h], dtype=np.uint8).reshape(n, h, w).astype(np.float32)
+        col = (np.abs(np.diff(f, axis=2)) > 14).mean(axis=(0, 1))      # 列ごとの「縦線らしさ」
+        best = None
+        for side, lo, hi in (("left", 0.18, 0.42), ("right", 0.58, 0.82)):
+            a, b = int(lo * w), int(hi * w)
+            k = a + int(col[a:b].argmax())
+            if col[k] >= 0.75 and (best is None or col[k] > best[2]):
+                best = (side, (k + 1) / w, float(col[k]))
+        return (best[0], best[1]) if best else None
+    except Exception as e:  # noqa: BLE001
+        log.info("ゲーム画面を探せませんでした: %s", e)
+        return None
