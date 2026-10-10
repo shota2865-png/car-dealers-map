@@ -183,7 +183,10 @@ def main(argv: list[str] | None = None) -> int:
         name = f"{day.isoformat()}_{done_before + k + 1:02d}"
         try:
             src = work / clip["video"]["id"] / f"sec_{int(clip['start'])}.mp4"
-            render.download_section(clip["video"]["url"], clip["start"], clip["end"], src, cfg["render"]["max_height"])
+            # 余白を付けて落とす（区間の頭と終わりが切れないように）。render には落とした頭の時刻を渡す
+            dl0 = max(0.0, clip["start"] - 0.5)
+            render.download_section(clip["video"]["url"], dl0, clip["end"] + 0.5, src, cfg["render"]["max_height"])
+            clip = {**clip, "segments": clip.get("segments"), "dl_start": dl0}
             mp4 = render.render_short(dress(clip), src, out / f"{name}.mp4", fonts, cfg["render"]["fps"])
         except Exception as e:  # noqa: BLE001
             log.warning("作れませんでした（%s）: %s", clip["title"], e)
@@ -200,7 +203,8 @@ def main(argv: list[str] | None = None) -> int:
                 log.warning("投稿できませんでした（%s）: %s", clip["title"], e)
                 continue
         else:
-            log.info("作りました %s ← %s %d〜%d秒", mp4.name, clip["video"]["title"][:30], clip["start"], clip["end"])
+            log.info("作りました %s ← %s %d〜%d秒（%d 区間・%d 秒）", mp4.name, clip["video"]["title"][:30], clip["start"], clip["end"],
+                     len(clip.get("segments") or [1]), clip.get("length", clip["end"] - clip["start"]))
         st.add_clip(rec)
         st.save()
         made += 1

@@ -166,7 +166,9 @@ def candidates(video: dict[str, Any], workdir: Path, cfg: dict[str, Any], want: 
     out = []
     for p in peaks(sc, want * 2, c["gap_sec"], head, tail):
         start, end = max(0, p - lead), min(dur, p + tl)
-        near = [ln for ln in lines if start - 20 <= ln["start"] <= end + 20]
+        # 生配信は前後を広めに渡す（話の前置きとオチを拾って、ジャンプカットでつなぐため）
+        before, after = (150, 45) if how == "chat" else (20, 20)
+        near = [ln for ln in lines if start - before <= ln["start"] <= end + after]
         if len(near) < 5:
             continue
         out.append({"video": video, "info_title": info.get("title", video["title"]), "duration": dur,

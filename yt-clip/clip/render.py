@@ -2,7 +2,8 @@
 
 構図は「株ライブ＠田端大学」の Shorts を手本にしている:
   黒帯（番組名）→ 水色の帯（白い太字のタイトル）→ 映像 → 濃紺の背景（切り抜き元）
-  - 生配信（宇宙株LIVE）: 顔カメラのアップ＋画面全体の 2 段。字幕あり（色つきの箱・1 行 12 字まで・文節で区切る）
+  - 生配信（宇宙株LIVE）: 基本は顔カメラだけを大きく。チャートや画面の話をしている区間だけ「画面＋顔」に切り替える。
+                          字幕あり（色つきの箱・1 行 12 字まで・文節で区切る）。区間はジャンプカットでつなぐ
   - 生配信でない動画    : 中央を 4:3 に切り出した 1 段。字幕は付けず、タイトルと小見出しだけ
 
 字は角ゴシックの極太（Noto Sans JP Black）。字幕は自動字幕の単語の時刻から作り、Pillow で PNG に描いて重ねる
@@ -260,62 +261,101 @@ def subtitle_chunks(lines: list[dict[str, Any]], start: float, end: float, max_c
     return [c for c in merged if c["t1"] - c["t0"] > 0.15 and len(c["text"]) >= 2]
 
 
+FACE_H = 1200          # 顔カメラを映すときの映像の高さ（幅は 1080）
+
+
 def plan_layout(face: list[float] | None, is_live: bool, src_w: int, src_h: int) -> dict[str, Any]:
-    """映像の置き方を決める（ffmpeg のフィルタと、字幕を出す高さ・映像の下端）."""
+    """映像の置き方を決める。view は区間ごとの見せ方（顔だけ／画面＋顔）を ffmpeg のフィルタにして返す."""
     if face:
-        # 2 段: 顔カメラのアップ ＋ 画面全体
         x, y, w, h = face
-        cw, ch = int(src_w * w) // 2 * 2, int(src_h * h) // 2 * 2
-        cx, cy = int(src_w * x), int(src_h * y)
-        face_h = int(W * ch / cw) // 2 * 2
+        fx, fy, fw, fh = int(src_w * x), int(src_h * y), int(src_w * w), int(src_h * h)
+        # 顔だけ: 顔カメラの中央を縦長（1080x1200）に切り出す
+        cw = min(fw, int(fh * W / FACE_H) // 2 * 2)
+        ch = fh // 2 * 2
+        face_only = f"crop={cw}:{ch}:{fx + (fw - cw) // 2}:{fy},scale={W}:{FACE_H}:flags=lanczos,setsar=1"
+        # 画面＋顔: 上に画面全体（16:9）、下に顔カメラの横長の帯
         full_h = int(W * src_h / src_w) // 2 * 2
-        return {"filters": [f"[0:v]crop={cw}:{ch}:{cx}:{cy},scale={W}:{face_h}:flags=lanczos[a]",
-                            f"[0:v]scale={W}:{full_h}:flags=lanczos[b]",
-                            f"[2:v][a]overlay=0:{TOP}:shortest=1[t1]",
-                            f"[t1][b]overlay=0:{TOP + face_h}[base]"],
-                "sub_bottom": TOP + face_h - 24, "end_y": TOP + face_h + full_h, "subs": is_live}
-    # 1 段: 中央を 4:3 に切り出して大きく見せる
+        strip_h = FACE_H - full_h
+        sh = min(fh, int(fw * strip_h / W) // 2 * 2)
+        strip = f"crop={fw // 2 * 2}:{sh}:{fx}:{fy + int((fh - sh) * 0.25)},scale={W}:{strip_h}:flags=lanczos,setsar=1"
+
+        def view(i: int, src: str, screen: bool) -> list[str]:
+            if not screen:
+                return [f"{src}{face_only}[v{i}]"]
+            return [f"{src}split[p{i}][q{i}]", f"[p{i}]scale={W}:{full_h}:flags=lanczos,setsar=1[x{i}]",
+                    f"[q{i}]{strip}[y{i}]", f"[x{i}][y{i}]vstack[v{i}]"]
+
+        return {"view": view, "vid_h": FACE_H, "sub_bottom": TOP + FACE_H - 30, "end_y": TOP + FACE_H, "subs": is_live}
+    # 顔カメラの場所が決まっていない動画: 中央を 4:3 に切り出して大きく見せる
     cw = min(src_w, int(src_h * 4 / 3) // 2 * 2)
     vid_h = int(W * src_h / cw) // 2 * 2
-    return {"filters": [f"[0:v]crop={cw}:{src_h}:(iw-{cw})/2:0,scale={W}:{vid_h}:flags=lanczos[a]",
-                        f"[2:v][a]overlay=0:{TOP}:shortest=1[base]"],
-            "sub_bottom": TOP + vid_h - 24, "end_y": TOP + vid_h, "subs": is_live}
+
+    def view(i: int, src: str, screen: bool) -> list[str]:
+        return [f"{src}crop={cw}:{src_h}:(iw-{cw})/2:0,scale={W}:{vid_h}:flags=lanczos,setsar=1[v{i}]"]
+
+    return {"view": view, "vid_h": vid_h, "sub_bottom": TOP + vid_h - 24, "end_y": TOP + vid_h, "subs": is_live}
 
 
-def probe_size(src: Path) -> tuple[int, int]:
-    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-                        "-of", "csv=p=0", str(src)], capture_output=True, text=True)
-    w, h = p.stdout.strip().split(",")[:2]
-    return int(w), int(h)
+def probe(src: Path) -> tuple[int, int, float]:
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                        "stream=width,height:format=duration", "-of", "csv=p=0", str(src)],
+                       capture_output=True, text=True)
+    rows = [ln for ln in p.stdout.strip().splitlines() if ln]
+    w, h = rows[0].split(",")[:2]
+    return int(w), int(h), float(rows[-1].split(",")[0])
 
 
 def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Path], fps: int = 30) -> Path:
+    """src は clip["start"]〜clip["end"] を落としたもの。その中の segments をジャンプカットでつなぐ."""
     work = out.parent / (out.stem + "_parts")
     work.mkdir(parents=True, exist_ok=True)
-    sw_, sh_ = probe_size(src)
+    sw_, sh_, src_dur = probe(src)
     lay = plan_layout(clip["video"].get("face"), bool(clip.get("is_live")), sw_, sh_)
     frame = frame_layer(clip, lay, fonts, work / "frame.png")
     bg = background(work / "bg.png")
-    subs = subtitle_chunks(clip["lines"], clip["start"], clip["end"]) if lay["subs"] else []
-    pngs = [subtitle_png(s["text"], fonts["gothic"], work / f"s{i:03d}.png") for i, s in enumerate(subs)]
-    dur = clip["end"] - clip["start"]
+    segs = clip.get("segments") or [{"start": clip["start"], "end": clip["end"], "screen": False}]
+    base = clip.get("dl_start", clip["start"])      # 落とした動画の頭の時刻
 
+    # 区間ごとに切り出して見せ方を決め、つなぐ。字幕は区間ごとに作って、つないだ後の時刻にずらす
+    f: list[str] = []
+    subs: list[dict[str, Any]] = []
+    t = 0.0
+    kept = 0
+    for seg in segs:
+        a, b = max(0.0, seg["start"] - base), min(src_dur, seg["end"] - base)
+        if b - a < 0.5:
+            continue
+        i = kept
+        f += lay["view"](i, f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,fps={fps},", bool(seg.get("screen")))
+        f.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS,"
+                 f"afade=t=in:d=0.03,afade=t=out:st={max(0.0, b - a - 0.03):.3f}:d=0.03[a{i}]")
+        if lay["subs"]:
+            for s in subtitle_chunks(clip["lines"], seg["start"], seg["end"]):
+                subs.append({"text": s["text"], "t0": t + s["t0"], "t1": min(t + s["t1"], t + (b - a))})
+        t += b - a
+        kept += 1
+    if not kept:
+        raise RuntimeError("つなぐ区間がありません")
+    dur = t
+    f.append("".join(f"[v{i}][a{i}]" for i in range(kept)) + f"concat=n={kept}:v=1:a=1[vc][ac]")
+    f.append(f"[2:v][vc]overlay=0:{TOP}:shortest=1[base]")
+    f.append("[base][1:v]overlay=0:0[v_0]")
+    pngs = [subtitle_png(s["text"], fonts["gothic"], work / f"s{i:03d}.png") for i, s in enumerate(subs)]
     inputs = ["-i", str(src), "-loop", "1", "-t", f"{dur:.2f}", "-i", str(frame),
               "-loop", "1", "-t", f"{dur:.2f}", "-i", str(bg)]
     for p in pngs:
         inputs += ["-loop", "1", "-t", f"{dur:.2f}", "-i", str(p)]
-    f = [*lay["filters"], f"[base][1:v]overlay=0:0,fps={fps}[v0]"]
-    last = "v0"
+    last = "v_0"
     for i, s in enumerate(subs):
-        nxt = f"v{i + 1}"
+        nxt = f"v_{i + 1}"
         f.append(f"[{last}][{i + 3}:v]overlay=(W-w)/2:{lay['sub_bottom']}-h:"
                  f"enable='between(t,{s['t0']:.2f},{s['t1']:.2f})'[{nxt}]")
         last = nxt
+    f.append("[ac]loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
-           "-filter_complex", ";".join(f), "-map", f"[{last}]", "-map", "0:a?",
+           "-filter_complex", ";".join(f), "-map", f"[{last}]", "-map", "[aout]",
            "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "160k", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-           "-movflags", "+faststart", str(out)]
+           "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(out)]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError(f"動画を作れませんでした: {p.stderr[-1200:]}")
