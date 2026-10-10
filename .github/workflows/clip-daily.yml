@@ -3,11 +3,12 @@ name: 毎日 マックスむらい切り抜き Shorts 10本を18時に予約投�
 # ------------------------------------------------------------
 # むらいクリップ【切り抜き】（@maxmuraiclip）用。中身は yt-clip/。
 # GitHub のサーバーで動くので、Mac も Claude も起動していなくていい。Claude のクレジットも使わない
-# （場面選びは YouTube のチャット・ヒートマップ・自動字幕、タイトルは GitHub Models の無料枠）。
+# （場面選びは YouTube のチャット・ヒートマップ・自動字幕、タイトルと字幕の校正は Google の Gemini API の無料枠）。
 #
 # 必要な設定（Settings → Secrets and variables → Actions）:
 #   CLIP_YOUTUBE_CLIENT_ID / CLIP_YOUTUBE_CLIENT_SECRET   Google Cloud の OAuth クライアント（経済と同じものでも可）
 #   CLIP_YOUTUBE_REFRESH_TOKEN   むらいクリップのアカウントで許可して取る（yt-clip/README.md）
+#   GEMINI_API_KEY               Google AI Studio で作る無料の鍵（タイトル・見出し・字幕の校正）。無いと機械的な決め方になる
 #   YTDLP_COOKIES                任意。GitHub のサーバーが YouTube に弾かれるときだけ（捨てアカウントの cookies.txt の中身）
 # 鍵が無い間は動画を作るだけで投稿しない（成果物から mp4 を確認できる）。
 # ------------------------------------------------------------
@@ -28,7 +29,6 @@ on:
 
 permissions:
   contents: read
-  models: read          # GitHub Models（タイトル付け）を GITHUB_TOKEN で使う
 
 concurrency:
   group: clip-daily
@@ -42,7 +42,7 @@ jobs:
       run:
         working-directory: yt-clip
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       CLIP_YOUTUBE_CLIENT_ID: ${{ secrets.CLIP_YOUTUBE_CLIENT_ID }}
       CLIP_YOUTUBE_CLIENT_SECRET: ${{ secrets.CLIP_YOUTUBE_CLIENT_SECRET }}
       CLIP_YOUTUBE_REFRESH_TOKEN: ${{ secrets.CLIP_YOUTUBE_REFRESH_TOKEN }}

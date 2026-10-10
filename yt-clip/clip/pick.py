@@ -1,6 +1,6 @@
 """山の前後の字幕を読んで、どこをつなぐか・タイトル・見出しを決める.
 
-GitHub Models（Actions の GITHUB_TOKEN で使える無料枠）に聞く。
+無料枠の LLM（既定は Google の Gemini API）に聞く。
 1 本の切り抜きは「いくつかの区間をジャンプカットでつないだもの」。話の前置き → 展開 → オチの順に、
 要らない言いよどみ・脱線・間を飛ばして 1 分以内にまとめる。
 使えない・返事がおかしいときは、山の周りを間（ま）で刻んでつなぐ（止まらないことを優先）。
@@ -50,27 +50,37 @@ def _fmt_lines(lines: list[dict[str, Any]]) -> str:
     return "\n".join(f"{i}: [{ln['start']:.0f}s] {ln['text']}" for i, ln in enumerate(lines))
 
 
+def chat(cfg: dict[str, Any], prompt: str, temperature: float = 0.4) -> dict[str, Any] | None:
+    """無料枠の LLM に聞いて JSON を受け取る（OpenAI 互換の API。既定は Google の Gemini API）.
+
+    config の llm.models を上から順に試す（無料枠の回数を使い切った・そのモデルが無くなった、に備える）。
+    鍵が無い・全部だめなら None（呼び出し側は機械的な決め方に落とす）。
+    """
+    llm = cfg.get("llm") or {}
+    key = os.environ.get(llm.get("key_env", "GEMINI_API_KEY"))
+    if not key:
+        return None
+    for model in llm.get("models") or []:
+        try:
+            r = requests.post(llm["base_url"].rstrip("/") + "/chat/completions", timeout=120,
+                              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                              json={"model": model, "temperature": temperature,
+                                    "response_format": {"type": "json_object"},
+                                    "messages": [{"role": "user", "content": prompt}]})
+            if r.status_code != 200:
+                log.warning("LLM %s: %s %s", model, r.status_code, r.text[:160].replace("\n", " "))
+                continue
+            txt = r.json()["choices"][0]["message"]["content"]
+            return json.loads(re.search(r"\{.*\}", txt, re.S).group(0))
+        except Exception as e:  # noqa: BLE001  切り抜きは止めない
+            log.warning("LLM %s に聞けませんでした: %s", model, e)
+    return None
+
+
 def ask_llm(cfg: dict[str, Any], cand: dict[str, Any]) -> dict[str, Any] | None:
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_MODELS_TOKEN")
-    if not token or cfg["llm"].get("provider") != "github_models":
-        return None
     c = cfg["clip"]
-    prompt = PROMPT.format(min_sec=c["min_sec"], max_sec=c["max_sec"], video_title=cand["info_title"],
-                           peak=cand.get("peak", cand["start"]), lines=_fmt_lines(cand["lines"]))
-    try:
-        r = requests.post("https://models.github.ai/inference/chat/completions", timeout=90,
-                          headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                          json={"model": cfg["llm"]["model"], "temperature": 0.4,
-                                "response_format": {"type": "json_object"},
-                                "messages": [{"role": "user", "content": prompt}]})
-        if r.status_code != 200:
-            log.warning("GitHub Models %s: %s", r.status_code, r.text[:200])
-            return None
-        txt = r.json()["choices"][0]["message"]["content"]
-        return json.loads(re.search(r"\{.*\}", txt, re.S).group(0))
-    except Exception as e:  # noqa: BLE001  切り抜きは止めない
-        log.warning("GitHub Models に聞けませんでした: %s", e)
-        return None
+    return chat(cfg, PROMPT.format(min_sec=c["min_sec"], max_sec=c["max_sec"], video_title=cand["info_title"],
+                                   peak=cand.get("peak", cand["start"]), lines=_fmt_lines(cand["lines"])))
 
 
 def _clean(s: str, n: int) -> str:
@@ -198,32 +208,21 @@ def apply_fixes(cfg: dict[str, Any], text: str) -> str:
 
 
 def proofread(cfg: dict[str, Any], lines: list[str], heard: str, title: str) -> list[str]:
-    """字幕の誤字を直す。GitHub Models が使えないとき・返事の行数が合わないときは、置き換え表だけ当てて返す."""
+    """字幕の誤字を直す。LLM が使えないとき・返事の行数が合わないときは、置き換え表だけ当てて返す."""
     base = [apply_fixes(cfg, x) for x in lines]
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_MODELS_TOKEN")
-    if not token or cfg["llm"].get("provider") != "github_models" or not lines:
+    if not lines:
         return base
-    prompt = PROOF.format(n=len(lines), title=title, b=heard,
-                          a="\n".join(f"{i + 1}: {x}" for i, x in enumerate(lines)))
-    try:
-        r = requests.post("https://models.github.ai/inference/chat/completions", timeout=90,
-                          headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                          json={"model": cfg["llm"]["model"], "temperature": 0.1,
-                                "response_format": {"type": "json_object"},
-                                "messages": [{"role": "user", "content": prompt}]})
-        if r.status_code != 200:
-            log.warning("校正できませんでした（GitHub Models %s）", r.status_code)
-            return base
-        got = json.loads(re.search(r"\{.*\}", r.json()["choices"][0]["message"]["content"], re.S).group(0))["lines"]
-        if len(got) != len(lines):
-            log.warning("校正の行数が合わないので使いません（%d → %d）", len(lines), len(got))
-            return base
-        out = []
-        for old, new in zip(base, got):
-            new = re.sub(r"\s+", "", str(new))
-            # 直しすぎ（長さが大きく変わる＝言い換え・付け足し）は採らない
-            out.append(apply_fixes(cfg, new) if 0.5 * len(old) <= len(new) <= 1.3 * len(old) + 2 or not new else old)
-        return out
-    except Exception as e:  # noqa: BLE001
-        log.warning("校正できませんでした: %s", e)
+    ans = chat(cfg, PROOF.format(n=len(lines), title=title, b=heard,
+                                 a="\n".join(f"{i + 1}: {x}" for i, x in enumerate(lines))), temperature=0.1)
+    got = (ans or {}).get("lines")
+    if not isinstance(got, list):
         return base
+    if len(got) != len(lines):
+        log.warning("校正の行数が合わないので使いません（%d → %d）", len(lines), len(got))
+        return base
+    out = []
+    for old, new in zip(base, got):
+        new = re.sub(r"\s+", "", str(new))
+        # 直しすぎ（長さが大きく変わる＝言い換え・付け足し）は採らない
+        out.append(apply_fixes(cfg, new) if 0.5 * len(old) <= len(new) <= 1.3 * len(old) + 2 or not new else old)
+    return out

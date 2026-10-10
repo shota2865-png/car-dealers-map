@@ -53,9 +53,13 @@ render:
   max_height: 1080        # 取り込む元動画の最大画質
 
 llm:
-  # GitHub Models（GitHub Actions の GITHUB_TOKEN で無料枠）。使えないときは字幕から機械的に付ける
-  provider: github_models
-  model: openai/gpt-4.1-mini
+  # つなぐ場所・タイトル・見出し・字幕の校正に使う。OpenAI 互換の API ならどこでもよい。
+  # 既定は Google の Gemini API の無料枠（Google AI Studio で鍵を作る。カード登録なし）。
+  # GitHub Models は 2026-07-30 に終了したので使えない。鍵が無い日は機械的な決め方で動く
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  key_env: GEMINI_API_KEY
+  # 上から順に試す（無料枠の回数切れ・モデルの入れ替わりに備える）。1 日に使うのは 40 回ほど
+  models: [gemini-3.5-flash-lite, gemini-3.1-flash-lite, gemini-2.5-flash-lite, gemini-2.5-flash]
 
 upload:
   privacy_after_publish: public
