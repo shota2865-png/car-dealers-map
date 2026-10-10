@@ -3,3 +3,5 @@ requests
 pillow
 pyyaml
 budoux
+opencv-python-headless
+numpy

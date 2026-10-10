@@ -2,7 +2,8 @@
 
 構図は「株ライブ＠田端大学」の Shorts を手本にしている:
   黒帯（番組名）→ 水色の帯（白い太字のタイトル）→ 映像 → 濃紺の背景（切り抜き元）
-  - 生配信（宇宙株LIVE）: 基本は顔カメラだけを大きく。チャートや画面の話をしている区間だけ「画面＋顔」に切り替える。
+  - 生配信（宇宙株LIVE）: 基本は顔カメラ（横長のまま）。話している人のほうへ画角を寄せる。
+                          チャートや画面の話をしている区間だけ画面全体に切り替える。
                           字幕あり（色つきの箱・1 行 12 字まで・文節で区切る）。区間はジャンプカットでつなぐ
   - 生配信でない動画    : 中央を 4:3 に切り出した 1 段。字幕は付けず、タイトルと小見出しだけ
 
@@ -20,7 +21,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import ytdlp
+from . import speaker, ytdlp
 
 log = logging.getLogger(__name__)
 
@@ -261,39 +262,41 @@ def subtitle_chunks(lines: list[dict[str, Any]], start: float, end: float, max_c
     return [c for c in merged if c["t1"] - c["t0"] > 0.15 and len(c["text"]) >= 2]
 
 
-FACE_H = 1200          # 顔カメラを映すときの映像の高さ（幅は 1080）
+PAD = "0x0A1028"       # 画面全体を映すときの上下の余白の色（背景の濃紺に合わせる）
+ZOOM_TWO = 1.35        # 2 人以上映っているとき、話し手に寄る倍率
+ZOOM_ONE = 1.2         # 1 人のとき、カットごとに「引き／寄り」を入れ替える寄りの倍率
 
 
 def plan_layout(face: list[float] | None, is_live: bool, src_w: int, src_h: int) -> dict[str, Any]:
-    """映像の置き方を決める。view は区間ごとの見せ方（顔だけ／画面＋顔）を ffmpeg のフィルタにして返す."""
+    """映像の置き方を決める。view は 1 カットぶんの見せ方（顔カメラ／画面全体）を ffmpeg のフィルタにして返す."""
     if face:
         x, y, w, h = face
         fx, fy, fw, fh = int(src_w * x), int(src_h * y), int(src_w * w), int(src_h * h)
-        # 顔だけ: 顔カメラの中央を縦長（1080x1200）に切り出す
-        cw = min(fw, int(fh * W / FACE_H) // 2 * 2)
-        ch = fh // 2 * 2
-        face_only = f"crop={cw}:{ch}:{fx + (fw - cw) // 2}:{fy},scale={W}:{FACE_H}:flags=lanczos,setsar=1"
-        # 画面＋顔: 上に画面全体（16:9）、下に顔カメラの横長の帯
+        box_h = int(W * fh / fw) // 2 * 2             # 顔カメラをそのままの横長で映す
         full_h = int(W * src_h / src_w) // 2 * 2
-        strip_h = FACE_H - full_h
-        sh = min(fh, int(fw * strip_h / W) // 2 * 2)
-        strip = f"crop={fw // 2 * 2}:{sh}:{fx}:{fy + int((fh - sh) * 0.25)},scale={W}:{strip_h}:flags=lanczos,setsar=1"
 
-        def view(i: int, src: str, screen: bool) -> list[str]:
-            if not screen:
-                return [f"{src}{face_only}[v{i}]"]
-            return [f"{src}split[p{i}][q{i}]", f"[p{i}]scale={W}:{full_h}:flags=lanczos,setsar=1[x{i}]",
-                    f"[q{i}]{strip}[y{i}]", f"[x{i}][y{i}]vstack[v{i}]"]
+        def view(i: int, src: str, screen: bool, shot: dict[str, Any] | None = None) -> list[str]:
+            if screen:
+                return [f"{src}scale={W}:{full_h}:flags=lanczos,pad={W}:{box_h}:0:(oh-ih)/2:color={PAD},setsar=1[v{i}]"]
+            z = float(shot["zoom"]) if shot else 1.0
+            cw, ch = int(fw / z) // 2 * 2, int(fh / z) // 2 * 2
+            cx = fx + (shot["cx"] if shot else 0.5) * fw
+            cy = fy + (shot["cy"] if shot else 0.5) * fh
+            x0 = int(min(max(fx, cx - cw / 2), fx + fw - cw))
+            y0 = int(min(max(fy, cy - ch / 2), fy + fh - ch))
+            return [f"{src}crop={cw}:{ch}:{x0}:{y0},scale={W}:{box_h}:flags=lanczos,setsar=1[v{i}]"]
 
-        return {"view": view, "vid_h": FACE_H, "sub_bottom": TOP + FACE_H - 30, "end_y": TOP + FACE_H, "subs": is_live}
+        return {"view": view, "face_crop": (fx, fy, fw // 2 * 2, fh // 2 * 2), "vid_h": box_h,
+                "sub_bottom": TOP + box_h - 24, "end_y": TOP + box_h, "subs": is_live}
     # 顔カメラの場所が決まっていない動画: 中央を 4:3 に切り出して大きく見せる
     cw = min(src_w, int(src_h * 4 / 3) // 2 * 2)
     vid_h = int(W * src_h / cw) // 2 * 2
 
-    def view(i: int, src: str, screen: bool) -> list[str]:
+    def view(i: int, src: str, screen: bool, shot: dict[str, Any] | None = None) -> list[str]:
         return [f"{src}crop={cw}:{src_h}:(iw-{cw})/2:0,scale={W}:{vid_h}:flags=lanczos,setsar=1[v{i}]"]
 
-    return {"view": view, "vid_h": vid_h, "sub_bottom": TOP + vid_h - 24, "end_y": TOP + vid_h, "subs": is_live}
+    return {"view": view, "face_crop": None, "vid_h": vid_h, "sub_bottom": TOP + vid_h - 24,
+            "end_y": TOP + vid_h, "subs": is_live}
 
 
 def probe(src: Path) -> tuple[int, int, float]:
@@ -303,6 +306,24 @@ def probe(src: Path) -> tuple[int, int, float]:
     rows = [ln for ln in p.stdout.strip().splitlines() if ln]
     w, h = rows[0].split(",")[:2]
     return int(w), int(h), float(rows[-1].split(",")[0])
+
+
+def shots_for(src: Path, a: float, b: float, lay: dict[str, Any], flip: int) -> list[dict[str, Any]]:
+    """区間 a〜b のカット割り（どこからどこまで・どこへ寄るか）。顔が見つからなければ寄らない 1 カット."""
+    if not lay["face_crop"]:
+        return [{"start": a, "end": b, "shot": None}]
+    found = speaker.follow(src, a, b, lay["face_crop"])
+    if not found:
+        return [{"start": a, "end": b, "shot": None}]
+    out = []
+    for k, f in enumerate(found):
+        if f["people"] >= 2:
+            shot = {"cx": f["cx"], "cy": f["cy"], "zoom": ZOOM_TWO}
+        else:
+            # 1 人のときは、カットごとに引きと寄りを入れ替える（ジャンプカットが自然に見える）
+            shot = {"cx": f["cx"], "cy": f["cy"], "zoom": ZOOM_ONE} if (flip + k) % 2 else None
+        out.append({"start": f["start"], "end": f["end"], "shot": shot})
+    return out
 
 
 def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Path], fps: int = 30) -> Path:
@@ -316,28 +337,36 @@ def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Pa
     segs = clip.get("segments") or [{"start": clip["start"], "end": clip["end"], "screen": False}]
     base = clip.get("dl_start", clip["start"])      # 落とした動画の頭の時刻
 
-    # 区間ごとに切り出して見せ方を決め、つなぐ。字幕は区間ごとに作って、つないだ後の時刻にずらす
+    # 区間ごとに切り出してつなぐ。映像は「区間 × 寄りの切り替え」で細かく刻み、音は区間ごとに 1 本。
+    # 字幕は区間ごとに作って、つないだ後の時刻にずらす
     f: list[str] = []
     subs: list[dict[str, Any]] = []
     t = 0.0
-    kept = 0
+    nv = na = 0
     for seg in segs:
         a, b = max(0.0, seg["start"] - base), min(src_dur, seg["end"] - base)
         if b - a < 0.5:
             continue
-        i = kept
-        f += lay["view"](i, f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,fps={fps},", bool(seg.get("screen")))
+        screen = bool(seg.get("screen"))
+        cuts = [{"start": a, "end": b, "shot": None}] if screen else shots_for(src, a, b, lay, na)
+        for cut in cuts:
+            if cut["end"] - cut["start"] < 0.05:
+                continue
+            f += lay["view"](nv, f"[0:v]trim=start={cut['start']:.3f}:end={cut['end']:.3f},setpts=PTS-STARTPTS,fps={fps},",
+                             screen, cut["shot"])
+            nv += 1
         f.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS,"
-                 f"afade=t=in:d=0.03,afade=t=out:st={max(0.0, b - a - 0.03):.3f}:d=0.03[a{i}]")
+                 f"afade=t=in:d=0.03,afade=t=out:st={max(0.0, b - a - 0.03):.3f}:d=0.03[a{na}]")
+        na += 1
         if lay["subs"]:
             for s in subtitle_chunks(clip["lines"], seg["start"], seg["end"]):
                 subs.append({"text": s["text"], "t0": t + s["t0"], "t1": min(t + s["t1"], t + (b - a))})
         t += b - a
-        kept += 1
-    if not kept:
+    if not na or not nv:
         raise RuntimeError("つなぐ区間がありません")
     dur = t
-    f.append("".join(f"[v{i}][a{i}]" for i in range(kept)) + f"concat=n={kept}:v=1:a=1[vc][ac]")
+    f.append("".join(f"[v{i}]" for i in range(nv)) + f"concat=n={nv}:v=1:a=0[vc]")
+    f.append("".join(f"[a{i}]" for i in range(na)) + f"concat=n={na}:v=0:a=1[ac]")
     f.append(f"[2:v][vc]overlay=0:{TOP}:shortest=1[base]")
     f.append("[base][1:v]overlay=0:0[v_0]")
     pngs = [subtitle_png(s["text"], fonts["gothic"], work / f"s{i:03d}.png") for i, s in enumerate(subs)]
