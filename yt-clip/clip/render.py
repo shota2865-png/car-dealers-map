@@ -231,10 +231,10 @@ def subtitle_chunks(lines: list[dict[str, Any]], start: float, end: float, max_c
             if re.search(r"[。！？!?]$", part):
                 flush(pos)
     flush(pos)
-    # 1 字だけの行は前の行に足す（12 字を 1 字はみ出すより、1 字だけ出るほうが読みにくい）
+    # 1 字だけの行は、12 字に収まるなら前の行に足す
     merged: list[dict[str, Any]] = []
     for c in out:
-        if merged and len(c["text"]) <= 1:
+        if merged and len(c["text"]) <= 1 and len(merged[-1]["text"]) < max_chars:
             merged[-1]["text"] += c["text"]
         else:
             merged.append(c)
