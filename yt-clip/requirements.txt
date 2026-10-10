@@ -1,0 +1,8 @@
+yt-dlp[default]>=2026.8.19
+requests
+pillow
+pyyaml
+budoux
+opencv-python-headless
+numpy
+faster-whisper

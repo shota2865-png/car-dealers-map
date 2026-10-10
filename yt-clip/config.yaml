@@ -1,0 +1,94 @@
+# マックスむらい 切り抜き Shorts（むらいクリップ【切り抜き】 @maxmuraiclip）
+# GitHub Actions（.github/workflows/clip-daily.yml）が毎日これを読んで動く。
+
+channel:
+  name: むらいクリップ【切り抜き】
+  handle: "@maxmuraiclip"
+  id: UCzHObRAWlTh97yX1XSfumcw
+  # GitHub Secrets の鍵の名前の頭（CLIP_YOUTUBE_CLIENT_ID / _SECRET / _REFRESH_TOKEN）
+  env_prefix: CLIP_
+
+schedule:
+  per_day: 10
+  # 公開時刻（日本時間）。per_day より少なければ最後の時刻を使い回す
+  publish_times: ["18:00"]
+  timezone: Asia/Tokyo
+
+# 切り抜き元。ガイドライン（2026-05-20 改訂）で許可されている 3 チャンネルだけ
+sources:
+  # 新しい配信・動画（RSS で最新 15 本を見る）
+  fresh:
+    # face: 顔カメラの場所（左上 x, y と幅, 高さ。画面に対する割合）。あると「顔アップ＋画面全体」の 2 段になる
+    - name: マックスむらいの宇宙株LIVE
+      id: UC3FHK8a17BbU7bWOZnRxM7Q
+      max_age_days: 4
+      per_video: 6
+      show: マックスむらいの宇宙株LIVE【切り抜き】
+      live_only: true          # 生配信のアーカイブだけ（顔カメラの場所が決まっているもの）
+      face: [0.6536, 0.5815, 0.3464, 0.4185]
+    - {name: マックスむらい, id: UC5Y35HzjHnxi2Dk8Xk8Cllw, max_age_days: 4, per_video: 2, show: マックスむらい【切り抜き】}
+  # 1 日のうち何本を「黄金期のアーカイブ」から出すか（新しい素材が足りない日はさらに増える）
+  archive_per_day: 3
+  # アーカイブ: 本チャンネルの人気動画から「よく見返された場所（ヒートマップ）」を切る
+  archive:
+    channel_handle: "@TheMaxMurai"
+    pool_size: 120        # 人気順の上から何本を候補にするか
+  # ガイドラインの対象外（むらいのショート・メンバー限定・限定公開）は取らない
+  exclude_title_words: ["メンバー限定", "メンバーシップ限定", "切り抜き禁止"]
+
+clip:
+  min_sec: 30
+  max_sec: 58
+  # コメントの山は話の 10〜20 秒あとに来るので、山より前を厚めに取る
+  lead_sec: 38
+  tail_sec: 14
+  gap_sec: 120            # 同じ動画から取る場面どうしの最低間隔
+
+render:
+  width: 1080
+  height: 1920
+  fps: 30
+  # 角ゴシックの極太（Noto Sans JP Black）。タイトルも字幕もこれ
+  font_gothic: ../yt-econ/assets/fonts/NotoSansJP-Black.ttf
+  max_height: 1080        # 取り込む元動画の最大画質
+
+llm:
+  # つなぐ場所・タイトル・見出し・字幕の校正に使う。OpenAI 互換の API ならどこでもよい。
+  # 既定は Google の Gemini API の無料枠（Google AI Studio で鍵を作る。カード登録なし）。
+  # GitHub Models は 2026-07-30 に終了したので使えない。鍵が無い日は機械的な決め方で動く
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  key_env: GEMINI_API_KEY
+  # 上から順に試す（無料枠の回数切れ・モデルの入れ替わりに備える）。1 日に使うのは 40 回ほど
+  models: [gemini-3.5-flash-lite, gemini-3.1-flash-lite, gemini-2.5-flash-lite, gemini-2.5-flash]
+
+upload:
+  privacy_after_publish: public
+  category_id: "20"       # Gaming（宇宙株は 22 People & Blogs でも可）
+  made_for_kids: false
+  tags: ["マックスむらい", "切り抜き", "Shorts"]
+  # ガイドラインで説明欄に必ず書くクレジット（{source_url} は切り抜き元の URL に置き換わる）
+  credit: |
+    この動画は「マックスむらい/マクソン最大」切り抜きガイドラインに沿って公開をしています。
+
+    ◆切り抜き元：
+    {source_url}
+
+    ◆「マックスむらい」関連情報：
+    マックスむらい（ https://www.youtube.com/@TheMaxMurai ）
+    マックスむらいの宇宙株LIVE( https://www.youtube.com/@MaxMuraiSpaceLIVE )
+    マクソン最大（ https://www.youtube.com/@makusonsaidai ）
+    X（ https://x.com/entrypostman ）
+  # 投資の話の切り抜きに付ける注意書き
+  investment_note: "※配信者個人の見解の切り抜きです。投資判断はご自身でお願いします。"
+
+# 字幕でよく出る誤字の置き換え表（左を右に直す）。AI の校正が使えない日もこれだけは当たる。見つけたら足していく
+subtitle_fixes:
+  証券講座: 証券口座
+  正権講座: 証券口座
+  講口講座: 口座
+  スペースエックス: スペースX
+  パランティール: パランティア
+  エヌビディア: エヌビディア
+  村井さん: むらいさん
+  マックス村井: マックスむらい
+  マックス村イ: マックスむらい
