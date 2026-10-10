@@ -28,10 +28,11 @@ PROMPT = """あなたは YouTube Shorts の切り抜き編集者です。マッ�
    - 結: オチ・驚き・笑い・結論の一言で終わる。尻切れにしない
    - 範囲は 2〜8 個。時間の順に並べ、重ねない。各行の頭の秒数を見て、合計が {min_sec}〜{max_sec} 秒になるようにする
    - screen: その範囲でチャート・株価・画面に映っているものの話をしているなら true（画面を映す）。それ以外は false（顔を映す）
-2. Shorts のタイトル（全角 28 字以内）。冒頭で興味を引く言い方。誇張・ウソ・他人を貶める表現は禁止。「マックスむらい」を入れる
+2. Shorts のタイトル（全角 28 字以内）。実際に話している中身をそのまま言う。「マックスむらい」を入れる。
+   煽り言葉（ヤバすぎ・大惨事・黒歴史・鬼畜・驚愕・衝撃・絶句・炎上 など）、起きていないこと、他人を貶める言い方は使わない（切り抜きの許可の条件）
 3. 見出し 2 つ。
    - band1: 何の話か（全角 13 字以内。例「TOPIX除外銘柄は買い?」「ビール大手4社カルテル疑惑」）
-   - band2: 続きが気になる小見出し。単語ではなく文章にする（全角 8〜15 字。例「果たしてバレるのか！？」「この後まさかの展開に…」「むらいが出した答えは？」）
+   - band2: 続きが気になる小見出し。単語ではなく文章にする。中身に無いことは書かない（全角 8〜13 字。例「果たしてバレるのか！？」「この後まさかの展開に…」「むらいが出した答えは？」）
 4. 切り抜きとしての面白さ 1〜10（内輪の話・挨拶・雑音だけなら 1〜3）
 5. 投資の話なら is_investment を true
 
@@ -62,7 +63,7 @@ def chat(cfg: dict[str, Any], prompt: str, temperature: float = 0.4) -> dict[str
         return None
     for model in llm.get("models") or []:
         try:
-            r = requests.post(llm["base_url"].rstrip("/") + "/chat/completions", timeout=120,
+            r = requests.post(llm["base_url"].rstrip("/") + "/chat/completions", timeout=60,
                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                               json={"model": model, "temperature": temperature,
                                     "response_format": {"type": "json_object"},
