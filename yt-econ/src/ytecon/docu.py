@@ -30,9 +30,15 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+try:                                    # 変形・合成を速くする（無ければ PIL で同じことをする）
+    import cv2
+except Exception:                       # pragma: no cover
+    cv2 = None
+
 log = logging.getLogger(__name__)
 
-FPS = 30
+FPS = 60
+TRANSITION = 0.42                       # 場面のつなぎ（前の場面がズームしながら溶けて、次が奥から来る）
 WHITE = (242, 242, 240)
 RED = (255, 52, 52)
 RED_BOX = (226, 30, 38)
@@ -350,12 +356,57 @@ def plan(scenes: list[Scene], gap: float = 0.16, tail: float = 0.35, lead: float
     return Plan(scenes=scenes, duration=t, sfx=sfx)
 
 
+
+# ----------------------------------------------------------------------
+# 映像を 1 コマずつ読む（背景のループ・実写・引用の映像）
+# ----------------------------------------------------------------------
+class Stream:
+    """ffmpeg で mp4 を W×H・fps に直して、前から順に読む。前に戻るときは読み直す."""
+
+    def __init__(self, path: Path, W: int, H: int, fps: int, loop: bool = False, ffmpeg: str = "ffmpeg"):
+        self.path, self.W, self.H, self.fps, self.loop, self.ffmpeg = Path(path), W, H, fps, loop, ffmpeg
+        self.proc: subprocess.Popen | None = None
+        self.idx = -1
+        self.last: np.ndarray | None = None
+
+    def _open(self) -> None:
+        if self.proc:
+            self.proc.kill()
+        cmd = [self.ffmpeg, "-v", "error"] + (["-stream_loop", "-1"] if self.loop else []) + [
+            "-i", str(self.path), "-vf",
+            f"scale={self.W}:{self.H}:force_original_aspect_ratio=increase,crop={self.W}:{self.H},fps={self.fps}",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.idx = -1
+
+    def get(self, i: int) -> np.ndarray | None:
+        i = max(0, i)
+        if self.proc is None or i < self.idx:
+            self._open()
+        n = self.W * self.H * 3
+        while self.idx < i:
+            assert self.proc and self.proc.stdout
+            buf = self.proc.stdout.read(n)
+            if len(buf) < n:                       # 終わり: 最後のコマのまま止める
+                break
+            self.last = np.frombuffer(buf, np.uint8).reshape(self.H, self.W, 3)
+            self.idx += 1
+        return self.last
+
+    def close(self) -> None:
+        if self.proc:
+            self.proc.kill()
+            self.proc = None
+
+
 # ----------------------------------------------------------------------
 # 場面の描画
 # ----------------------------------------------------------------------
 class Renderer:
-    def __init__(self, W: int = 1920, H: int = 1080, sub_size: int | None = None):
+    def __init__(self, W: int = 1920, H: int = 1080, sub_size: int | None = None, fps: int = FPS):
         self.W, self.H = W, H
+        self.fps = fps
+        self._streams: dict[str, Stream] = {}
         self.v = H > W                                  # 縦（Shorts）
         self.k = W / 1920 if not self.v else W / 1080   # 文字の大きさの基準
         self.sub_size = sub_size or (38 if not self.v else 64)
@@ -383,22 +434,35 @@ class Renderer:
             size *= 0.92
         return self.txt(text, size, **kw)
 
-    def subtitle(self, canvas: Image.Image, text: str) -> None:
+    def subtitle(self, canvas: Image.Image, text: str, alpha: float = 1.0) -> None:
         if not text:
             return
-        f = font(self.sub_size, "bold")
-        maxw = int(self.W * (0.86 if not self.v else 0.88))
-        rows = wrap(text, f, maxw)
-        lh = int(self.sub_size * 1.32)
-        d = ImageDraw.Draw(canvas)
-        base = self.H - int(self.H * (0.055 if not self.v else 0.2)) - lh * (len(rows) - 1)
-        for i, r in enumerate(rows):
-            w = f.getlength(r)
-            x = (self.W - w) / 2
-            y = base + i * lh - self.sub_size
-            for dx, dy in ((0, 3), (2, 2), (-2, 2)):
-                d.text((x + dx, y + dy), r, font=f, fill=(0, 0, 0, 200))
-            d.text((x, y), r, font=f, fill=WHITE)
+        key = ("sub", text)
+        tile = self._tiles.get(key)
+        if tile is None:
+            f = font(self.sub_size, "bold")
+            maxw = int(self.W * (0.86 if not self.v else 0.88))
+            rows = wrap(text, f, maxw)
+            lh = int(self.sub_size * 1.32)
+            tile = Image.new("RGBA", (self.W, lh * len(rows) + self.sub_size), (0, 0, 0, 0))
+            d = ImageDraw.Draw(tile)
+            for i, r in enumerate(rows):
+                w = f.getlength(r)
+                x = (self.W - w) / 2
+                y = i * lh + 4
+                for dx, dy in ((0, 3), (2, 2), (-2, 2)):
+                    d.text((x + dx, y + dy), r, font=f, fill=(0, 0, 0, 200))
+                d.text((x, y), r, font=f, fill=WHITE)
+            if len(self._tiles) > 4000:
+                self._tiles.clear()
+            self._tiles[key] = tile
+        nrows = max(1, round((tile.height - self.sub_size) / int(self.sub_size * 1.32)))
+        base = self.H - int(self.H * (0.055 if not self.v else 0.2)) - int(self.sub_size * 1.32) * (nrows - 1) - self.sub_size - 4
+        t2 = tile
+        if alpha < 0.999:
+            t2 = tile.copy()
+            t2.putalpha(tile.getchannel("A").point(lambda v: int(v * alpha)))
+        canvas.alpha_composite(t2, (0, int(base + (1 - alpha) * 6)))
 
     def corner(self, canvas: Image.Image, source: str, date: str) -> None:
         d = ImageDraw.Draw(canvas)
@@ -411,28 +475,56 @@ class Renderer:
             d.text((self.W - m - w, m * 0.7), date, font=f, fill=GRAY)
 
     # --- 場面 -----------------------------------------------------------
-    def frame(self, plan_: Plan, t: float) -> Image.Image:
-        sc = next((s for s in plan_.scenes if s.start <= t < s.end), plan_.scenes[-1])
+    def compose(self, sc: Scene, t: float) -> Image.Image:
+        """その場面の t の絵（背景＋カメラで動かした前景）。字幕と隅の文字は frame で載せる."""
         spec = sc.spec
-        tone = str(spec.get("bg", "red" if sc.kind in ("opening",) else "green"))
-        canvas = self.bgs.get(tone, self.bgs["green"]).convert("RGBA")
+        tone = str(spec.get("bg", DEFAULT_BG.get(sc.kind, "green")))
+        canvas = self.backdrop(tone, t)
         fg = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
         draw = getattr(self, "s_" + sc.kind, self.s_statement)
         draw(fg, sc, t)
-        self.camera(canvas, fg, sc, t)
-        self.corner(canvas, str(spec.get("source", "")), str(spec.get("date", "")))
+        self.camera(canvas, fg, sc, t, dots=tone in ("green", "red", "dark"))
+        return canvas
+
+    def backdrop(self, tone: str, t: float) -> Image.Image:
+        """背景。green / red / dark は無地、space は星空と光る床、tesseract は 4D の立体入り（assets/space）."""
+        if tone in ("space", "tesseract"):
+            path = _ROOT / "assets" / "space" / ("loop_b.mp4" if tone == "tesseract" else "loop_a.mp4")
+            if path.exists():
+                st = self._streams.get(tone)
+                if st is None:
+                    st = self._streams[tone] = Stream(path, self.W, self.H, self.fps, loop=True)
+                fr = st.get(int(round(t * self.fps)))
+                if fr is not None:
+                    img = Image.fromarray(fr, "RGB").convert("RGBA")
+                    img.alpha_composite(self.tile(("veil",), lambda: _veil(self.W, self.H)))
+                    return img
+            tone = "dark"
+        return self.bgs.get(tone, self.bgs["green"]).convert("RGBA")
+
+    def frame(self, plan_: Plan, t: float) -> Image.Image:
+        scenes = plan_.scenes
+        i = next((k for k, s_ in enumerate(scenes) if s_.start <= t < s_.end), len(scenes) - 1)
+        sc = scenes[i]
+        img = self.compose(sc, t)
+        if i > 0 and t < sc.start + TRANSITION and not sc.spec.get("cut"):
+            k = ease_inout((t - sc.start) / TRANSITION)
+            prev = self.compose(scenes[i - 1], t)
+            img = _blend_push(prev, img, k)
+        spec = sc.spec
+        self.corner(img, str(spec.get("source", "")), str(spec.get("date", "")))
         if sc.kind == "chapter":
-            self.breadcrumb(canvas, sc, t)
-        cur = next((ln for ln in sc.lines if ln.start - 0.05 <= t < ln.end + 0.16), None)
-        if cur is None:
-            prev = [ln for ln in sc.lines if ln.end <= t]
-            cur = prev[-1] if prev and t - prev[-1].end < 0.4 else None
-        if spec.get("subtitle", True) and cur is not None:
-            self.subtitle(canvas, cur.text)
-        return canvas.convert("RGB")
+            self.breadcrumb(img, sc, t)
+        if spec.get("subtitle", True):
+            for ln in sc.lines:
+                a = min(1.0, (t - ln.start + 0.06) / 0.12, (ln.end + 0.2 - t) / 0.12)
+                if a > 0:
+                    self.subtitle(img, ln.text, a)
+                    break
+        return img.convert("RGB")
 
     # --- カメラ ---------------------------------------------------------
-    def camera(self, canvas: Image.Image, fg: Image.Image, sc: Scene, t: float) -> None:
+    def camera(self, canvas: Image.Image, fg: Image.Image, sc: Scene, t: float, dots: bool = True) -> None:
         """前景（テロップ・図）と奥の点の層を、別の量だけ動かして奥行きを出す.
 
         dolly_in 寄る / pan 横に振る / tilt 縦に振る / track 並走（奥だけ速く流れる）/
@@ -446,6 +538,7 @@ class Renderer:
         ds, dx, dy = 1.0, 0.0, 0.0
         if cam == "dolly_in":
             fs, ds = 1 + 0.06 * e, 1 + 0.02 * e
+            fx = S(10) * math.sin(u * 3.1)               # 手持ちのような小さな揺れ（止まって見えない）
         elif cam == "pan":
             fx, dx = S(60) - S(120) * e, S(22) - S(44) * e
         elif cam == "tilt":
@@ -459,8 +552,8 @@ class Renderer:
             ang, dx = -13 + 26 * e, S(90) - S(180) * e
         elif cam == "dolly_zoom":
             ds = 1 + 0.5 * e
-        dots = self._dots_layer()
-        canvas.alpha_composite(_affine(dots, self.W, self.H, ds, dx, dy))
+        if dots:
+            canvas.alpha_composite(_affine(self._dots_layer(), self.W, self.H, ds, dx, dy))
         if ang:
             canvas.alpha_composite(_orbit(fg, ang))
         elif abs(fs - 1) > 1e-3 or abs(fx) > 0.5 or abs(fy) > 0.5:
@@ -529,7 +622,7 @@ class Renderer:
 
     def s_opening(self, c: Image.Image, sc: Scene, t: float) -> None:
         s = sc.spec
-        cx, cy = self.W / 2, self.H * 0.42
+        cx, cy = self.W / 2, self.H * (0.6 if not self.v else 0.55)
         lab = self.tile(("lab", s.get("label", "実話")), lambda: self._label(str(s.get("label", "実話"))))
         title = self.fit(str(s.get("title", "")), float(s.get("size", 76)), self.W * 0.88)
         paste(c, lab, cx, cy - title.height / 2 - self.S(40), self.P(sc, 0, t))
@@ -549,7 +642,7 @@ class Renderer:
     def s_chapter(self, c: Image.Image, sc: Scene, t: float) -> None:
         s = sc.spec
         idx, total = int(s.get("index", 1)), int(s.get("total", 5))
-        cx, cy = self.W / 2, self.H * 0.42
+        cx, cy = self.W / 2, self.H * (0.6 if not self.v else 0.55)       # 上は 4D の立体が浮かぶ場所
         p = (t - sc.start) / 0.4
         lab = self.txt(f"第{idx}章", 30, color=RED)
         title = self.fit(str(s.get("title", "")), 80, self.W * 0.84)
@@ -612,22 +705,26 @@ class Renderer:
                 paste(c, self.txt(str(it["note"]), 26, weight="bold", color=GRAY), x, y + val.height / 2 + self.S(14), p)
 
     def s_steps(self, c: Image.Image, sc: Scene, t: float) -> None:
-        """ルール1・2・3 を 1 つずつ出し替える（左上に見出し、中央に大きく）."""
+        """ルール1・2・3 を 1 つずつ出し替える（前のものは上へ抜けて消え、次が下から来る）."""
         s = sc.spec
         items = s.get("items") or []
-        cur = 0
-        for i in range(len(items)):
-            if t >= sc.at(int(items[i].get("at", i))):
-                cur = i
-        it = items[cur] if items else {}
-        p = self.P(sc, int(it.get("at", cur)), t)
         cx, cy = self.W / 2, self.H * 0.43
-        head = self.txt(str(it.get("head", "")), 44, color=GRAY)
-        body = self.fit(str(it.get("text", "")), float(s.get("size", 96)), self.W * 0.84)
-        paste(c, head, cx, cy - body.height / 2 - self.S(30), p)
-        paste(c, body, cx, cy, p - 0.1)
-        if it.get("note"):
-            paste(c, self.txt(str(it["note"]), 32, weight="bold", color=GRAY), cx, cy + body.height / 2 + self.S(26), p - 0.3)
+        for i, it in enumerate(items):
+            t_in = sc.at(int(it.get("at", i)))
+            t_out = sc.at(int(items[i + 1].get("at", i + 1))) if i + 1 < len(items) else 1e9
+            if t < t_in or t > t_out + 0.4:
+                continue
+            out_k = ease_inout((t - t_out) / 0.35)
+            head = self.txt(str(it.get("head", "")), 44, color=GRAY)
+            body = self.fit(str(it.get("text", "")), float(s.get("size", 96)), self.W * 0.84)
+            dy = -self.S(90) * out_k
+            p = self.P(sc, int(it.get("at", i)), t) * (1 - out_k) if out_k > 0 else self.P(sc, int(it.get("at", i)), t)
+            if out_k >= 1:
+                continue
+            paste(c, head, cx, cy - body.height / 2 - self.S(30) + dy, p, slide=self.S(40))
+            paste(c, body, cx, cy + dy, max(0.0, p - 0.1) if out_k == 0 else p, slide=self.S(60))
+            if it.get("note"):
+                paste(c, self.txt(str(it["note"]), 32, weight="bold", color=GRAY), cx, cy + body.height / 2 + self.S(26) + dy, p - 0.3)
 
     def s_grid(self, c: Image.Image, sc: Scene, t: float) -> None:
         """100 個のアイコンが、場面の長さに合わせて埋まっていく."""
@@ -752,11 +849,10 @@ class Renderer:
         return img
 
     def s_phone(self, c: Image.Image, sc: Scene, t: float) -> None:
-        """ショート動画の引用: 右に縦長の投稿カード、背景にそのぼかし、左にテロップ."""
+        """ショート動画の引用: 右に縦長の投稿（本物の映像・表紙があればそれ）、背景にそのぼかし、左にテロップ."""
         s = sc.spec
-        card = self.tile(("ph", s.get("handle"), s.get("quote"), s.get("meta")),
-                         lambda: self._phone(str(s.get("handle", "")), str(s.get("quote", "")), str(s.get("meta", ""))))
-        blur = self.tile(("phb", s.get("handle"), s.get("quote")), lambda: self._blur_of(card))
+        card = self.phone_card(s, t - sc.start)
+        blur = self.tile(("phb", s.get("handle"), s.get("quote"), s.get("media")), lambda: self._blur_of(self.phone_card(s, 0.0)))
         c.alpha_composite(blur, (0, 0))
         p = self.P(sc, 0, t)
         if self.v:
@@ -776,8 +872,36 @@ class Renderer:
             else:
                 paste(c, tt, self.W * 0.06 + tt.width / 2, self.H * 0.4, self.P(sc, i, t))
 
-    def _phone(self, handle: str, quote: str, meta: str) -> Image.Image:
-        w, h = self.S(400), self.S(700)
+    def phone_card(self, it: dict[str, Any], dt: float, scale: float = 1.0) -> Image.Image:
+        """投稿カード。media が映像ならそのコマ、画像ならゆっくり寄る。無ければ文字だけのカード."""
+        handle, quote, meta = str(it.get("handle", "")), str(it.get("quote", "")), str(it.get("meta", ""))
+        media = str(it.get("media", "") or "")
+        w, h = int(self.S(400) * scale), int(self.S(700) * scale)
+        if not media or not Path(media).exists():
+            return self.tile(("ph", handle, quote, meta, w), lambda: self._phone(handle, quote, meta, w, h))
+        frame = None
+        if media.lower().endswith((".mp4", ".mov", ".webm")):
+            st = self._streams.get(media)
+            if st is None:
+                st = self._streams[media] = Stream(Path(media), self.S(400), self.S(700), self.fps, loop=True)
+            arr = st.get(int(dt * self.fps))
+            if arr is not None:
+                frame = Image.fromarray(arr, "RGB")
+        if frame is None:
+            still = self.tile(("still", media), lambda: _cover(Image.open(media).convert("RGB"), self.S(400), self.S(700)))
+            z = 1.0 + 0.06 * min(1.0, dt / 8.0)                    # ゆっくり寄る
+            zw, zh = int(still.width * z), int(still.height * z)
+            frame = still.resize((zw, zh), Image.BILINEAR).crop(((zw - still.width) // 2, (zh - still.height) // 2,
+                                                                 (zw - still.width) // 2 + still.width, (zh - still.height) // 2 + still.height))
+        frame = frame.resize((w, h), Image.BILINEAR).convert("RGBA")
+        over = self.tile(("pho", handle, quote, meta, w), lambda: self._phone_overlay(handle, quote, meta, w, h))
+        frame.alpha_composite(over)
+        mask = self.tile(("phm", w, h), lambda: rounded((w, h), self.S(26), (255, 255, 255, 255)).getchannel("A"))
+        frame.putalpha(mask)
+        return frame
+
+    def _phone(self, handle: str, quote: str, meta: str, w: int | None = None, h: int | None = None) -> Image.Image:
+        w, h = w or self.S(400), h or self.S(700)
         img = rounded((w, h), self.S(26), (14, 16, 15, 255), outline=(70, 76, 72, 255), width=self.S(3))
         d = ImageDraw.Draw(img)
         pad = self.S(28)
@@ -795,11 +919,33 @@ class Renderer:
                    (w / 2 + self.S(20), h * 0.86)], fill=(255, 255, 255, 70))
         return img
 
+    def _phone_overlay(self, handle: str, quote: str, meta: str, w: int, h: int) -> Image.Image:
+        """本物の映像の上に重ねる: 上に投稿者、下に暗い幕と日本語訳のひと言、縁取り."""
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        a = (np.clip((np.arange(h) / h - 0.5) / 0.5, 0, 1) ** 1.3 * 225).astype(np.uint8)
+        top = (np.clip((0.16 - np.arange(h) / h) / 0.16, 0, 1) * 150).astype(np.uint8)
+        alpha = np.maximum(a, top)
+        img.putalpha(Image.fromarray(np.repeat(alpha[:, None], w, axis=1), "L"))
+        d = ImageDraw.Draw(img)
+        pad = int(w * 0.07)
+        d.text((pad, pad), handle, font=font(max(12, int(w * 0.058)), "bold"), fill=WHITE)
+        f = font(max(14, int(w * 0.075)), "black")
+        rows = wrap(quote, f, w - pad * 2)
+        y = h - pad - int(w * 0.06) - len(rows) * int(f.size * 1.4)
+        for ln in rows:
+            d.text((pad + 1, y + 2), ln, font=f, fill=(0, 0, 0, 200))
+            d.text((pad, y), ln, font=f, fill=WHITE)
+            y += int(f.size * 1.4)
+        if meta:
+            d.text((pad, h - pad - int(w * 0.045)), meta, font=font(max(11, int(w * 0.05)), "bold"), fill=LIME)
+        d.rounded_rectangle([0, 0, w - 1, h - 1], self.S(26), outline=(90, 96, 92, 255), width=self.S(3))
+        return img
+
     def _blur_of(self, card: Image.Image) -> Image.Image:
         big = card.resize((self.W, int(self.W * card.height / card.width)) if not self.v else (int(self.H * card.width / card.height) * 2, self.H * 2))
         big = big.crop(((big.width - self.W) // 2, (big.height - self.H) // 2, (big.width - self.W) // 2 + self.W,
-                        (big.height - self.H) // 2 + self.H)).filter(ImageFilter.GaussianBlur(self.S(70)))
-        a = big.getchannel("A").point(lambda v: int(v * 0.3))
+                        (big.height - self.H) // 2 + self.H)).filter(ImageFilter.GaussianBlur(self.S(60)))
+        a = big.getchannel("A").point(lambda v: int(v * 0.42))
         big.putalpha(a)
         return big
 
@@ -1022,12 +1168,11 @@ class Renderer:
             off = i - pos
             if abs(off) > 2.2:
                 continue
-            card = self.tile(("ph", it.get("handle"), it.get("quote"), it.get("meta")),
-                             lambda: self._phone(str(it.get("handle", "")), str(it.get("quote", "")), str(it.get("meta", ""))))
             sc_ = (1 - 0.22 * min(1.0, abs(off))) * (0.82 if not self.v else 1.0)
             al = 1 - 0.55 * min(1.0, abs(off))
-            im = card.resize((int(card.width * sc_), int(card.height * sc_)), Image.BILINEAR)
+            im = self.phone_card(it, t - sc.at(ats[i]) if abs(off) < 0.5 else 0.0, scale=sc_)
             if al < 0.999:
+                im = im.copy()
                 im.putalpha(im.getchannel("A").point(lambda v: int(v * al)))
             k = self.P(sc, 0, t)
             paste(c, im, self.W / 2 + off * gap, cy, k, pop=False)
@@ -1243,33 +1388,67 @@ class Renderer:
             rt = self.fit(str(s["result"]), 80, self.W * 0.86)
             paste(c, rt, self.W / 2, self.H * (0.62 if not self.v else 0.6), self.P(sc, int(s.get("at_result", 2)), t))
 
-    # --- 実写の映像（Seedance などで作った mp4） -----------------------------
+    # --- 実写の映像（Veo などで作った mp4） ---------------------------------
     def s_footage(self, c: Image.Image, sc: Scene, t: float) -> None:
-        """mp4 を画面いっぱいに（下は字幕が読めるように暗く）。clip が無ければ何も出さない."""
+        """mp4 を画面いっぱいに（下は字幕が読めるように暗く）。映像が無ければ宇宙の背景にテロップだけ."""
         s = sc.spec
-        frames = self._clip(str(s.get("clip", "")))
-        if not frames:
-            return
-        i = min(len(frames) - 1, max(0, int((t - sc.start) * FPS)))
-        c.alpha_composite(frames[i])
-        shade = self.tile(("shade",), lambda: _shade(self.W, self.H))
-        c.alpha_composite(shade)
+        clip = str(s.get("clip", "") or "")
+        if clip and Path(clip).exists():
+            st = self._streams.get(clip)
+            if st is None:
+                st = self._streams[clip] = Stream(Path(clip), self.W, self.H, self.fps, loop=True)
+            arr = st.get(int((t - sc.start) * self.fps))
+            if arr is not None:
+                c.alpha_composite(Image.fromarray(arr, "RGB").convert("RGBA"))
+                c.alpha_composite(self.tile(("shade",), lambda: _shade(self.W, self.H)))
         if s.get("telop"):
-            tt = self.fit(str(s["telop"]), 80, self.W * 0.86)
-            paste(c, tt, self.W / 2, self.H * 0.42, self.P(sc, int(s.get("at_telop", 0)), t))
+            tt = self.fit(str(s["telop"]), 84, self.W * 0.86)
+            paste(c, tt, self.W / 2, self.H * (0.42 if not self.v else 0.4), self.P(sc, int(s.get("at_telop", 0)), t))
 
-    def _clip(self, path: str) -> list[Image.Image]:
-        if not path or not Path(path).exists():
-            return []
-        def load():
-            W, H = self.W, self.H
-            cmd = ["ffmpeg", "-v", "error", "-i", path, "-vf",
-                   f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}",
-                   "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
-            raw = subprocess.run(cmd, capture_output=True, check=True).stdout
-            n = len(raw) // (W * H * 3)
-            return [Image.frombuffer("RGB", (W, H), raw[k * W * H * 3:(k + 1) * W * H * 3]).convert("RGBA") for k in range(n)]
-        return self.tile(("clip", path), load)
+    # --- 立体の棒グラフ（宇宙の床に立つ光る角柱） --------------------------
+    def s_bars3d(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """3D の角柱が i 行目の語りで 1 本ずつ伸びる。上に値、下に名前、最後に「約N倍」."""
+        from . import space
+        s = sc.spec
+        vals = [float(v) for v in s.get("values") or []]
+        labs = [str(x) for x in s.get("labels") or []]
+        tops = [str(x) for x in s.get("tops") or []]
+        hl = [i in [int(x) for x in s.get("hl") or []] for i in range(len(vals))]
+        ats = [int(x) for x in (s.get("at") or list(range(len(vals))))]
+        lay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
+        infos = space.draw_bars3d(Image.new("RGBA", (8, 8)), vals, hl, p=1.0, only=-1)
+        for i in range(len(vals)):
+            k = ease_out((t - sc.at(ats[i])) / 0.8)
+            if k > 0:
+                space.draw_bars3d(lay, vals, hl, p=k, only=i)
+        d = ImageDraw.Draw(lay)
+        for i, inf in enumerate(infos):
+            k = ease_out((t - sc.at(ats[i]) - 0.5) / 0.4)
+            if k <= 0:
+                continue
+            tx, ty = inf["top_full"]
+            bx, by = inf["base"]
+            if i < len(tops):
+                f = font(44, "black")
+                d.text((tx, ty - 34 - (1 - k) * 20), tops[i], font=f, fill=(GOLD3D if hl[i] else WHITE) + (int(255 * k),), anchor="ms")
+            if i < len(labs):
+                d.text((bx, by + 40), labs[i], font=font(30, "bold"), fill=(200, 214, 230, int(255 * k)), anchor="mt")
+        if self.v:
+            sw = self.W / 1920
+            lay = lay.resize((self.W, int(1080 * sw)), Image.BILINEAR)
+            c.alpha_composite(lay, (0, int(self.H * 0.45 - lay.height / 2)))
+        else:
+            c.alpha_composite(lay)
+        if s.get("title"):
+            tt = self.fit(str(s["title"]), 60, self.W * 0.86)
+            paste(c, tt, self.W / 2, self.H * (0.1 if not self.v else 0.2), self.P(sc, 0, t))
+        if s.get("side"):
+            side = self.fit(str(s["side"]), 72, self.W * (0.4 if not self.v else 0.86))
+            i = int(s.get("at_side", len(sc.lines) - 1))
+            if self.v:
+                paste(c, side, self.W / 2, self.H * 0.68, self.P(sc, i, t))
+            else:
+                paste(c, side, self.W / 2, self.H * 0.23, self.P(sc, i, t))
 
 
 def _shade(W: int, H: int) -> Image.Image:
@@ -1280,6 +1459,39 @@ def _shade(W: int, H: int) -> Image.Image:
     return img
 
 
+def _veil(W: int, H: int) -> Image.Image:
+    """宇宙の背景の上に薄く暗い幕（文字を読みやすく）."""
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    r = np.sqrt(((xx - W / 2) / (W * 0.6)) ** 2 + ((yy - H * 0.45) / (H * 0.6)) ** 2)
+    a = (np.clip(0.28 + r * 0.35, 0, 0.75) * 255).astype(np.uint8)
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    img.putalpha(Image.fromarray(a, "L"))
+    return img
+
+
+def _cover(img: Image.Image, w: int, h: int) -> Image.Image:
+    k = max(w / img.width, h / img.height)
+    im = img.resize((int(img.width * k + 0.5), int(img.height * k + 0.5)), Image.LANCZOS)
+    x, y = (im.width - w) // 2, (im.height - h) // 2
+    return im.crop((x, y, x + w, y + h))
+
+
+def ease_inout(p: float) -> float:
+    p = min(max(p, 0.0), 1.0)
+    return p * p * p * (p * (6 * p - 15) + 10)
+
+
+def _blend_push(a: Image.Image, b: Image.Image, k: float) -> Image.Image:
+    """場面のつなぎ: 前の絵は少し寄りながら消え、次の絵は少し奥から来る."""
+    W, H = a.size
+    A = _affine(a, W, H, 1 + 0.07 * k, 0, 0)
+    B = _affine(b, W, H, 0.95 + 0.05 * k, 0, 0)
+    if cv2 is not None:
+        out = cv2.addWeighted(np.asarray(A), 1 - k, np.asarray(B), k, 0)
+        return Image.fromarray(out, "RGBA")
+    return Image.blend(A, B, k)
+
+
 def _dot(s: int, col) -> Image.Image:
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(img).ellipse([0, 0, s - 1, s - 1], fill=col)
@@ -1288,14 +1500,20 @@ def _dot(s: int, col) -> Image.Image:
 # ----------------------------------------------------------------------
 # カメラ・操作の動き（UI/UX アニメーション）の小道具
 # ----------------------------------------------------------------------
+GOLD3D = (255, 206, 92)
+DEFAULT_BG = {"opening": "tesseract", "chapter": "tesseract", "bars3d": "space", "footage": "space"}
 DEFAULT_CAM = {"opening": "crane", "chapter": "dolly_in", "number": "dolly_zoom", "grid": "orbit", "bars": "tilt",
                "carousel": "track", "phone": "pan", "cta": "crane", "menu": "still", "modal": "still",
-               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in"}
+               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in", "bars3d": "dolly_in"}
 
 
 def _affine(img: Image.Image, W: int, H: int, s: float, dx: float, dy: float) -> Image.Image:
     """img の中心を画面の中心に合わせ、s 倍して (dx, dy) ずらした W×H の画像."""
     cx, cy = img.width / 2, img.height / 2
+    if cv2 is not None:
+        M = np.array([[s, 0, W / 2 + dx - cx * s], [0, s, H / 2 + dy - cy * s]], np.float32)
+        out = cv2.warpAffine(np.asarray(img), M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+        return Image.fromarray(out, img.mode)
     a = 1 / s
     c = cx - (W / 2 + dx) * a
     f = cy - (H / 2 + dy) * a
@@ -1323,6 +1541,10 @@ def _orbit(img: Image.Image, deg: float) -> Image.Image:
         Xr, Z = X * math.cos(th), X * math.sin(th)
         k = D / (D + Z)
         out.append((W / 2 + Xr * k, H / 2 + Y * k))
+    if cv2 is not None:
+        M = cv2.getPerspectiveTransform(np.float32([(0, 0), (W, 0), (W, H), (0, H)]), np.float32(out))
+        res = cv2.warpPerspective(np.asarray(img), M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+        return Image.fromarray(res, img.mode)
     co = _persp_coeffs([(0, 0), (W, 0), (W, H), (0, H)], out)
     return img.transform((W, H), Image.PERSPECTIVE, co, resample=Image.BILINEAR)
 
@@ -1400,6 +1622,30 @@ def voice_track(plan_: Plan, out: Path, sr: int = 24000) -> Path:
     return out
 
 
+def loop_bgm(ffmpeg: str, src: Path, seconds: float, out: Path, xfade: float = 3.0, sr: int = 48000) -> Path:
+    """曲を必要な長さまでつなぐ。つなぎ目は 3 秒かけて重ねる（ぶつ切りにしない）."""
+    raw = subprocess.run([ffmpeg, "-v", "error", "-i", str(src), "-f", "f32le", "-ac", "2", "-ar", str(sr), "-"],
+                         capture_output=True, check=True).stdout
+    x = np.frombuffer(raw, np.float32).reshape(-1, 2)
+    n_total, n_x = int(seconds * sr), int(xfade * sr)
+    if len(x) <= n_x * 2:
+        reps = int(n_total / max(1, len(x))) + 1
+        y = np.tile(x, (reps, 1))[:n_total]
+    else:
+        y = x.copy()
+        ramp = np.linspace(0, 1, n_x, dtype=np.float32)[:, None]
+        while len(y) < n_total:
+            y[-n_x:] = y[-n_x:] * (1 - ramp) + x[:n_x] * ramp
+            y = np.concatenate([y, x[n_x:]])
+        y = y[:n_total]
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
+    return out
+
+
 def mix(ffmpeg: str, voice: Path, plan_: Plan, sfx_dir: Path, bgm: Path | None, out: Path,
         bgm_db: float = -21.0) -> Path:
     files = {p.stem.upper(): p for p in sfx_dir.glob("*.mp3")} if sfx_dir.exists() else {}
@@ -1408,9 +1654,10 @@ def mix(ffmpeg: str, voice: Path, plan_: Plan, sfx_dir: Path, bgm: Path | None, 
     labels = ["[v]"]
     k = 1
     if bgm and bgm.exists():
-        cmd += ["-stream_loop", "-1", "-i", str(bgm)]
+        looped = loop_bgm(ffmpeg, bgm, plan_.duration + 1, out.with_name("bgm_loop.wav"))
+        cmd += ["-i", str(looped)]
         filters.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm_db}dB,"
-                       f"atrim=0:{plan_.duration:.2f},afade=t=out:st={max(0, plan_.duration - 3):.2f}:d=3[b]")
+                       f"atrim=0:{plan_.duration:.2f},afade=t=in:d=1.5,afade=t=out:st={max(0, plan_.duration - 3):.2f}:d=3[b]")
         labels.append("[b]")
         k += 1
     for j, (t, name, db) in enumerate(plan_.sfx):
@@ -1434,26 +1681,28 @@ def mix(ffmpeg: str, voice: Path, plan_: Plan, sfx_dir: Path, bgm: Path | None, 
 def render(spec: dict[str, Any], out: Path, workdir: Path, synth: Callable[[str], bytes], *,
            vertical: bool = False, ffmpeg: str = "ffmpeg", sfx_dir: Path | None = None,
            bgm: Path | None = None, bgm_db: float = -21.0, size: tuple[int, int] | None = None,
-           preview: tuple[float, float] | None = None) -> Path:
+           preview: tuple[float, float] | None = None, fps: int = FPS) -> Path:
     workdir.mkdir(parents=True, exist_ok=True)
     scenes = synth_lines(spec, workdir, synth)
     pl = plan(scenes)
     W, H = size or ((1080, 1920) if vertical else (1920, 1080))
-    r = Renderer(W, H)
+    r = Renderer(W, H, fps=fps)
     voice = voice_track(pl, workdir / "voice.wav")
     audio = mix(ffmpeg, voice, pl, sfx_dir or (_ROOT / "assets" / "sfx"), bgm, workdir / "audio.m4a", bgm_db)
     t0, t1 = preview or (0.0, pl.duration)
-    n = int((t1 - t0) * FPS)
-    cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS),
+    n = int((t1 - t0) * fps)
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(fps),
            "-i", "-", "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}", "-i", str(audio),
            "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "faster", "-crf", "20", "-pix_fmt", "yuv420p",
            "-c:a", "copy", "-shortest", "-movflags", "+faststart", str(out)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     assert proc.stdin
     for f in range(n):
-        proc.stdin.write(r.frame(pl, t0 + f / FPS).tobytes())
+        proc.stdin.write(r.frame(pl, t0 + f / fps).tobytes())
     proc.stdin.close()
     proc.wait()
+    for st in r._streams.values():
+        st.close()
     (workdir / "plan.json").write_text(json.dumps(
         [{"type": s.kind, "start": round(s.start, 2), "end": round(s.end, 2)} for s in pl.scenes], ensure_ascii=False, indent=1))
     log.info("書き出し: %s（%.1f 秒）", out, pl.duration)
