@@ -53,6 +53,8 @@ env:
   CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+  # Google の動画生成（Veo）。Gemini API の課金を有効にしたプロジェクトの鍵（無ければ映像の場面は作らない）
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
   YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
   YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
