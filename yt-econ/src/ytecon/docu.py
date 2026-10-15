@@ -477,7 +477,7 @@ class Renderer:
         p = self.P(sc, 0, t)
         shown = value
         m = re.search(r"[\d,]+(\.\d+)?", value)
-        if s.get("count", True) and m:
+        if s.get("count", True) and m and len(re.findall(r"\d+", value.replace(",", ""))) == 1 and not re.search(r"[万億千]", value):
             num = float(m.group(0).replace(",", ""))
             k = ease_out((t - sc.at(0)) / 0.9)
             cur = num * k
@@ -874,7 +874,7 @@ def mix(ffmpeg: str, voice: Path, plan_: Plan, sfx_dir: Path, bgm: Path | None, 
         filters.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={db}dB,adelay={ms}|{ms}[s{j}]")
         labels.append(f"[s{j}]")
         k += 1
-    filters.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:duration=first,alimiter=limit=0.95[out]")
+    filters.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:duration=first,loudnorm=I=-15:TP=-1.5:LRA=11[out]")
     cmd += ["-filter_complex", ";".join(filters), "-map", "[out]", "-c:a", "aac", "-b:a", "192k", str(out)]
     subprocess.run(cmd, check=True)
     return out
