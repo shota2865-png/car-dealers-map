@@ -18,7 +18,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = "claude-opus-5-5"
 REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 # どの経路で Claude を呼ぶか

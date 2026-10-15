@@ -125,6 +125,18 @@ def text_tile(text: str, size: int, weight: str = "black", color=WHITE, align: s
     return img
 
 
+def _char_tile(ch: str, f: ImageFont.FreeTypeFont, color, shadow: bool = True) -> Image.Image:
+    """キネティック・タイポグラフィ用の 1 字."""
+    w = int(f.getlength(ch)) + 12
+    h = int(f.size * 1.45)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    if shadow:
+        d.text((8, 9), ch, font=f, fill=(0, 0, 0, 150))
+    d.text((6, 6), ch, font=f, fill=color)
+    return img
+
+
 def wrap(text: str, f: ImageFont.FreeTypeFont, width: int) -> list[str]:
     """字幕を幅で折り返す（日本語は 1 字ずつ。数字・英語のかたまりは切らない。句読点は行頭に来ないように）."""
     toks = re.findall(r"[0-9０-９][0-9０-９,.，．万億千円%％]*|[A-Za-z@][A-Za-z0-9_.@]*|.", text)
@@ -298,7 +310,7 @@ def wav_len(p: Path) -> float:
 
 
 SFX_OF = {"chapter": ("WHOOSH", -9), "opening": ("RISER", -12), "number": ("POP", -12), "compare": ("POP", -14),
-          "cta": ("CLICK", -8)}
+          "kinetic": ("WHOOSH", -16), "modal": ("POP", -12), "radio": ("POP", -16), "carousel": ("WHOOSH", -15)}
 
 
 def plan(scenes: list[Scene], gap: float = 0.16, tail: float = 0.35, lead: float = 0.25) -> Plan:
@@ -324,9 +336,17 @@ def plan(scenes: list[Scene], gap: float = 0.16, tail: float = 0.35, lead: float
             sfx.append((sc.start + (0.0 if kind != "number" else lead), name, db))
         if any(st == "box" for _, st in runs(str(sc.spec.get("text", "")) + str(sc.spec.get("text2", "")))):
             sfx.append((sc.at(1 if sc.spec.get("text2") and "[[" in str(sc.spec.get("text2")) else 0) + 0.02, "IMPACT", -13))
-        if kind in ("compare", "points", "steps", "checklist", "phone"):
+        if kind in ("compare", "points", "steps", "checklist", "phone", "accordion"):
             for i in range(1, len(sc.lines)):
                 sfx.append((sc.at(i), "POP", -17))
+        if kind == "carousel":
+            for i, it in enumerate(sc.spec.get("items") or []):
+                if i:
+                    sfx.append((sc.at(int(it.get("at", i))), "WHOOSH", -17))
+        for tc in click_times(sc):
+            sfx.append((tc, "CLICK", -9))
+        if kind == "radio" and sc.spec.get("answer") is not None:
+            sfx.append((sc.at(int(sc.spec.get("at_answer", 2))), "POP", -11))
     return Plan(scenes=scenes, duration=t, sfx=sfx)
 
 
@@ -396,9 +416,13 @@ class Renderer:
         spec = sc.spec
         tone = str(spec.get("bg", "red" if sc.kind in ("opening",) else "green"))
         canvas = self.bgs.get(tone, self.bgs["green"]).convert("RGBA")
+        fg = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
         draw = getattr(self, "s_" + sc.kind, self.s_statement)
-        draw(canvas, sc, t)
+        draw(fg, sc, t)
+        self.camera(canvas, fg, sc, t)
         self.corner(canvas, str(spec.get("source", "")), str(spec.get("date", "")))
+        if sc.kind == "chapter":
+            self.breadcrumb(canvas, sc, t)
         cur = next((ln for ln in sc.lines if ln.start - 0.05 <= t < ln.end + 0.16), None)
         if cur is None:
             prev = [ln for ln in sc.lines if ln.end <= t]
@@ -406,6 +430,81 @@ class Renderer:
         if spec.get("subtitle", True) and cur is not None:
             self.subtitle(canvas, cur.text)
         return canvas.convert("RGB")
+
+    # --- カメラ ---------------------------------------------------------
+    def camera(self, canvas: Image.Image, fg: Image.Image, sc: Scene, t: float) -> None:
+        """前景（テロップ・図）と奥の点の層を、別の量だけ動かして奥行きを出す.
+
+        dolly_in 寄る / pan 横に振る / tilt 縦に振る / track 並走（奥だけ速く流れる）/
+        crane 上がりながら全体へ / orbit 回り込む / dolly_zoom 被写体はそのまま奥だけ伸びる（めまい）/ still
+        """
+        cam = str(sc.spec.get("cam") or DEFAULT_CAM.get(sc.kind, "dolly_in"))
+        u = (t - sc.start) / max(0.01, sc.end - sc.start)
+        e = u * u * (3 - 2 * u) if 0 <= u <= 1 else (0.0 if u < 0 else 1.0)
+        S = self.S
+        fs, fx, fy, ang = 1.0, 0.0, 0.0, 0.0
+        ds, dx, dy = 1.0, 0.0, 0.0
+        if cam == "dolly_in":
+            fs, ds = 1 + 0.06 * e, 1 + 0.02 * e
+        elif cam == "pan":
+            fx, dx = S(60) - S(120) * e, S(22) - S(44) * e
+        elif cam == "tilt":
+            fy, dy = S(45) - S(90) * e, S(18) - S(36) * e
+        elif cam == "track":
+            fx, dx, fs = S(8) * math.sin(u * 6.28), -S(520) * e, 1.02
+        elif cam == "crane":
+            fs, fy = 1.16 - 0.16 * e, S(110) * (1 - e)
+            ds, dy = 1.1 - 0.1 * e, S(260) * (1 - e)
+        elif cam == "orbit":
+            ang, dx = -13 + 26 * e, S(90) - S(180) * e
+        elif cam == "dolly_zoom":
+            ds = 1 + 0.5 * e
+        dots = self._dots_layer()
+        canvas.alpha_composite(_affine(dots, self.W, self.H, ds, dx, dy))
+        if ang:
+            canvas.alpha_composite(_orbit(fg, ang))
+        elif abs(fs - 1) > 1e-3 or abs(fx) > 0.5 or abs(fy) > 0.5:
+            canvas.alpha_composite(_affine(fg, self.W, self.H, fs, fx, fy))
+        else:
+            canvas.alpha_composite(fg)
+
+    def _dots_layer(self) -> Image.Image:
+        """奥の層: うすい点の格子（カメラが動くと、これが奥行きの手がかりになる）."""
+        def make():
+            w, h = int(self.W * 1.6), int(self.H * 1.6)
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            g = self.S(46)
+            r = max(1, self.S(2))
+            for y in range(0, h, g):
+                for x in range(0, w, g):
+                    d.ellipse([x - r, y - r, x + r, y + r], fill=(160, 190, 165, 34))
+            return img
+        return self.tile(("dots",), make)
+
+    def breadcrumb(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """パンくずリスト「ホーム ＞ 第3章 ＞ 題」: 1 つずつ出て、今いる場所だけ白く太く."""
+        s = sc.spec
+        crumbs = s.get("crumbs") or ["ホーム", f"第{int(s.get('index', 1))}章", plain(str(s.get("title", "")))]
+        f_on, f_off = font(self.S(24), "black"), font(self.S(24), "bold")
+        x = self.S(34)
+        y = self.S(26)
+        d = ImageDraw.Draw(c)
+        for i, cr in enumerate(crumbs):
+            k = ease_out((t - sc.start - 0.15 - i * 0.18) / 0.3)
+            if k <= 0:
+                break
+            last = i == len(crumbs) - 1
+            f = f_on if last else f_off
+            col = WHITE if last else GRAY
+            a = int(255 * k)
+            d.text((x, y + (1 - k) * self.S(8)), cr, font=f, fill=col + (a,))
+            w = f.getlength(cr)
+            if not last:
+                d.line([x, y + self.S(30), x + w, y + self.S(30)], fill=DIM + (a,), width=1)
+                x += w + self.S(14)
+                d.text((x, y), "＞", font=f_off, fill=DIM + (a,))
+                x += f_off.getlength("＞") + self.S(14)
 
     def P(self, sc: Scene, i: int, t: float, dur: float = 0.35) -> float:
         return (t - sc.at(i)) / dur
@@ -784,20 +883,19 @@ class Renderer:
     def s_cta(self, c: Image.Image, sc: Scene, t: float) -> None:
         s = sc.spec
         cx, cy = self.W / 2, self.H * 0.44
-        clicked = t >= sc.at(int(s.get("at_click", 1)))
+        tc = click_times(sc)[0]
+        clicked = t >= tc
         btn = self.tile(("btn", clicked), lambda: self._button("登録済み" if clicked else "チャンネル登録", clicked))
+        sq = 1 - 0.07 * max(0.0, 1 - abs(t - tc) / 0.12)            # 押した瞬間に少し縮む
+        if sq < 0.999:
+            btn = btn.resize((int(btn.width * sq), int(btn.height * sq)), Image.BILINEAR)
         paste(c, btn, cx, cy, self.P(sc, 0, t))
+        ripple(c, cx, cy, t - tc, self.S(120))
         if s.get("text"):
             paste(c, self.txt(str(s["text"]), 40, weight="bold"), cx, cy + btn.height / 2 + self.S(46), self.P(sc, 0, t) - 0.3)
         # 矢印のカーソル
-        k = ease_out((t - sc.at(0) - 0.3) / 0.8)
-        d = ImageDraw.Draw(c)
-        x = cx + self.S(160) - self.S(100) * k
-        y = cy + self.S(90) - self.S(60) * k
-        r = self.S(30)
-        d.polygon([(x, y), (x, y + r * 1.3), (x + r * 0.38, y + r * 0.95), (x + r * 0.62, y + r * 1.45),
-                   (x + r * 0.8, y + r * 1.36), (x + r * 0.56, y + r * 0.86), (x + r, y + r * 0.86)],
-                  fill=WHITE, outline=(0, 0, 0))
+        k = ease_out((t - (tc - 0.6)) / 0.55)
+        cursor(c, cx + self.S(170) - self.S(110) * k, cy + self.S(100) - self.S(70) * k, self.S(30))
 
     def _button(self, text: str, clicked: bool) -> Image.Image:
         f = font(self.S(40), "black")
@@ -807,10 +905,460 @@ class Renderer:
         return img
 
 
+    # --- キネティック・タイポグラフィ ------------------------------------
+    def s_kinetic(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """文字が 1 字ずつ跳ねて落ちてくる。赤い帯は字に合わせて伸びる。text の i 行目は i 行目の語りで出る."""
+        s = sc.spec
+        size = self.S(float(s.get("size", 100)))
+        rows = str(s.get("text", "")).split("\n")
+        per_line = bool(s.get("per_line", len(rows) <= len(sc.lines)))
+        f = font(size)
+        lh = int(size * 1.25)
+        y0 = self.H * (0.44 if not self.v else 0.4) - lh * len(rows) / 2
+        d = ImageDraw.Draw(c)
+        step = float(s.get("stagger", 0.045))
+        for ri, row in enumerate(rows):
+            chars = [(ch, st) for txt, st in runs(row) for ch in txt]
+            widths = [f.getlength(ch) + (size * 0.0 if st != "box" else 0) for ch, st in chars]
+            total = sum(widths)
+            if total > self.W * 0.9:
+                k = self.W * 0.9 / total
+                widths = [w * k for w in widths]
+                total = self.W * 0.9
+            x = self.W / 2 - total / 2
+            t0 = sc.at(ri) if per_line else sc.at(0) + ri * 0.25
+            y = y0 + ri * lh
+            box_x0 = box_x1 = None
+            for j, ((ch, st), w) in enumerate(zip(chars, widths)):
+                p = (t - t0 - j * step) / 0.32
+                if p <= 0:
+                    x += w
+                    continue
+                if st == "box":
+                    if box_x0 is None:
+                        box_x0 = x - size * 0.1
+                    box_x1 = x + w * min(1.0, ease_out(p)) + size * 0.1
+                elif box_x0 is not None:
+                    d.rectangle([box_x0, y + size * 0.1, box_x1, y + size * 1.18], fill=RED_BOX)
+                    box_x0 = None
+                x += w
+            if box_x0 is not None:
+                d.rectangle([box_x0, y + size * 0.1, box_x1, y + size * 1.18], fill=RED_BOX)
+            x = self.W / 2 - total / 2
+            for j, ((ch, st), w) in enumerate(zip(chars, widths)):
+                p = (t - t0 - j * step) / 0.32
+                if p > 0:
+                    col = {"w": WHITE, "box": WHITE, "red": RED, "lime": LIME}[st]
+                    tile = self.tile(("ch", ch, size, col), lambda: _char_tile(ch, f, col, st != "box"))
+                    dy = -size * 0.55 * (1 - ease_back(p))
+                    paste(c, tile, x + w / 2, y + size * 0.62 + dy, p * 1.6, pop=True)
+                x += w
+
+    # --- ハンバーガーメニュー --------------------------------------------
+    def s_menu(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """3 本線を押す → 線が ✕ に変わり、左から目次が出る。i 行目の語りで i 番目の項目が光る."""
+        s = sc.spec
+        items = [str(x) for x in s.get("items") or []]
+        tc = click_times(sc)[0]
+        d = ImageDraw.Draw(c)
+        hx, hy, hs = self.S(120), self.S(150), self.S(56)
+        k = ease_out((t - tc) / 0.35)                         # 0: 三本線 → 1: ✕
+        # 引き出し
+        dw = self.W * (0.46 if not self.v else 0.86)
+        dk = ease_out((t - tc - 0.05) / 0.45)
+        if dk > 0:
+            x1 = -dw + dw * dk
+            d.rectangle([0, 0, x1 + dw, self.H], fill=(16, 21, 18, 240))
+            d.line([x1 + dw, 0, x1 + dw, self.H], fill=CARD_LINE, width=2)
+            if s.get("title"):
+                d.text((x1 + self.S(100), self.S(240)), str(s["title"]), font=font(self.S(30), "bold"), fill=GRAY)
+            follow = int(s.get("offset", 1))
+            cur_i = max([i for i in range(len(items)) if t >= sc.at(i + follow)] or [-1])
+            for i, it in enumerate(items):
+                ik = ease_out((t - tc - 0.25 - i * 0.08) / 0.35)
+                if ik <= 0:
+                    continue
+                y = self.S(320) + i * self.S(92)
+                on = i == cur_i
+                if on:
+                    d.rectangle([x1 + self.S(70), y - self.S(12), x1 + self.S(78), y + self.S(56)], fill=RED)
+                f = font(self.S(42), "black" if on else "bold")
+                d.text((x1 + self.S(100) + (1 - ik) * self.S(30), y), f"{i + 1:02d}  {it}", font=f,
+                       fill=(WHITE if on else GRAY) + (int(255 * ik),))
+            if not self.v and 0 <= cur_i < len(items):
+                big = self.fit(f"[{items[cur_i]}]", 84, self.W * 0.44)
+                paste(c, big, self.W * 0.74, self.H * 0.45, self.P(sc, cur_i + follow, t))
+        # アイコン（三本線 ⇄ ✕）
+        w = self.S(5)
+        for j, sgn in ((0, 1), (2, -1)):
+            yy = hy - hs * 0.32 + j * hs * 0.32
+            ay, by = yy + (hy - yy) * k, yy + (hy - yy) * k
+            dyy = hs * 0.36 * k * sgn
+            d.line([hx - hs / 2, ay - dyy, hx + hs / 2, by + dyy], fill=WHITE, width=w)
+        if k < 1:
+            d.line([hx - hs / 2, hy, hx + hs / 2, hy], fill=WHITE + (int(255 * (1 - k)),), width=w)
+        ripple(c, hx, hy, t - tc, self.S(70))
+        mk = ease_out((t - (tc - 0.6)) / 0.55)
+        if t < tc + 0.5:
+            cursor(c, hx + self.S(200) - self.S(190) * mk, hy + self.S(160) - self.S(150) * mk, self.S(30))
+
+    # --- カルーセル --------------------------------------------------------
+    def s_carousel(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """横に並んだショート動画のカードが、語りに合わせて 1 枚ずつ横へ滑る。下に今の位置の点."""
+        s = sc.spec
+        items = s.get("items") or []
+        n = len(items)
+        if not n:
+            return
+        ats = [int(it.get("at", i)) for i, it in enumerate(items)]
+        pos = 0.0
+        for i in range(1, n):
+            pos += ease_out((t - sc.at(ats[i])) / 0.55)
+        gap = self.S(400) if not self.v else self.S(560)
+        cy = self.H * (0.54 if not self.v else 0.42)
+        order = sorted(range(n), key=lambda i: -abs(i - pos))
+        for i in order:
+            it = items[i]
+            off = i - pos
+            if abs(off) > 2.2:
+                continue
+            card = self.tile(("ph", it.get("handle"), it.get("quote"), it.get("meta")),
+                             lambda: self._phone(str(it.get("handle", "")), str(it.get("quote", "")), str(it.get("meta", ""))))
+            sc_ = (1 - 0.22 * min(1.0, abs(off))) * (0.82 if not self.v else 1.0)
+            al = 1 - 0.55 * min(1.0, abs(off))
+            im = card.resize((int(card.width * sc_), int(card.height * sc_)), Image.BILINEAR)
+            if al < 0.999:
+                im.putalpha(im.getchannel("A").point(lambda v: int(v * al)))
+            k = self.P(sc, 0, t)
+            paste(c, im, self.W / 2 + off * gap, cy, k, pop=False)
+        cur = int(round(pos))
+        d = ImageDraw.Draw(c)
+        for i in range(n):
+            x = self.W / 2 + (i - (n - 1) / 2) * self.S(30)
+            r = self.S(7) if i == cur else self.S(5)
+            yb = cy + self.S(318) if not self.v else cy + self.S(480)
+            d.ellipse([x - r, yb - r, x + r, yb + r], fill=WHITE if i == cur else DIM)
+        tel = items[cur].get("telop")
+        if tel:
+            tt = self.txt(str(tel), 54)
+            ty = self.H * 0.075
+            paste(c, tt, self.W / 2, ty + tt.height / 2, self.P(sc, ats[cur], t))
+
+    # --- モーダル ----------------------------------------------------------
+    def s_modal(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """画面に重なる小窓。後ろは暗くなる。最後に「閉じる」を押すと消える."""
+        s = sc.spec
+        tcs = click_times(sc)
+        tc = tcs[0] if tcs else None
+        open_k = ease_out((t - sc.at(0)) / 0.3)
+        close_k = ease_out((t - tc - 0.08) / 0.25) if tc is not None else 0.0
+        vis = open_k * (1 - close_k)
+        if s.get("behind"):
+            back = self.fit(str(s["behind"]), 80, self.W * 0.8)
+            paste(c, back, self.W / 2, self.H * 0.44, 1.0, pop=False)
+        if vis <= 0:
+            return
+        ov = Image.new("RGBA", c.size, (0, 0, 0, int(170 * vis)))
+        c.alpha_composite(ov)
+        win = self.tile(("modal", s.get("title"), s.get("body"), s.get("button")), lambda: self._modal(
+            str(s.get("title", "")), str(s.get("body", "")), str(s.get("button", "閉じる"))))
+        sq = 1 - 0.06 * max(0.0, 1 - abs(t - tc) / 0.12) if tc is not None else 1
+        scale = (0.92 + 0.08 * ease_back(open_k)) * (1 - 0.08 * close_k) * sq
+        im = win.resize((int(win.width * scale), int(win.height * scale)), Image.BILINEAR)
+        im.putalpha(im.getchannel("A").point(lambda v: int(v * vis)))
+        cx, cy = self.W / 2, self.H * 0.44
+        c.alpha_composite(im, (int(cx - im.width / 2), int(cy - im.height / 2)))
+        if tc is not None:
+            bx, by = cx, cy + win.height / 2 - self.S(70)
+            mk = ease_out((t - (tc - 0.6)) / 0.55)
+            if t < tc + 0.35:
+                cursor(c, bx + self.S(200) - self.S(170) * mk, by + self.S(130) - self.S(120) * mk, self.S(30))
+            ripple(c, bx, by, t - tc, self.S(90))
+
+    def _modal(self, title: str, body: str, button: str) -> Image.Image:
+        w = self.S(900 if not self.v else 860)
+        pad = self.S(44)
+        fb = font(self.S(40), "black")
+        rows = wrap(plain(body), fb, w - pad * 2)
+        h = pad * 2 + self.S(70) + len(rows) * int(self.S(40) * 1.45) + self.S(130)
+        img = rounded((w, h), self.S(20), (246, 246, 243, 255))
+        d = ImageDraw.Draw(img)
+        d.text((pad, pad), title, font=font(self.S(30), "black"), fill=RED_BOX)
+        xc, yc, r = w - pad - self.S(12), pad + self.S(20), self.S(11)
+        d.line([xc - r, yc - r, xc + r, yc + r], fill=(120, 124, 120), width=self.S(3))
+        d.line([xc - r, yc + r, xc + r, yc - r], fill=(120, 124, 120), width=self.S(3))
+        d.line([pad, pad + self.S(56), w - pad, pad + self.S(56)], fill=(220, 220, 214), width=2)
+        y = pad + self.S(76)
+        for r in rows:
+            d.text((pad, y), r, font=fb, fill=(22, 24, 23))
+            y += int(self.S(40) * 1.45)
+        bw, bh = self.S(240), self.S(72)
+        d.rounded_rectangle([w / 2 - bw / 2, h - pad - bh, w / 2 + bw / 2, h - pad], bh // 2, fill=(22, 24, 23))
+        d.text((w / 2, h - pad - bh / 2), button, font=font(self.S(30), "black"), fill=WHITE, anchor="mm")
+        return img
+
+    # --- アコーディオン ----------------------------------------------------
+    def s_accordion(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """見出しが並び、i+1 行目の語りで i 番目が開く（前のものは閉じる）."""
+        s = sc.spec
+        items = s.get("items") or []
+        w = self.W * (0.62 if not self.v else 0.88)
+        x0 = self.W / 2 - w / 2
+        hh = self.S(96)
+        fb = font(self.S(32), "bold")
+        if s.get("head"):
+            head = self.txt(str(s["head"]), 60)
+            paste(c, head, self.W / 2, self.H * (0.14 if not self.v else 0.16), self.P(sc, 0, t))
+        y = self.H * (0.24 if not self.v else 0.24)
+        d = ImageDraw.Draw(c)
+        for i, it in enumerate(items):
+            ap = self.P(sc, 0, t) - i * 0.25
+            if ap <= 0:
+                continue
+            a = int(255 * min(1.0, ap))
+            t_open = sc.at(i + 1)
+            t_close = sc.at(i + 2) if i + 2 <= len(sc.lines) - 1 and i < len(items) - 1 else 1e9
+            k = ease_out((t - t_open) / 0.35) * (1 - ease_out((t - t_close) / 0.35))
+            body = str(it.get("body", ""))
+            rows = wrap(body, fb, int(w - self.S(80)))
+            bh = int(len(rows) * self.S(32) * 1.5 + self.S(30))
+            vis = int(bh * k)
+            on = k > 0.5
+            d.rounded_rectangle([x0, y, x0 + w, y + hh + vis], self.S(12), fill=CARD + (a,),
+                                outline=((RED if on else CARD_LINE) + (a,)), width=self.S(2))
+            d.text((x0 + self.S(30), y + hh / 2), f"{i + 1}", font=font(self.S(34), "black"), fill=(RED if on else GRAY) + (a,), anchor="lm")
+            d.text((x0 + self.S(80), y + hh / 2), str(it.get("title", "")), font=font(self.S(40), "black"), fill=WHITE + (a,), anchor="lm")
+            # 開閉の矢印（開くと上を向く）
+            ax, ay, r = x0 + w - self.S(48), y + hh / 2, self.S(12)
+            pts = [(ax - r, ay - r * 0.5), (ax, ay + r * 0.5), (ax + r, ay - r * 0.5)]
+            ang = math.pi * k
+            rot = [(ax + (px - ax) * math.cos(ang) - (py - ay) * math.sin(ang), ay + (px - ax) * math.sin(ang) + (py - ay) * math.cos(ang)) for px, py in pts]
+            d.line(rot, fill=WHITE + (a,), width=self.S(4))
+            if vis > 4:
+                yy = y + hh
+                for r_ in rows:
+                    if yy + self.S(32) > y + hh + vis:
+                        break
+                    d.text((x0 + self.S(80), yy), r_, font=fb, fill=(205, 212, 206, a))
+                    yy += int(self.S(32) * 1.5)
+            y += hh + vis + self.S(18)
+
+    # --- ラジオボタン（クイズ） --------------------------------------------
+    def s_radio(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """問い＋選択肢。カーソルが 1 つを選ぶ（丸が埋まる）→ 答えの行で正解が黄緑、外れは赤."""
+        s = sc.spec
+        opts = [str(x) for x in s.get("options") or []]
+        choose = int(s.get("choose", 0))
+        answer = s.get("answer")
+        tc = click_times(sc)[0]
+        t_ans = sc.at(int(s.get("at_answer", 2))) if answer is not None else 1e9
+        q = self.fit(str(s.get("question", "")), 64, self.W * 0.86)
+        qy = self.H * (0.2 if not self.v else 0.2)
+        paste(c, q, self.W / 2, qy, self.P(sc, 0, t))
+        lh = self.S(104)
+        w = self.W * (0.5 if not self.v else 0.84)
+        x0 = self.W / 2 - w / 2
+        y0 = qy + q.height / 2 + self.S(80)
+        d = ImageDraw.Draw(c)
+        for i, op in enumerate(opts):
+            ap = self.P(sc, 0, t) - 0.3 - i * 0.2
+            if ap <= 0:
+                continue
+            a = int(255 * min(1.0, ap))
+            y = y0 + i * lh
+            sel = i == choose and t >= tc
+            col = CARD_LINE
+            if t >= t_ans and answer is not None:
+                col = LIME if i == int(answer) else (RED if sel else CARD_LINE)
+            elif sel:
+                col = WHITE
+            d.rounded_rectangle([x0, y, x0 + w, y + lh * 0.82], self.S(12), fill=CARD + (a,), outline=col + (a,), width=self.S(3))
+            rx, ry, rr = x0 + self.S(52), y + lh * 0.41, self.S(18)
+            d.ellipse([rx - rr, ry - rr, rx + rr, ry + rr], outline=WHITE + (a,), width=self.S(3))
+            if sel:
+                k = ease_back((t - tc) / 0.25)
+                ir = rr * 0.55 * k
+                d.ellipse([rx - ir, ry - ir, rx + ir, ry + ir], fill=WHITE)
+                ripple(c, rx, ry, t - tc, self.S(50))
+            d.text((x0 + self.S(100), ry), op, font=font(self.S(44), "black"), fill=WHITE + (a,), anchor="lm")
+            if t >= t_ans and answer is not None and i == int(answer):
+                d.text((x0 + w - self.S(40), ry), "正解", font=font(self.S(34), "black"), fill=LIME, anchor="rm")
+        tx, ty = x0 + self.S(52), y0 + choose * lh + lh * 0.41
+        mk = ease_out((t - (tc - 0.6)) / 0.55)
+        if tc - 0.6 < t < tc + 0.5:
+            cursor(c, tx + self.S(260) - self.S(250) * mk, ty + self.S(140) - self.S(130) * mk, self.S(30))
+
+    # --- プルダウンメニュー ------------------------------------------------
+    def s_pulldown(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """選ぶ箱を押す → 選択肢が下に開く → 1 つ選ぶと閉じて、箱に選んだものが入る."""
+        s = sc.spec
+        opts = [str(x) for x in s.get("options") or []]
+        choose = int(s.get("choose", 0))
+        t_open, t_pick = click_times(sc)
+        w, hh = self.W * (0.42 if not self.v else 0.8), self.S(92)
+        x0 = self.W / 2 - w / 2
+        y0 = self.H * (0.24 if not self.v else 0.26)
+        d = ImageDraw.Draw(c)
+        if s.get("label"):
+            d.text((x0, y0 - self.S(56)), str(s["label"]), font=font(self.S(34), "bold"), fill=GRAY)
+        ap = self.P(sc, 0, t)
+        if ap <= 0:
+            return
+        picked = t >= t_pick
+        shown = opts[choose] if picked else str(s.get("placeholder", "選んでください"))
+        sq = 1 - 0.04 * max(0.0, 1 - abs(t - t_open) / 0.12)
+        d.rounded_rectangle([x0 + w * (1 - sq) / 2, y0, x0 + w - w * (1 - sq) / 2, y0 + hh], self.S(12), fill=(246, 246, 243),
+                            outline=(LIME if picked else (200, 200, 196)), width=self.S(3))
+        d.text((x0 + self.S(30), y0 + hh / 2), shown, font=font(self.S(42), "black"), fill=(20, 22, 21) if picked else (120, 124, 120), anchor="lm")
+        ok = ease_out((t - t_open) / 0.3) * (1 - ease_out((t - t_pick - 0.12) / 0.25))
+        # ▼ は開いている間だけ上を向く
+        ax, ay, r = x0 + w - self.S(44), y0 + hh / 2, self.S(12)
+        sgn = 1 - 2 * ok
+        d.polygon([(ax - r, ay - r * 0.45 * sgn), (ax + r, ay - r * 0.45 * sgn), (ax, ay + r * 0.6 * sgn)], fill=(60, 64, 62))
+        if ok > 0:
+            lh = self.S(84)
+            full = lh * len(opts)
+            vis = full * ok
+            panel = Image.new("RGBA", (int(w), int(full) + 4), (0, 0, 0, 0))
+            pd = ImageDraw.Draw(panel)
+            pd.rounded_rectangle([0, 0, w - 1, full + 2], self.S(12), fill=(250, 250, 248, 255), outline=(200, 200, 196, 255), width=2)
+            hover = min(len(opts) - 1, int(max(0.0, (t - t_open - 0.3)) / 0.22)) if t < t_pick else choose
+            hover = min(hover, choose) if t < t_pick else choose
+            for i, op in enumerate(opts):
+                yy = i * lh
+                if i == hover:
+                    pd.rectangle([2, yy + 2, w - 3, yy + lh - 2], fill=(226, 240, 205, 255))
+                pd.text((self.S(30), yy + lh / 2), op, font=font(self.S(38), "black" if i == hover else "bold"), fill=(20, 22, 21), anchor="lm")
+            crop = panel.crop((0, 0, panel.width, max(1, int(vis))))
+            c.alpha_composite(crop, (int(x0), int(y0 + hh + self.S(10))))
+            hy = y0 + hh + self.S(10) + hover * lh + lh / 2
+            if t < t_pick + 0.3:
+                cursor(c, x0 + w * 0.7, hy, self.S(30))
+                ripple(c, x0 + w * 0.7, hy, t - t_pick, self.S(70))
+        elif t < t_open + 0.1:
+            mk = ease_out((t - (t_open - 0.6)) / 0.55)
+            cursor(c, x0 + w * 0.7 + self.S(160) * (1 - mk), y0 + hh / 2 + self.S(120) * (1 - mk), self.S(30))
+            ripple(c, x0 + w * 0.7, y0 + hh / 2, t - t_open, self.S(70))
+        if s.get("result") and picked:
+            rt = self.fit(str(s["result"]), 80, self.W * 0.86)
+            paste(c, rt, self.W / 2, self.H * (0.62 if not self.v else 0.6), self.P(sc, int(s.get("at_result", 2)), t))
+
+    # --- 実写の映像（Seedance などで作った mp4） -----------------------------
+    def s_footage(self, c: Image.Image, sc: Scene, t: float) -> None:
+        """mp4 を画面いっぱいに（下は字幕が読めるように暗く）。clip が無ければ何も出さない."""
+        s = sc.spec
+        frames = self._clip(str(s.get("clip", "")))
+        if not frames:
+            return
+        i = min(len(frames) - 1, max(0, int((t - sc.start) * FPS)))
+        c.alpha_composite(frames[i])
+        shade = self.tile(("shade",), lambda: _shade(self.W, self.H))
+        c.alpha_composite(shade)
+        if s.get("telop"):
+            tt = self.fit(str(s["telop"]), 80, self.W * 0.86)
+            paste(c, tt, self.W / 2, self.H * 0.42, self.P(sc, int(s.get("at_telop", 0)), t))
+
+    def _clip(self, path: str) -> list[Image.Image]:
+        if not path or not Path(path).exists():
+            return []
+        def load():
+            W, H = self.W, self.H
+            cmd = ["ffmpeg", "-v", "error", "-i", path, "-vf",
+                   f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}",
+                   "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+            raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+            n = len(raw) // (W * H * 3)
+            return [Image.frombuffer("RGB", (W, H), raw[k * W * H * 3:(k + 1) * W * H * 3]).convert("RGBA") for k in range(n)]
+        return self.tile(("clip", path), load)
+
+
+def _shade(W: int, H: int) -> Image.Image:
+    """下ほど暗くする幕（実写の上でも字幕が読める）."""
+    a = (np.clip((np.arange(H) / H - 0.55) / 0.45, 0, 1) ** 1.5 * 200).astype(np.uint8)
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    img.putalpha(Image.fromarray(np.repeat(a[:, None], W, axis=1), "L"))
+    return img
+
+
 def _dot(s: int, col) -> Image.Image:
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     ImageDraw.Draw(img).ellipse([0, 0, s - 1, s - 1], fill=col)
     return img
+
+# ----------------------------------------------------------------------
+# カメラ・操作の動き（UI/UX アニメーション）の小道具
+# ----------------------------------------------------------------------
+DEFAULT_CAM = {"opening": "crane", "chapter": "dolly_in", "number": "dolly_zoom", "grid": "orbit", "bars": "tilt",
+               "carousel": "track", "phone": "pan", "cta": "crane", "menu": "still", "modal": "still",
+               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in"}
+
+
+def _affine(img: Image.Image, W: int, H: int, s: float, dx: float, dy: float) -> Image.Image:
+    """img の中心を画面の中心に合わせ、s 倍して (dx, dy) ずらした W×H の画像."""
+    cx, cy = img.width / 2, img.height / 2
+    a = 1 / s
+    c = cx - (W / 2 + dx) * a
+    f = cy - (H / 2 + dy) * a
+    return img.transform((W, H), Image.AFFINE, (a, 0, c, 0, a, f), resample=Image.BILINEAR)
+
+
+def _persp_coeffs(src: list[tuple[float, float]], dst: list[tuple[float, float]]) -> list[float]:
+    """出力の点 dst → 入力の点 src に写す PIL の PERSPECTIVE 係数."""
+    A, B = [], []
+    for (x, y), (u, v) in zip(dst, src):
+        A.append([x, y, 1, 0, 0, 0, -u * x, -u * y])
+        A.append([0, 0, 0, x, y, 1, -v * x, -v * y])
+        B += [u, v]
+    return list(np.linalg.solve(np.array(A, float), np.array(B, float)))
+
+
+def _orbit(img: Image.Image, deg: float) -> Image.Image:
+    """前景の板を縦の軸で回す（被写体のまわりを回り込むカメラ）."""
+    W, H = img.size
+    th = math.radians(deg)
+    D = W * 2.2
+    out = []
+    for x, y in ((0, 0), (W, 0), (W, H), (0, H)):
+        X, Y = x - W / 2, y - H / 2
+        Xr, Z = X * math.cos(th), X * math.sin(th)
+        k = D / (D + Z)
+        out.append((W / 2 + Xr * k, H / 2 + Y * k))
+    co = _persp_coeffs([(0, 0), (W, 0), (W, H), (0, H)], out)
+    return img.transform((W, H), Image.PERSPECTIVE, co, resample=Image.BILINEAR)
+
+
+def cursor(c: Image.Image, x: float, y: float, r: float) -> None:
+    d = ImageDraw.Draw(c)
+    d.polygon([(x, y), (x, y + r * 1.3), (x + r * 0.38, y + r * 0.95), (x + r * 0.62, y + r * 1.45),
+               (x + r * 0.8, y + r * 1.36), (x + r * 0.56, y + r * 0.86), (x + r, y + r * 0.86)],
+              fill=WHITE, outline=(0, 0, 0))
+
+
+def ripple(c: Image.Image, x: float, y: float, dt: float, rmax: float) -> None:
+    """押した所から広がる波紋."""
+    if not 0 <= dt <= 0.45:
+        return
+    k = dt / 0.45
+    r = rmax * ease_out(k)
+    a = int(150 * (1 - k))
+    ImageDraw.Draw(c).ellipse([x - r, y - r, x + r, y + r], outline=(255, 255, 255, a), width=3)
+
+
+def click_times(sc: "Scene") -> list[float]:
+    """その場面で「押す」時刻（効果音と画面の動きの両方で使う）."""
+    s = sc.spec
+    k = sc.kind
+    if k == "cta":
+        return [sc.at(int(s.get("at_click", 1)))]
+    if k == "menu":
+        return [sc.at(0) + 0.35]
+    if k == "modal":
+        return [max(sc.at(0) + 0.8, (sc.lines[-1].end if sc.lines else sc.end) - 0.1)] if s.get("close", True) else []
+    if k == "radio":
+        return [sc.at(int(s.get("at_choose", 1))) + 0.45]
+    if k == "pulldown":
+        return [sc.at(0) + 0.45, sc.at(int(s.get("at_choose", 1))) + 0.5]
+    return []
 
 
 def _grad(k: float):

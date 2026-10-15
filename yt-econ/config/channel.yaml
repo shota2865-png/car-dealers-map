@@ -73,7 +73,7 @@ video:
   body_sections: 8
 
 script:
-  model: "claude-opus-5"
+  model: "claude-opus-5-5"
   effort: "high"
   # 台本の前に「リサーチの木」（説明できる視点を5〜6個集めて2〜3個採用）を作る。
   # 構成は config/style_bible.yaml の 9 ブロック
@@ -87,7 +87,7 @@ script:
 topics:
   # 手動の週間スケジュール（日付つきの企画キュー）。空欄なら config/schedule.yaml
   schedule_file: ""
-  model: "claude-opus-5"
+  model: "claude-opus-5-5"
   effort: "medium"
   # 1回の収集で何件の候補を評価するか
   fetch_limit: 60

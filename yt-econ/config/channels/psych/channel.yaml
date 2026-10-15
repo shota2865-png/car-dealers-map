@@ -171,7 +171,7 @@ presenter:
 # 本編（16:9・15〜20 分・ながら聴き）。台本は src/ytecon/honpen.py、画面は wide.py、組み立ては quiz.build(wide=True)
 # あいさつ（greeting / closing）・聴かれ方（listener / tone）も honpen.py の既定を上書きできる
 honpen:
-  model: "claude-opus-5"
+  model: "claude-opus-5-5"
   effort: "high"
   minutes: 18
   parts: 4                  # 章の数（各章に 2 択クイズが 1 問）。今日の問い 1 つに、4 つの検証で順に答える
@@ -215,7 +215,7 @@ shorts:
   per_video: 6
   # quiz = 参加型テスト（2 択 → 研究 → 今日のひとつ）。src/ytecon/quiz.py
   mode: quiz
-  model: "claude-opus-5"
+  model: "claude-opus-5-5"
   effort: "medium"
   bgm_db: -22
   cta:
