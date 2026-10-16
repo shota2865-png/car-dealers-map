@@ -1,6 +1,6 @@
 """実話ドキュメンタリー型（docu）の素材集め: 引用するショート動画・Google の動画生成（Veo）・BGM.
 
-  quote_media(url)   引用元の投稿の映像（取れなければ表紙の画像）。TikTok / YouTube は oEmbed で表紙が取れる
+  quote_media(url)   引用元の投稿の映像。ブラウザで開いて保存 → 画面収録 → yt-dlp → 表紙の画像（oEmbed）の順
   veo(prompt)        Gemini API の Veo で 8 秒の映像を作る（GEMINI_API_KEY が無ければ作らない）
   prepare(spec)      台本の phone / carousel / footage に素材のパスを書き込む
   bgm(cfg)           情報系の BGM。曲はリポジトリに置かず、config の url から取ってくる（再配布できないため）
@@ -48,18 +48,67 @@ def _oembed(url: str) -> dict[str, Any]:
         return {}
 
 
-def quote_media(url: str, workdir: Path, seconds: float = 10.0, ytdlp: str = "yt-dlp") -> Path | None:
-    """引用する投稿の映像（最初の数秒）。取れなければ表紙の画像。どちらも無理なら None."""
+def _node_path() -> str:
+    """Playwright を global に入れたときの場所（require('playwright') が見つかるように）."""
+    try:
+        return subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=20).stdout.strip()
+    except Exception:
+        return ""
+
+
+def _cut(src: Path, out: Path, start: float, seconds: float, crop: dict[str, float] | None = None,
+         ffmpeg: str = "ffmpeg") -> Path | None:
+    """使う数秒だけ切り出す（音は入れない。語りと BGM を邪魔しない）."""
+    vf = ["fps=30"]
+    if crop and crop.get("w", 0) > 50 and crop.get("h", 0) > 50:
+        vf.insert(0, f"crop={int(crop['w']) // 2 * 2}:{int(crop['h']) // 2 * 2}:{int(crop['x'])}:{int(crop['y'])}")
+    try:
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-ss", f"{start:.2f}", "-i", str(src), "-t", f"{seconds:.2f}",
+                        "-vf", ",".join(vf), "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                        "-pix_fmt", "yuv420p", str(out)], check=True, timeout=300, capture_output=True)
+        return out if out.exists() and out.stat().st_size > 1000 else None
+    except Exception as exc:
+        log.info("切り出しに失敗: %s", exc)
+        return None
+
+
+def browser_grab(url: str, workdir: Path, start: float = 0.0, seconds: float = 10.0) -> Path | None:
+    """ブラウザで投稿を開いて映像を保存（ダメなら画面収録）。Playwright が無ければ None."""
+    script = Path(__file__).resolve().parents[2] / "scripts" / "tiktok_grab.cjs"
+    key = "".join(ch if ch.isalnum() else "_" for ch in url)[-80:]
+    raw = workdir / f"raw_{key}.mp4"
+    env = {**os.environ, "NODE_PATH": os.environ.get("NODE_PATH") or _node_path()}
+    try:
+        res = subprocess.run(["node", str(script), url, str(raw), "--record", f"{start + seconds + 1:.0f}"],
+                             capture_output=True, text=True, timeout=240, env=env)
+        info = json.loads((res.stdout.strip().splitlines() or ["{}"])[-1])
+    except Exception as exc:
+        log.info("ブラウザで開けませんでした（%s）: %s", url, exc)
+        return None
+    out = workdir / f"q_{key}.mp4"
+    if info.get("mode") == "download" and raw.exists():
+        return _cut(raw, out, start, seconds)
+    if info.get("mode") == "record" and info.get("webm") and info.get("box"):
+        return _cut(Path(info["webm"]), out, float(info.get("skip", 4)) + start, seconds, crop=info.get("box"))
+    log.info("ブラウザでも映像を取れませんでした（%s）: %s", url, info)
+    return None
+
+
+def quote_media(url: str, workdir: Path, seconds: float = 10.0, ytdlp: str = "yt-dlp", start: float = 0.0) -> Path | None:
+    """引用する投稿の映像（数秒）。ブラウザで保存 → 画面収録 → yt-dlp → 表紙の画像の順に試す."""
     workdir.mkdir(parents=True, exist_ok=True)
     key = "".join(ch if ch.isalnum() else "_" for ch in url)[-80:]
     for ext in (".mp4", ".jpg"):
         p = workdir / f"q_{key}{ext}"
         if p.exists() and p.stat().st_size > 1000:
             return p
+    got = browser_grab(url, workdir, start, seconds)
+    if got:
+        return got
     mp4 = workdir / f"q_{key}.mp4"
     try:
         subprocess.run([ytdlp, "--no-warnings", "-q", "-f", "mp4[height<=1280]/best[height<=1280]/best",
-                        "--download-sections", f"*0-{seconds:.0f}", "-o", str(mp4), url],
+                        "--download-sections", f"*{start:.0f}-{start + seconds:.0f}", "-o", str(mp4), url],
                        check=True, timeout=180, capture_output=True)
         if mp4.exists() and mp4.stat().st_size > 1000:
             return mp4
@@ -124,15 +173,20 @@ def prepare(spec: dict[str, Any], workdir: Path, *, vertical: bool = False, max_
     for i, sc in enumerate(spec.get("scenes") or []):
         kind = sc.get("type")
         if kind == "phone" and sc.get("url") and not sc.get("media"):
-            m = quote_media(str(sc["url"]), workdir / "quotes")
+            m = quote_media(str(sc["url"]), workdir / "quotes", start=float(sc.get("start", 0)))
             if m:
                 sc["media"] = str(m)
         if kind == "carousel":
             for it in sc.get("items") or []:
                 if it.get("url") and not it.get("media"):
-                    m = quote_media(str(it["url"]), workdir / "quotes")
+                    m = quote_media(str(it["url"]), workdir / "quotes", start=float(it.get("start", 0)))
                     if m:
                         it["media"] = str(m)
+        if kind == "footage" and sc.get("url") and not sc.get("clip"):          # 実在の投稿の映像を大きく流す
+            m = quote_media(str(sc["url"]), workdir / "quotes", start=float(sc.get("start", 0)), seconds=12)
+            if m:
+                sc["clip"] = str(m)
+                sc.setdefault("fit", "phone")
         if kind == "footage" and sc.get("prompt") and not sc.get("clip") and made < max_clips:
             clip = veo(str(sc["prompt"]), workdir / "veo" / f"scene{i:02d}.mp4", model=model,
                        aspect="9:16" if vertical else "16:9", resolution=resolution)

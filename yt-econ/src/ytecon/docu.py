@@ -479,6 +479,8 @@ class Renderer:
         """その場面の t の絵（背景＋カメラで動かした前景）。字幕と隅の文字は frame で載せる."""
         spec = sc.spec
         tone = str(spec.get("bg", DEFAULT_BG.get(sc.kind, "green")))
+        if sc.kind == "footage" and not (spec.get("clip") and Path(str(spec["clip"])).exists()):
+            tone = str(spec.get("bg", "green"))                       # 映像が無いときは宇宙にしない
         canvas = self.backdrop(tone, t)
         fg = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
         draw = getattr(self, "s_" + sc.kind, self.s_statement)
@@ -1390,20 +1392,55 @@ class Renderer:
 
     # --- 実写の映像（Veo などで作った mp4） ---------------------------------
     def s_footage(self, c: Image.Image, sc: Scene, t: float) -> None:
-        """mp4 を画面いっぱいに（下は字幕が読めるように暗く）。映像が無ければ宇宙の背景にテロップだけ."""
+        """実写の映像。縦の投稿（TikTok など）は中央に大きく・背景にそのぼかし、横の映像は画面いっぱい.
+
+        映像が無いときは、ふつうのテロップの場面として描く（宇宙の背景に字だけ、にはしない）。
+        """
         s = sc.spec
         clip = str(s.get("clip", "") or "")
-        if clip and Path(clip).exists():
-            st = self._streams.get(clip)
+        if not (clip and Path(clip).exists()):
+            self.s_statement(c, sc, t) if s.get("text") else self._telop_only(c, sc, t)
+            return
+        vertical_src = str(s.get("fit", "")) == "phone" or clip.endswith(".jpg")
+        dt = t - sc.start
+        if vertical_src and not self.v:
+            ch = int(self.H * 0.84)
+            cw = int(ch * 9 / 16)
+            st = self._streams.get(clip + "#p")
             if st is None:
-                st = self._streams[clip] = Stream(Path(clip), self.W, self.H, self.fps, loop=True)
-            arr = st.get(int((t - sc.start) * self.fps))
-            if arr is not None:
-                c.alpha_composite(Image.fromarray(arr, "RGB").convert("RGBA"))
-                c.alpha_composite(self.tile(("shade",), lambda: _shade(self.W, self.H)))
+                st = self._streams[clip + "#p"] = Stream(Path(clip), cw, ch, self.fps, loop=True)
+            arr = st.get(int(dt * self.fps))
+            if arr is None:
+                return
+            fr = Image.fromarray(arr, "RGB")
+            small = fr.resize((max(1, cw // 10), max(1, ch // 10)), Image.BILINEAR).filter(ImageFilter.GaussianBlur(3))
+            bg = _cover(small, self.W // 8, self.H // 8).resize((self.W, self.H), Image.BILINEAR).convert("RGBA")
+            bg.putalpha(150)
+            c.alpha_composite(bg)
+            card = fr.convert("RGBA")
+            card.putalpha(self.tile(("fm", cw, ch), lambda: rounded((cw, ch), self.S(24), (255, 255, 255, 255)).getchannel("A")))
+            x = self.W * (0.64 if s.get("telop") else 0.5)
+            paste(c, card, x, self.H * 0.47, self.P(sc, 0, t), pop=False, slide=self.S(30))
+            if s.get("telop"):
+                tt = self.txt(str(s["telop"]), 66, align="left")
+                paste(c, tt, self.W * 0.06 + tt.width / 2, self.H * 0.42, self.P(sc, int(s.get("at_telop", 0)), t))
+            return
+        st = self._streams.get(clip)
+        if st is None:
+            st = self._streams[clip] = Stream(Path(clip), self.W, self.H, self.fps, loop=True)
+        arr = st.get(int(dt * self.fps))
+        if arr is not None:
+            c.alpha_composite(Image.fromarray(arr, "RGB").convert("RGBA"))
+            c.alpha_composite(self.tile(("dim",), lambda: Image.new("RGBA", (self.W, self.H), (0, 0, 0, 70))))
+            c.alpha_composite(self.tile(("shade",), lambda: _shade(self.W, self.H)))
         if s.get("telop"):
             tt = self.fit(str(s["telop"]), 84, self.W * 0.86)
             paste(c, tt, self.W / 2, self.H * (0.42 if not self.v else 0.4), self.P(sc, int(s.get("at_telop", 0)), t))
+
+    def _telop_only(self, c: Image.Image, sc: Scene, t: float) -> None:
+        if sc.spec.get("telop"):
+            tt = self.fit(str(sc.spec["telop"]), 96, self.W * 0.86)
+            paste(c, tt, self.W / 2, self.H * (0.44 if not self.v else 0.4), self.P(sc, 0, t))
 
     # --- 立体の棒グラフ（宇宙の床に立つ光る角柱） --------------------------
     def s_bars3d(self, c: Image.Image, sc: Scene, t: float) -> None:
@@ -1501,7 +1538,7 @@ def _dot(s: int, col) -> Image.Image:
 # カメラ・操作の動き（UI/UX アニメーション）の小道具
 # ----------------------------------------------------------------------
 GOLD3D = (255, 206, 92)
-DEFAULT_BG = {"opening": "tesseract", "chapter": "tesseract", "bars3d": "space", "footage": "space"}
+DEFAULT_BG = {"opening": "tesseract", "chapter": "tesseract", "bars3d": "space"}
 DEFAULT_CAM = {"opening": "crane", "chapter": "dolly_in", "number": "dolly_zoom", "grid": "orbit", "bars": "tilt",
                "carousel": "track", "phone": "pan", "cta": "crane", "menu": "still", "modal": "still",
                "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in", "bars3d": "dolly_in"}

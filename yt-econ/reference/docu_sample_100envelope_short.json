@@ -19,6 +19,16 @@
    "per_line": false
   },
   {
+   "type": "footage",
+   "lead": 0.05,
+   "url": "https://www.tiktok.com/@budget.with.milly8/video/7342239760955624747",
+   "source": "引用：TikTok @budget.with.milly8",
+   "telop": "[1日1枚]ずつ",
+   "lines": [
+    "アメリカで何百万回も見られた貯金法です"
+   ]
+  },
+  {
    "type": "grid",
    "n": 100,
    "cols": 10,
