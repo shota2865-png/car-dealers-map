@@ -351,6 +351,15 @@ def plan(scenes: list[Scene], gap: float = 0.16, tail: float = 0.35, lead: float
                     sfx.append((sc.at(int(it.get("at", i))), "WHOOSH", -17))
         for tc in click_times(sc):
             sfx.append((tc, "CLICK", -9))
+        if kind == "anim":
+            pre = str(sc.spec.get("preset", ""))
+            n = len(sc.lines)
+            if pre == "jar_fill":
+                sfx += [(sc.at(i) + 0.62, "POP", -12) for i in range(n)]
+            elif pre in ("coin_stacks", "think", "flow"):
+                sfx += [(sc.at(i), "POP", -14) for i in range(n)]
+            elif pre == "risk":
+                sfx += [(sc.at(i), "IMPACT", -14) for i in range(1, n)]
         if kind == "radio" and sc.spec.get("answer") is not None:
             sfx.append((sc.at(int(sc.spec.get("at_answer", 2))), "POP", -11))
     return Plan(scenes=scenes, duration=t, sfx=sfx)
@@ -1442,6 +1451,11 @@ class Renderer:
             tt = self.fit(str(sc.spec["telop"]), 96, self.W * 0.86)
             paste(c, tt, self.W / 2, self.H * (0.44 if not self.v else 0.4), self.P(sc, 0, t))
 
+    # --- 2D / 3D アニメ（anim.py） ------------------------------------------
+    def s_anim(self, c: Image.Image, sc: Scene, t: float) -> None:
+        from . import anim
+        anim.render(self, c, sc, t)
+
     # --- 立体の棒グラフ（宇宙の床に立つ光る角柱） --------------------------
     def s_bars3d(self, c: Image.Image, sc: Scene, t: float) -> None:
         """3D の角柱が i 行目の語りで 1 本ずつ伸びる。上に値、下に名前、最後に「約N倍」."""
@@ -1541,7 +1555,7 @@ GOLD3D = (255, 206, 92)
 DEFAULT_BG = {"opening": "tesseract", "chapter": "tesseract", "bars3d": "space"}
 DEFAULT_CAM = {"opening": "crane", "chapter": "dolly_in", "number": "dolly_zoom", "grid": "orbit", "bars": "tilt",
                "carousel": "track", "phone": "pan", "cta": "crane", "menu": "still", "modal": "still",
-               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in", "bars3d": "dolly_in"}
+               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in", "bars3d": "dolly_in", "anim": "dolly_in"}
 
 
 def _affine(img: Image.Image, W: int, H: int, s: float, dx: float, dy: float) -> Image.Image:
