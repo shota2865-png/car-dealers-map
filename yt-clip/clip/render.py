@@ -88,6 +88,21 @@ def _center(d: ImageDraw.ImageDraw, y: int, text: str, font: ImageFont.FreeTypeF
     d.text((x, y), text, font=font, fill=fill, stroke_width=sw, stroke_fill=stroke)
 
 
+def end_card_png(main: str, sub: str, font_path: Path, out: Path) -> Path:
+    """最後の 2 秒に出す登録のお願い（赤い帯に白い字・2 行）."""
+    f1, f2 = _fit(main, font_path, 64, W - 120, 40), _fit(sub, font_path, 54, W - 120, 36)
+    a1, d1 = f1.getmetrics()
+    a2, d2 = f2.getmetrics()
+    h = a1 + d1 + a2 + d2 + 70
+    im = Image.new("RGBA", (W, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle([40, 0, W - 40, h], fill="#E3122D")
+    d.text(((W - f1.getlength(main)) / 2, 22), main, font=f1, fill="#FFFFFF")
+    d.text(((W - f2.getlength(sub)) / 2, 22 + a1 + d1 + 16), sub, font=f2, fill="#FFF3A0")
+    im.save(out)
+    return out
+
+
 def background(out: Path) -> Path:
     """濃紺のグラデーション＋上下の赤い細線（映像の無いところに見える）."""
     im = Image.new("RGB", (W, H))
@@ -118,11 +133,14 @@ def frame_layer(clip: dict[str, Any], layout: dict[str, Any], fonts: dict[str, P
     d.rectangle([0, y0 + BAR_H, W, top], fill=BAND)
     l1, l2 = clip.get("band1") or "", clip.get("band2") or ""
     rows = [t for t in ((l1, l2) if layout["subs"] else (l1,)) if t]
-    if len(rows) == 1:
-        rows = _wrap(rows[0], _font(font, 80), W - 80, 2)
+    # 1 行で収まるなら（字を 64 まで小さくしてでも）1 行。長いときだけ文節の切れ目で 2 行に分ける
+    if len(rows) == 1 and _font(font, 64).getlength(rows[0]) > W - 70:
+        ph, half = phrases(rows[0]), len(rows[0]) / 2
+        cut = min(range(1, len(ph)), key=lambda i: abs(len("".join(ph[:i])) - half)) if len(ph) > 1 else 0
+        rows = ["".join(ph[:cut]), "".join(ph[cut:])] if cut else _wrap(rows[0], _font(font, 80), W - 80, 2)
     rh = BAND_H // max(1, len(rows))
     for k, t in enumerate(rows[:2]):
-        f = _fit(t, font, 88 if len(rows) == 1 else 78, W - 70)
+        f = _fit(t, font, 88 if len(rows) == 1 else 78, W - 70, 60)
         asc, desc = f.getmetrics()
         _center(d, y0 + BAR_H + k * rh + (rh - asc - desc) // 2, t, f, "#FFFFFF", "#0B4E86", 5)
     # 配信日（映像の左上）
@@ -468,6 +486,12 @@ def render_short(clip: dict[str, Any], src: Path, out: Path, fonts: dict[str, Pa
         f.append(f"[{last}][{i + 3}:v]overlay=(W-w)/2:{lay['sub_y']}:"
                  f"enable='between(t,{s['t0']:.2f},{s['t1']:.2f})'[{nxt}]")
         last = nxt
+    if clip.get("end_card") and dur > 8:
+        # 最後の 2 秒、映像のすぐ下（字幕・小見出しの上に重ねる）に登録のお願い
+        card = end_card_png(clip["end_card"], clip.get("end_card_sub") or "", fonts["gothic"], work / "end.png")
+        inputs += ["-loop", "1", "-t", f"{dur:.2f}", "-i", str(card)]
+        f.append(f"[{last}][{len(pngs) + 3}:v]overlay=0:{lay['end_y'] + 10}:enable='gte(t,{dur - 2.2:.2f})'[v_end]")
+        last = "v_end"
     f.append("[ac]loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs,
            "-filter_complex", ";".join(f), "-map", f"[{last}]", "-map", "[aout]",
