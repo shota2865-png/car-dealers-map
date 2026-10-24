@@ -304,7 +304,7 @@ def render(r: Any, c: Image.Image, sc: Any, t: float) -> None:
     W, H = r.W, r.H
     stage = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
     pen = Pen(stage)
-    f = {k: font(int(r.S(v) * SS), "black") for k, v in (("s", 26), ("m", 38), ("l", 56), ("xl", 76))}
+    f = {k: font(int(r.S(v) * SS), "black") for k, v in (("s", 32), ("m", 46), ("l", 66), ("xl", 92))}
     P = {"jar_fill": _jar_fill, "coin_stacks": _coin_stacks, "flow": _flow, "walk": _walk, "risk": _risk, "think": _think}
     P.get(preset, _jar_fill)(r, pen, sc, t, f)
     small = stage.reduce(SS)

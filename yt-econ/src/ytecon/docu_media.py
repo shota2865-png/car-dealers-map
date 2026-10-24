@@ -210,3 +210,38 @@ def bgm(root: Path, file: str, url: str = "") -> Path | None:
     except Exception as exc:
         log.warning("BGM を取れませんでした: %s", exc)
         return None
+
+
+# 効果音（Mixkit の無料素材）。再配布はできないので、リポジトリには置かず使うときに取ってくる
+SFX_PACK = {
+    "COIN": 1999,       # Gold coin prize（お金が入る・数字が出る）
+    "TYPE": 1393,       # Smartphone typing（文字が打ち出される）
+    "DING": 2870,       # Correct answer tone（正解・登録）
+    "BUZZ": 946,        # Wrong answer fail notification（不正解・危険）
+    "SWOOSH": 3005,     # Explainer video pops whoosh light pop（場面・部品の切り替え）
+    "POP2": 2354,       # Message pop alert（吹き出し・小窓）
+    "PAGE": 1530,       # Paper slide（カード・投稿が出る）
+    "TICK": 900,        # Sci fi click（刻み）
+    "SUSPENSE": 667,    # Game show suspense waiting（クイズの考える間。頭の 1.6 秒だけ）
+    # 手持ち（assets/sfx/*.mp3）が無いときの代わり
+    "POP": 2364,        # Hard pop click
+    "WHOOSH": 1492,     # Cinematic whoosh fast transition
+    "IMPACT": 1143,     # Cinematic whoosh deep impact
+    "CLICK": 1113,      # Mouse click close
+    "RISER": 790,       # Cinematic trailer riser
+}
+
+
+def sfx_pack(root: Path) -> Path:
+    """assets/sfx/mixkit/<名前>.mp3 をそろえる（無いものだけ取る）。取れなくても動画づくりは止めない."""
+    d = root / "assets" / "sfx" / "mixkit"
+    d.mkdir(parents=True, exist_ok=True)
+    for name, sid in SFX_PACK.items():
+        p = d / f"{name}.mp3"
+        if p.exists() and p.stat().st_size > 1000:
+            continue
+        try:
+            p.write_bytes(_get(f"https://assets.mixkit.co/active_storage/sfx/{sid}/{sid}-preview.mp3", 60))
+        except Exception as exc:
+            log.info("効果音を取れませんでした（%s）: %s", name, exc)
+    return d

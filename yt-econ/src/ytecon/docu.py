@@ -38,7 +38,7 @@ except Exception:                       # pragma: no cover
 log = logging.getLogger(__name__)
 
 FPS = 60
-TRANSITION = 0.42                       # 場面のつなぎ（前の場面がズームしながら溶けて、次が奥から来る）
+TRANSITION = 0.3                        # 場面のつなぎ（前の場面がズームしながら溶けて、次が奥から来る）
 WHITE = (242, 242, 240)
 RED = (255, 52, 52)
 RED_BOX = (226, 30, 38)
@@ -315,18 +315,26 @@ def wav_len(p: Path) -> float:
         return w.getnframes() / w.getframerate()
 
 
-SFX_OF = {"chapter": ("WHOOSH", -9), "opening": ("RISER", -12), "number": ("POP", -12), "compare": ("POP", -14),
-          "kinetic": ("WHOOSH", -16), "modal": ("POP", -12), "radio": ("POP", -16), "carousel": ("WHOOSH", -15)}
+SFX_OF = {"chapter": ("WHOOSH", -9), "opening": ("RISER", -12), "compare": ("POP", -14),
+          "kinetic": ("TYPE", -17), "modal": ("POP2", -11), "radio": ("POP", -16), "carousel": ("PAGE", -12),
+          "phone": ("PAGE", -12), "footage": ("PAGE", -13), "menu": ("SWOOSH", -14), "steps": ("SWOOSH", -15),
+          "bars3d": ("RISER", -16), "grid": ("SWOOSH", -16), "accordion": ("SWOOSH", -16), "pulldown": ("SWOOSH", -17),
+          "cta": ("SWOOSH", -15), "statement": ("SWOOSH", -18), "anim": ("SWOOSH", -18), "checklist": ("SWOOSH", -17)}
+_MONEY = re.compile(r"[円$＄]|ドル")
 
 
-def plan(scenes: list[Scene], gap: float = 0.16, tail: float = 0.35, lead: float = 0.25) -> Plan:
+def plan(scenes: list[Scene], gap: float = 0.07, tail: float = 0.16, lead: float = 0.1) -> Plan:
+    """語りの時刻を決め、効果音を置く（テンポ優先: 行の間 0.07 秒・場面の頭 0.1 秒）.
+
+    効果音は場面の頭・部品が出るたび・数字が出たとき・正解/不正解・押したとき・お金の動き、に多めに置く。
+    """
     t = 0.0
     sfx: list[tuple[float, str, float]] = []
     for sc in scenes:
         sc.start = t
         t += float(sc.spec.get("lead", lead))
         if sc.kind in ("chapter",):
-            t += 0.5
+            t += 0.25
         for ln in sc.lines:
             ln.start = t
             ln.end = t + wav_len(ln.wav)
@@ -335,33 +343,70 @@ def plan(scenes: list[Scene], gap: float = 0.16, tail: float = 0.35, lead: float
             t += float(sc.spec.get("hold", 2.0))
         t += float(sc.spec.get("tail", tail))
         sc.end = t
-        # 効果音: 場面の頭 ＋ 部品が出るたび
+        s = sc.spec
         kind = sc.kind
+        n = len(sc.lines)
         if kind in SFX_OF:
             name, db = SFX_OF[kind]
-            sfx.append((sc.start + (0.0 if kind != "number" else lead), name, db))
-        if any(st == "box" for _, st in runs(str(sc.spec.get("text", "")) + str(sc.spec.get("text2", "")))):
-            sfx.append((sc.at(1 if sc.spec.get("text2") and "[[" in str(sc.spec.get("text2")) else 0) + 0.02, "IMPACT", -13))
-        if kind in ("compare", "points", "steps", "checklist", "phone", "accordion"):
-            for i in range(1, len(sc.lines)):
-                sfx.append((sc.at(i), "POP", -17))
-        if kind == "carousel":
-            for i, it in enumerate(sc.spec.get("items") or []):
+            sfx.append((sc.start, name, db))
+        if kind == "chapter":
+            sfx.append((sc.start + 0.35, "IMPACT", -15))
+        if any(st == "box" for _, st in runs(str(s.get("text", "")) + str(s.get("text2", "")))):
+            sfx.append((sc.at(1 if s.get("text2") and "[[" in str(s.get("text2")) else 0) + 0.02, "IMPACT", -13))
+        if kind == "statement" and s.get("text2"):
+            sfx.append((sc.at(int(s.get("at2", 1))), "POP", -15))
+        if kind == "number":                                  # 数え上げ → 止まったところで鳴らす
+            sfx.append((sc.at(0), "RISER", -18))
+            hit = "COIN" if _MONEY.search(str(s.get("value", ""))) else "IMPACT"
+            sfx.append((sc.at(0) + 0.9, hit, -11))
+        if kind in ("compare", "points", "steps", "checklist", "phone", "accordion", "kinetic", "menu"):
+            for i in range(1, n):
+                sfx.append((sc.at(i), "POP", -16))
+        if kind == "compare":
+            for i, it in enumerate(s.get("items") or []):
+                if _MONEY.search(str(it.get("value", ""))):
+                    sfx.append((sc.at(int(it.get("at", i))) + 0.1, "COIN", -16))
+        if kind == "grid":                                    # 埋まっていく間、小さく刻む
+            t0 = sc.at(int(s.get("start_line", 0)))
+            t1 = sc.lines[-1].end if sc.lines else sc.end
+            k = t0
+            while k < min(t1, t0 + 2.4):
+                sfx.append((k, "TICK", -20))
+                k += 0.16
+        if kind == "bars3d":
+            for i in range(len(s.get("values") or [])):
+                at = int((s.get("at") or list(range(99)))[i])
+                sfx.append((sc.at(at) + 0.55, "COIN" if (s.get("tops") and _MONEY.search(str(s["tops"][i]))) else "POP", -15))
+        if kind in ("carousel",):
+            for i, it in enumerate(s.get("items") or []):
                 if i:
-                    sfx.append((sc.at(int(it.get("at", i))), "WHOOSH", -17))
+                    sfx.append((sc.at(int(it.get("at", i))), "SWOOSH", -14))
         for tc in click_times(sc):
             sfx.append((tc, "CLICK", -9))
+        if kind == "cta":
+            sfx.append((click_times(sc)[0] + 0.12, "DING", -13))
         if kind == "anim":
-            pre = str(sc.spec.get("preset", ""))
-            n = len(sc.lines)
+            pre = str(s.get("preset", ""))
             if pre == "jar_fill":
-                sfx += [(sc.at(i) + 0.62, "POP", -12) for i in range(n)]
-            elif pre in ("coin_stacks", "think", "flow"):
-                sfx += [(sc.at(i), "POP", -14) for i in range(n)]
+                sfx += [(sc.at(i) + 0.62, "COIN", -11) for i in range(n)]
+            elif pre == "coin_stacks":
+                sfx += [(sc.at(int((s.get("at") or list(range(99)))[i])) + 0.4, "COIN", -13) for i in range(len(s.get("values") or []))]
+            elif pre == "think":
+                sfx += [(sc.at(i), "POP2", -13) for i in range(n)]
+            elif pre == "flow":
+                sfx += [(sc.at(i), "POP", -14) for i in range(n)] + [(sc.at(0) + 0.3, "COIN", -17)]
+            elif pre == "walk":
+                sfx += [(sc.at(i) + 0.2, "TICK", -16) for i in range(n)]
             elif pre == "risk":
-                sfx += [(sc.at(i), "IMPACT", -14) for i in range(1, n)]
-        if kind == "radio" and sc.spec.get("answer") is not None:
-            sfx.append((sc.at(int(sc.spec.get("at_answer", 2))), "POP", -11))
+                sfx += [(sc.at(i), "IMPACT", -13) for i in range(1, n)] + [(sc.at(i) + 0.15, "BUZZ", -19) for i in range(1, n)]
+        if kind == "radio" and s.get("answer") is not None:
+            ta = sc.at(int(s.get("at_answer", 2)))
+            sfx.append((ta, "DING", -11))
+            if int(s.get("choose", -1)) != int(s["answer"]):
+                sfx.append((ta + 0.05, "BUZZ", -17))
+            sfx.append((sc.at(0) + 0.3, "SUSPENSE", -22))
+        if kind == "modal" and s.get("close", True):
+            sfx.append((click_times(sc)[0] + 0.1, "SWOOSH", -16))
     return Plan(scenes=scenes, duration=t, sfx=sfx)
 
 
@@ -418,7 +463,8 @@ class Renderer:
         self._streams: dict[str, Stream] = {}
         self.v = H > W                                  # 縦（Shorts）
         self.k = W / 1920 if not self.v else W / 1080   # 文字の大きさの基準
-        self.sub_size = sub_size or (38 if not self.v else 64)
+        self.sub_size = sub_size or (50 if not self.v else 72)
+        self.ts = 1.22                                  # テロップ全体の大きさ（見やすさ優先で大きめ）
         self.bgs = {tone: background(W, H, tone) for tone in ("green", "red", "dark")}
         self._tiles: dict[Any, Image.Image] = {}
 
@@ -432,7 +478,7 @@ class Renderer:
         return self._tiles[key]
 
     def txt(self, text: str, size: float, **kw) -> Image.Image:
-        size = self.S(size)
+        size = self.S(size * self.ts)
         return self.tile(("t", text, size, tuple(sorted(kw.items()))), lambda: text_tile(text, size, **kw))
 
     def fit(self, text: str, size: float, maxw: float, **kw) -> Image.Image:
@@ -455,13 +501,13 @@ class Renderer:
             lh = int(self.sub_size * 1.32)
             tile = Image.new("RGBA", (self.W, lh * len(rows) + self.sub_size), (0, 0, 0, 0))
             d = ImageDraw.Draw(tile)
-            for i, r in enumerate(rows):
+            for i, r in enumerate(rows):                         # 行ごとに半透明の黒い帯＋縁取りで、どの背景でも読める
                 w = f.getlength(r)
                 x = (self.W - w) / 2
                 y = i * lh + 4
-                for dx, dy in ((0, 3), (2, 2), (-2, 2)):
-                    d.text((x + dx, y + dy), r, font=f, fill=(0, 0, 0, 200))
-                d.text((x, y), r, font=f, fill=WHITE)
+                pad = self.sub_size * 0.35
+                d.rounded_rectangle([x - pad, y - pad * 0.35, x + w + pad, y + self.sub_size * 1.18], int(pad * 0.6), fill=(0, 0, 0, 150))
+                d.text((x, y), r, font=f, fill=WHITE, stroke_width=max(2, self.sub_size // 16), stroke_fill=(0, 0, 0))
             if len(self._tiles) > 4000:
                 self._tiles.clear()
             self._tiles[key] = tile
@@ -475,7 +521,7 @@ class Renderer:
 
     def corner(self, canvas: Image.Image, source: str, date: str) -> None:
         d = ImageDraw.Draw(canvas)
-        f = font(self.S(21), "bold")
+        f = font(self.S(26), "bold")
         m = self.S(34)
         if source:
             d.text((m, m * 0.7), source, font=f, fill=GRAY)
@@ -491,6 +537,7 @@ class Renderer:
         if sc.kind == "footage" and not (spec.get("clip") and Path(str(spec["clip"])).exists()):
             tone = str(spec.get("bg", "green"))                       # 映像が無いときは宇宙にしない
         canvas = self.backdrop(tone, t)
+        self._bgc = canvas                       # カメラで動かさない背景（引用の投稿のぼかしなど）はここに描く
         fg = Image.new("RGBA", (self.W, self.H), (0, 0, 0, 0))
         draw = getattr(self, "s_" + sc.kind, self.s_statement)
         draw(fg, sc, t)
@@ -610,7 +657,7 @@ class Renderer:
                 d.text((x, y), "＞", font=f_off, fill=DIM + (a,))
                 x += f_off.getlength("＞") + self.S(14)
 
-    def P(self, sc: Scene, i: int, t: float, dur: float = 0.35) -> float:
+    def P(self, sc: Scene, i: int, t: float, dur: float = 0.28) -> float:
         return (t - sc.at(i)) / dur
 
     def s_statement(self, c: Image.Image, sc: Scene, t: float) -> None:
@@ -864,7 +911,7 @@ class Renderer:
         s = sc.spec
         card = self.phone_card(s, t - sc.start)
         blur = self.tile(("phb", s.get("handle"), s.get("quote"), s.get("media")), lambda: self._blur_of(self.phone_card(s, 0.0)))
-        c.alpha_composite(blur, (0, 0))
+        self._bgc.alpha_composite(blur, (0, 0))                     # 背景は止めたまま
         p = self.P(sc, 0, t)
         if self.v:
             paste(c, card, self.W / 2, self.H * 0.4, p, slide=self.S(40))
@@ -1073,7 +1120,7 @@ class Renderer:
         lh = int(size * 1.25)
         y0 = self.H * (0.44 if not self.v else 0.4) - lh * len(rows) / 2
         d = ImageDraw.Draw(c)
-        step = float(s.get("stagger", 0.045))
+        step = float(s.get("stagger", 0.03))
         for ri, row in enumerate(rows):
             chars = [(ch, st) for txt, st in runs(row) for ch in txt]
             widths = [f.getlength(ch) + (size * 0.0 if st != "box" else 0) for ch, st in chars]
@@ -1425,7 +1472,7 @@ class Renderer:
             small = fr.resize((max(1, cw // 10), max(1, ch // 10)), Image.BILINEAR).filter(ImageFilter.GaussianBlur(3))
             bg = _cover(small, self.W // 8, self.H // 8).resize((self.W, self.H), Image.BILINEAR).convert("RGBA")
             bg.putalpha(150)
-            c.alpha_composite(bg)
+            self._bgc.alpha_composite(bg)                           # 背景は止めたまま
             card = fr.convert("RGBA")
             card.putalpha(self.tile(("fm", cw, ch), lambda: rounded((cw, ch), self.S(24), (255, 255, 255, 255)).getchannel("A")))
             x = self.W * (0.64 if s.get("telop") else 0.5)
@@ -1439,9 +1486,10 @@ class Renderer:
             st = self._streams[clip] = Stream(Path(clip), self.W, self.H, self.fps, loop=True)
         arr = st.get(int(dt * self.fps))
         if arr is not None:
-            c.alpha_composite(Image.fromarray(arr, "RGB").convert("RGBA"))
-            c.alpha_composite(self.tile(("dim",), lambda: Image.new("RGBA", (self.W, self.H), (0, 0, 0, 70))))
-            c.alpha_composite(self.tile(("shade",), lambda: _shade(self.W, self.H)))
+            b = self._bgc                                           # 画面いっぱいの映像も止めたまま（カメラで動かさない）
+            b.alpha_composite(Image.fromarray(arr, "RGB").convert("RGBA"))
+            b.alpha_composite(self.tile(("dim",), lambda: Image.new("RGBA", (self.W, self.H), (0, 0, 0, 70))))
+            b.alpha_composite(self.tile(("shade",), lambda: _shade(self.W, self.H)))
         if s.get("telop"):
             tt = self.fit(str(s["telop"]), 84, self.W * 0.86)
             paste(c, tt, self.W / 2, self.H * (0.42 if not self.v else 0.4), self.P(sc, int(s.get("at_telop", 0)), t))
@@ -1480,10 +1528,10 @@ class Renderer:
             tx, ty = inf["top_full"]
             bx, by = inf["base"]
             if i < len(tops):
-                f = font(44, "black")
+                f = font(50, "black")
                 d.text((tx, ty - 34 - (1 - k) * 20), tops[i], font=f, fill=(GOLD3D if hl[i] else WHITE) + (int(255 * k),), anchor="ms")
             if i < len(labs):
-                d.text((bx, by + 40), labs[i], font=font(30, "bold"), fill=(200, 214, 230, int(255 * k)), anchor="mt")
+                d.text((bx, by + 40), labs[i], font=font(38, "bold"), fill=(220, 230, 240, int(255 * k)), anchor="mt")
         if self.v:
             sw = self.W / 1920
             lay = lay.resize((self.W, int(1080 * sw)), Image.BILINEAR)
@@ -1499,7 +1547,7 @@ class Renderer:
             if self.v:
                 paste(c, side, self.W / 2, self.H * 0.68, self.P(sc, i, t))
             else:
-                paste(c, side, self.W / 2, self.H * 0.23, self.P(sc, i, t))
+                paste(c, side, self.W * 0.04 + side.width / 2, self.H * 0.24, self.P(sc, i, t))
 
 
 def _shade(W: int, H: int) -> Image.Image:
@@ -1554,8 +1602,8 @@ def _dot(s: int, col) -> Image.Image:
 GOLD3D = (255, 206, 92)
 DEFAULT_BG = {"opening": "tesseract", "chapter": "tesseract", "bars3d": "space"}
 DEFAULT_CAM = {"opening": "crane", "chapter": "dolly_in", "number": "dolly_zoom", "grid": "orbit", "bars": "tilt",
-               "carousel": "track", "phone": "pan", "cta": "crane", "menu": "still", "modal": "still",
-               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "dolly_in", "bars3d": "dolly_in", "anim": "dolly_in"}
+               "carousel": "still", "phone": "still", "cta": "crane", "menu": "still", "modal": "still",
+               "radio": "dolly_in", "pulldown": "still", "accordion": "tilt", "footage": "still", "bars3d": "dolly_in", "anim": "dolly_in"}
 
 
 def _affine(img: Image.Image, W: int, H: int, s: float, dx: float, dy: float) -> Image.Image:
@@ -1699,7 +1747,10 @@ def loop_bgm(ffmpeg: str, src: Path, seconds: float, out: Path, xfade: float = 3
 
 def mix(ffmpeg: str, voice: Path, plan_: Plan, sfx_dir: Path, bgm: Path | None, out: Path,
         bgm_db: float = -21.0) -> Path:
-    files = {p.stem.upper(): p for p in sfx_dir.glob("*.mp3")} if sfx_dir.exists() else {}
+    files: dict[str, Path] = {}
+    for d in (sfx_dir / "mixkit", sfx_dir):                  # 取ってきた効果音 → 手持ちがあればそちらを優先
+        if d.exists():
+            files.update({p.stem.upper(): p for p in d.glob("*.mp3")})
     cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(voice)]
     filters = ["[0:a]aresample=48000,aformat=channel_layouts=stereo[v]"]
     labels = ["[v]"]
@@ -1717,7 +1768,8 @@ def mix(ffmpeg: str, voice: Path, plan_: Plan, sfx_dir: Path, bgm: Path | None, 
             continue
         cmd += ["-i", str(p)]
         ms = int(max(0, t) * 1000)
-        filters.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={db}dB,adelay={ms}|{ms}[s{j}]")
+        filters.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:1.6,afade=t=out:st=1.2:d=0.4,"
+                       f"volume={db}dB,adelay={ms}|{ms}[s{j}]")
         labels.append(f"[s{j}]")
         k += 1
     filters.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:duration=first,loudnorm=I=-15:TP=-1.5:LRA=11[out]")
