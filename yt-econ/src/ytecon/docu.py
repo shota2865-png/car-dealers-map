@@ -1816,5 +1816,36 @@ def render(spec: dict[str, Any], out: Path, workdir: Path, synth: Callable[[str]
         st.close()
     (workdir / "plan.json").write_text(json.dumps(
         [{"type": s.kind, "start": round(s.start, 2), "end": round(s.end, 2)} for s in pl.scenes], ensure_ascii=False, indent=1))
+    write_srt(pl, out.with_name("subtitles.srt"))
+    out.with_name("chapters.json").write_text(json.dumps(chapters(pl), ensure_ascii=False), encoding="utf-8")
     log.info("書き出し: %s（%.1f 秒）", out, pl.duration)
+    return out
+
+
+def _ts(sec: float) -> str:
+    ms = int(round(sec * 1000))
+    h, ms = divmod(ms, 3600_000)
+    m, ms = divmod(ms, 60_000)
+    s_, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s_:02d},{ms:03d}"
+
+
+def write_srt(pl: Plan, path: Path) -> Path:
+    """YouTube に一緒に上げる字幕（語りの 1 行 = 1 字幕）."""
+    rows = []
+    k = 1
+    for sc in pl.scenes:
+        for ln in sc.lines:
+            rows.append(f"{k}\n{_ts(ln.start)} --> {_ts(ln.end)}\n{ln.text}\n")
+            k += 1
+    path.write_text("\n".join(rows), encoding="utf-8")
+    return path
+
+
+def chapters(pl: Plan) -> list[tuple[float, str]]:
+    """概要欄のもくじ（0:00 は冒頭、あとは章の扉の時刻と題）."""
+    out: list[tuple[float, str]] = [(0.0, "冒頭")]
+    for sc in pl.scenes:
+        if sc.kind == "chapter":
+            out.append((round(sc.start, 1), plain(str(sc.spec.get("title", "")))))
     return out

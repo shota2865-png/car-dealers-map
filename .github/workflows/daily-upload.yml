@@ -154,6 +154,12 @@ jobs:
         if: steps.gate.outputs.skip != 'true' && env.CLAUDE_CODE_OAUTH_TOKEN != ''
         run: npm install -g @anthropic-ai/claude-code
 
+      # 新しい形（docu）で、引用する投稿をブラウザで開いて保存するのに使う。入らなくても投稿の引用を省いて作る
+      - name: ブラウザ（Playwright）を入れる
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          npm install -g playwright@1.56.1 && npx playwright install --with-deps chromium || echo "Playwright を入れられませんでした（引用なしで作ります）"
+
       # --- 素材 -----------------------------------------------------------
       # 動く背景（Mixkit の実写 1080p、2〜3GB）はキャッシュに置く。初回だけ取得に 10〜20 分かかる。両チャンネルで共用
       - name: 背景素材のキャッシュを復元
@@ -285,6 +291,9 @@ jobs:
             yt-econ/${{ matrix.workdir }}/**/script.json
             yt-econ/${{ matrix.workdir }}/**/story.json
             yt-econ/${{ matrix.workdir }}/**/honpen.json
+            yt-econ/${{ matrix.workdir }}/**/docu/spec.json
+            yt-econ/${{ matrix.workdir }}/**/docu/shorts.json
+            yt-econ/${{ matrix.workdir }}/**/docu/candidates.json
             yt-econ/${{ matrix.workdir }}/**/quiz.json
             yt-econ/${{ matrix.workdir }}/**/metadata.json
             yt-econ/${{ matrix.workdir }}/**/subtitles.srt

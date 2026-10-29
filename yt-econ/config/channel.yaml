@@ -503,7 +503,35 @@ revive:
   cooldown_days: 45
 
 pipeline:
+  # docu = 実話ドキュメンタリー型（黒緑の背景・極太テロップ・立体グラフ・2D/3D アニメ・引用。docu.py）
+  #   2026-10-29 から 1 週間テスト。失敗した日は今までの形（classic）で出す（docu.fallback）
+  format: "docu"
   videos_per_day: 1
   workdir: "output"
   # 失敗時のリトライ回数
   retries: 2
+
+# ----------------------------------------------------------------------
+# 実話ドキュメンタリー型（pipeline.format: docu）
+#   調べた台本（script.py）を材料に、AI が場面の台本を書き（docu_script.py）、60fps で書き出す（docu.py）
+# ----------------------------------------------------------------------
+docu:
+  source: "script"              # 材料: 経済の台本（調べもの・事実確認つき）
+  kind: "経済"
+  minutes: 7                    # 本編の長さ（約 7.2 字/秒で字数を決める）
+  chars_per_sec: 7.2
+  fps: 60
+  voice:
+    speaker: 11                 # 玄野武宏（落ち着いた男性の一人語り）
+    speed: 1.25
+    intonation: 1.2
+  bgm:
+    file: "Mixkit - Close Up.mp3"
+    url: "https://assets.mixkit.co/music/1167/1167.mp3"
+    db: -22
+  shorts_seconds: "30〜40"      # 経済の Shorts は 30〜40 秒（45 秒にはしない）
+  tiktok: true                  # 引用に使える実在の投稿を探す（取れなければ使わない）
+  tiktok_min_plays: 50000
+  veo_max: 0                    # Google の動画生成（Veo）で作る場面の上限。GEMINI_API_KEY（課金あり）を入れたら 1〜2 に
+  fallback: true
+  fallback_format: "classic"

@@ -19,9 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import capcut, character, metadata, render, scenes as scenes_mod, script as script_mod, subtitles, thumbnail
+from . import capcut, character, metadata, render, subtitles, thumbnail, tts, youtube
+from . import scenes as scenes_mod
+from . import script as script_mod
 from . import topics as topics_mod
-from . import tts, youtube
 from .config import Config, load_config
 from .state import Store
 
@@ -287,7 +288,17 @@ class Pipeline:
                 upload: bool = True, slug: str | None = None) -> dict[str, Any]:
         # 再試行では同じ slug を渡す。台本・音声・動画は出来ている所から続きをやる（毎回最初から作り直さない）
         slug = slug or slugify(topic.title)
-        if str(self.cfg.get("pipeline.format", "")) == "honpen":
+        fmt = str(self.cfg.get("pipeline.format", ""))
+        if fmt == "docu":
+            try:
+                return self.produce_docu(topic, slot_index=slot_index, upload=upload, slug=slug)
+            except Exception as exc:
+                rec = self.store.get_video(slug)
+                if (rec and rec.youtube_id) or not self.cfg.get("docu.fallback", True):
+                    raise
+                fmt = str(self.cfg.get("docu.fallback_format", "classic"))
+                log.error("[%s] 新しい形（docu）で作れなかったので、今までの形（%s）で作ります: %s", slug, fmt, exc)
+        if fmt == "honpen":
             return self.produce_honpen(topic, slot_index=slot_index, upload=upload, slug=slug)
         if self.store.get_video(slug) is None:
             self.store.create_video(slug, topic.id, topic.title)
@@ -326,6 +337,254 @@ class Pipeline:
                                     error=f"{exc}\n{traceback.format_exc()[-1500:]}")
             raise
 
+    # --- 実話ドキュメンタリー型（docu）: 調べた材料 → AI が場面の台本 → 60fps の本編 → Shorts -----------------
+    def _docu_synth(self):
+        """docu の語り（VOICEVOX。話者と速さは docu.voice の設定）."""
+        v = tts.VoiceVox(self.cfg)
+        v.speaker = int(self.cfg.get("docu.voice.speaker", 11))
+        v.speed = float(self.cfg.get("docu.voice.speed", 1.25))
+        v.intonation = float(self.cfg.get("docu.voice.intonation", 1.2))
+        return v.synth
+
+    def _docu_render(self, spec: dict[str, Any], out: Path, work: Path, vertical: bool = False) -> Path:
+        from . import docu, docu_media
+        media = docu_media.prepare(spec, work.parent / "media", vertical=vertical,
+                                   max_clips=int(self.cfg.get("docu.veo_max", 0)))
+        docu_media.sfx_pack(self.cfg.root)
+        bgm = docu_media.bgm(self.cfg.root, str(self.cfg.get("docu.bgm.file", "Mixkit - Close Up.mp3")),
+                             str(self.cfg.get("docu.bgm.url", "https://assets.mixkit.co/music/1167/1167.mp3")))
+        return docu.render(media, out, work, self._docu_synth(), vertical=vertical, bgm=bgm,
+                           bgm_db=float(self.cfg.get("docu.bgm.db", -22)), fps=int(self.cfg.get("docu.fps", 60)))
+
+    def _docu_material(self, slug: str, topic: topics_mod.Topic) -> tuple[dict[str, Any], str, Any, Any]:
+        """(材料, 題, 経済の VideoScript か None, 心理学の本編 JSON か None)."""
+        import dataclasses
+        src = str(self.cfg.get("docu.source", "script"))
+        art = self.art(slug)
+        if src == "honpen":
+            from . import honpen as honpen_mod
+            hp = art.dir / "honpen.json"
+            if hp.exists():
+                data = json.loads(hp.read_text(encoding="utf-8"))
+            else:
+                tdict = dataclasses.asdict(topic) if dataclasses.is_dataclass(topic) else dict(topic)
+                data = honpen_mod.write_honpen(self.cfg, tdict)
+                hp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            ol = data.get("outline") or {}
+            material = {"title": data.get("title"), "question": data.get("question"), "outline": ol,
+                        "narration": [" ".join(str(t) for t, _ in (sc.get("narration") or [])) for sc in data.get("scenes") or []]}
+            return material, str(data.get("title") or topic.title), None, data
+        sc = self.stage_script(slug, topic)
+        material = {"title": sc.topic_title, "search_keyword": sc.search_keyword, "hook": sc.hook, "proof": sc.proof,
+                    "sections": [{"heading": x.heading, "narration": x.narration, "on_screen": x.on_screen} for x in sc.sections],
+                    "closing": sc.closing, "research": sc.research, "sources": sc.sources,
+                    "terms": [dataclasses.asdict(t) if dataclasses.is_dataclass(t) else t for t in sc.terms]}
+        return material, sc.topic_title, sc, None
+
+    def _docu_description(self, meta: Any, spec: dict[str, Any], chapters: list, with_chapters: bool) -> Any:
+        """概要欄を docu 用に直す: もくじ・出典・引用した投稿・声と素材のクレジット."""
+        import itertools
+
+        from .metadata import MAX_DESCRIPTION, _voice_credit
+        desc = meta.description
+        old_voice = _voice_credit(self.cfg)
+        sp = int(self.cfg.get("docu.voice.speaker", 11))
+        names = {11: "玄野武宏", 13: "青山龍星", 2: "四国めたん（ノーマル）", 3: "ずんだもん（ノーマル）"}
+        new_voice = ("この動画のナレーションは音声合成ソフト VOICEVOX を使用しています。\n"
+                     f"VOICEVOX：{names.get(sp, f'話者ID {sp}')}\nhttps://voicevox.hiroshiba.jp/")
+        desc = desc.replace(old_voice, new_voice)
+        old_bgm = str(self.cfg.get("render.bgm.credit", "") or "").strip()
+        if old_bgm:
+            desc = desc.replace(old_bgm, "")
+        parts = [desc.strip()]
+        ch = [(float(t), str(n)) for t, n in chapters if n]
+        if with_chapters and len(ch) >= 3 and all(b[0] - a[0] >= 10 for a, b in itertools.pairwise(ch)):
+            parts.append("■ もくじ\n" + "\n".join(f"{int(t // 60)}:{int(t % 60):02d} {n}" for t, n in ch))
+        srcs = list(dict.fromkeys(str(sc.get("source")).replace("出典：", "").replace("引用：", "")
+                                  for sc in spec.get("scenes") or [] if sc.get("source")))
+        if srcs:
+            parts.append("■ この動画で使った数字・引用の出典\n" + "\n".join(f"・{x}" for x in srcs))
+        quotes = []
+        for sc in spec.get("scenes") or []:
+            for it in [sc] + list(sc.get("items") or []):
+                if isinstance(it, dict) and it.get("url") and it["url"] not in quotes:
+                    quotes.append(it["url"])
+        if quotes:
+            parts.append("■ 引用した投稿\n" + "\n".join(quotes))
+        parts.append("■ 素材\nBGM・効果音：Mixkit（https://mixkit.co/）")
+        meta.description = "\n\n".join(p for p in parts if p.strip())[:MAX_DESCRIPTION]
+        return meta
+
+    def produce_docu(self, topic: topics_mod.Topic, slot_index: int = 0,
+                     upload: bool = True, slug: str | None = None) -> dict[str, Any]:
+        """材料 → docu の台本 → 本編（60fps）→ 投稿 → Shorts。どの段階も出来ていれば続きから."""
+        from . import docu_script, finals
+        slug = slug or slugify(topic.title)
+        if self.store.get_video(slug) is None:
+            self.store.create_video(slug, topic.id, topic.title)
+        self.store.update_video(slug, horizon=topic.horizon, stage={"kind": "long", "format": "docu"})
+        if topic.id:
+            self.store.mark_topic_used(topic.id)
+        art = self.art(slug)
+        ddir = art.dir / "docu"
+        ddir.mkdir(parents=True, exist_ok=True)
+        log.info("=== [%s] %s（docu）===", slug, topic.title)
+        try:
+            material, title, s, honpen_data = self._docu_material(slug, topic)
+            sp = ddir / "spec.json"
+            if sp.exists():
+                spec = json.loads(sp.read_text(encoding="utf-8"))
+            else:
+                cp = ddir / "candidates.json"
+                if cp.exists():
+                    cand = json.loads(cp.read_text(encoding="utf-8"))
+                else:
+                    cand = docu_script.tiktok_candidates(self.cfg, title, json.dumps(material, ensure_ascii=False)[:800])
+                    cp.write_text(json.dumps(cand, ensure_ascii=False, indent=1), encoding="utf-8")
+                spec = docu_script.make_spec(self.cfg, material, kind=str(self.cfg.get("docu.kind", "経済")),
+                                             minutes=float(self.cfg.get("docu.minutes", 7)), candidates=cand, title=title)
+                sp.write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
+            self.store.update_video(slug, status="scripted", stage={"docu_spec": str(sp)})
+            if not art.video.exists():
+                self._docu_render(spec, art.video, ddir / "work")
+            chapters = json.loads((art.dir / "chapters.json").read_text(encoding="utf-8")) if (art.dir / "chapters.json").exists() else []
+            self.store.update_video(slug, status="rendered", stage={"video": str(art.video)})
+            result: dict[str, Any] = {"slug": slug, "title": title, "dir": str(art.dir)}
+
+            rec = self.store.get_video(slug)
+            if rec and rec.youtube_id:
+                log.info("[%s] 本編は投稿済み: %s", slug, rec.youtube_id)
+                result.update({"video_id": rec.youtube_id, "publish_at": rec.publish_at, "url": (rec.stage or {}).get("url", "")})
+            elif upload:
+                day = self._publish_day(slot_index)
+                final_name = (rec.stage or {}).get("final_name") if rec else None
+                if not final_name:
+                    final_name = finals.assign(self.cfg, self.store, day)
+                    self.store.update_video(slug, stage={"final_name": final_name})
+                manual = thumbnail.pick_manual(self.cfg, slug, day, extra=[final_name])
+                if s is not None:
+                    vtitle, thumb_copy = metadata.choose_title(self.cfg, s, horizon=topic.horizon)
+                    if thumb_copy.get("main"):
+                        s.thumbnail_copy = thumb_copy
+                        s.save(art.script)
+                    if manual is not None:
+                        thumbnail.prepare(manual, art.thumb)
+                    else:
+                        thumbnail.build(self.cfg, s, art.thumb)
+
+                    class _NoBlocks:                       # docu はもくじを自分で作る（台本のブロックの時刻は使わない）
+                        def block_span(self, _bid: str) -> tuple[float, float]:
+                            return (0.0, 0.0)
+                    meta = metadata.build(self.cfg, s, _NoBlocks(), title=vtitle)  # type: ignore[arg-type]
+                    meta = self._docu_description(meta, spec, chapters, with_chapters=True)
+                    playlists = topic_playlists(self.cfg, s.search_keyword or "", meta.title)
+                else:
+                    import dataclasses
+
+                    from . import honpen as honpen_mod
+                    if manual is not None:
+                        thumbnail.prepare(manual, art.thumb)
+                    else:
+                        honpen_mod.thumbnail(self.cfg, honpen_data, art.thumb)
+                    tdict = dataclasses.asdict(topic) if dataclasses.is_dataclass(topic) else dict(topic)
+                    meta = honpen_mod.honpen_metadata(self.cfg, honpen_data, chapters, tdict)
+                    meta = self._docu_description(meta, spec, chapters, with_chapters=False)
+                    playlists = []
+                art.meta.write_text(json.dumps(meta.__dict__, ensure_ascii=False, indent=2), encoding="utf-8")
+                res = youtube.publish(self.cfg, self.store, art.video, meta, thumbnail=art.thumb,
+                                      srt=art.dir / "subtitles.srt", slot_index=slot_index, extra_playlists=playlists)
+                self.store.update_video(slug, status="uploaded", title=meta.title, youtube_id=res["video_id"],
+                                        publish_at=res["publish_at"], stage={"url": res["url"]})
+                kept = finals.keep(self.cfg, final_name, art.video, art.thumb)
+                result.update(res)
+                result.update({"final_name": final_name, "final_video": kept["video"]})
+            else:
+                log.info("[%s] アップロードはスキップしました", slug)
+
+            n = int(self.cfg.get("shorts.per_video", 0))
+            if n > 0:
+                result["shorts"] = self._docu_shorts(slug, spec, n, parent_url=result.get("url", ""), upload=upload)
+            return result
+        except Exception as exc:
+            self.store.update_video(slug, status="failed", error=f"{exc}\n{traceback.format_exc()[-1500:]}")
+            raise
+
+    def _docu_short_meta(self, ss: dict[str, Any], parent_url: str) -> Any:
+        from . import domain
+        from .metadata import Metadata, subscribe_line
+        t = str(ss.get("title") or "").strip()
+        title = (t if "#Shorts" in t else f"{t} #Shorts")[:100]
+        first = next((ln for sc in ss.get("scenes") or [] for ln in sc.get("lines") or []), "")
+        parts = [first]
+        if parent_url:
+            parts.append(f"▶ くわしい解説（本編）\n{parent_url}")
+        parts.append(subscribe_line(self.cfg))
+        srcs = list(dict.fromkeys(str(sc.get("source")).replace("出典：", "").replace("引用：", "")
+                                  for sc in ss.get("scenes") or [] if sc.get("source")))
+        if srcs:
+            parts.append("■ 出典\n" + "\n".join(f"・{x}" for x in srcs))
+        sp = int(self.cfg.get("docu.voice.speaker", 11))
+        parts.append(f"VOICEVOX：{'玄野武宏' if sp == 11 else f'話者ID {sp}'} / BGM・効果音：Mixkit")
+        parts.append(" ".join(domain.hashtags(self.cfg) + ["#Shorts"]))
+        tags = [x.lstrip("#") for x in domain.hashtags(self.cfg)] + ["Shorts"]
+        return Metadata(title=title, description="\n\n".join(p for p in parts if p)[:5000], tags=tags[:15],
+                        category_id=str(self.cfg.get("upload.category_id", "25")), language=str(self.cfg.get("upload.language", "ja")))
+
+    def _docu_shorts(self, parent_slug: str, spec: dict[str, Any], n: int,
+                     parent_url: str = "", upload: bool = True) -> list[dict[str, Any]]:
+        from . import docu_script
+        art = self.art(parent_slug)
+        parent = self.store.get_video(parent_slug)
+        after = None
+        if parent and parent.publish_at:
+            try:
+                after = dt.datetime.fromisoformat(str(parent.publish_at).replace("Z", "+00:00"))
+            except ValueError:
+                after = None
+        times = self.cfg.get("shorts.publish_times_jst") or None
+        sp = art.dir / "docu" / "shorts.json"
+        try:
+            if sp.exists():
+                specs = json.loads(sp.read_text(encoding="utf-8"))
+            else:
+                specs = docu_script.make_shorts(self.cfg, spec, n, seconds=str(self.cfg.get("docu.shorts_seconds", "30〜40")))
+                sp.write_text(json.dumps(specs, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception as exc:
+            log.error("Shorts の台本を作れませんでした: %s", exc)
+            return [{"error": str(exc)}]
+        out = []
+        for k, ss in enumerate(specs[:n]):
+            qdir = art.dir / "shorts" / f"short_{k + 1:02d}"
+            qdir.mkdir(parents=True, exist_ok=True)
+            sslug = f"{parent_slug}-short{k + 1}"
+            try:
+                srec = self.store.get_video(sslug)
+                if srec and srec.youtube_id:
+                    out.append({"slug": sslug, "video_id": srec.youtube_id, "publish_at": srec.publish_at})
+                    continue
+                video = qdir / "video.mp4"
+                if not video.exists():
+                    self._docu_render(ss, video, qdir / "work", vertical=True)
+                meta = self._docu_short_meta(ss, parent_url)
+                (qdir / "metadata.json").write_text(json.dumps(meta.__dict__, ensure_ascii=False, indent=1), encoding="utf-8")
+                if not upload:
+                    out.append({"video": str(video), "title": meta.title})
+                    continue
+                if not srec:
+                    self.store.create_video(sslug, parent.topic_id if parent else None, meta.title)
+                self.store.update_video(sslug, stage={"kind": "short", "parent": parent_slug, "parent_url": parent_url, "format": "docu"})
+                res = youtube.publish(self.cfg, self.store, video, meta, thumbnail=None, srt=None,
+                                      slot_index=k, publish_times=times, playlist=False, after=after)
+                self.store.update_video(sslug, status="uploaded", youtube_id=res["video_id"],
+                                        publish_at=res["publish_at"], stage={"url": res["url"]})
+                out.append({"slug": sslug, **res})
+            except Exception as exc:                  # Shorts の失敗で本編の結果は壊さない
+                log.error("Shorts %d の作成・投稿に失敗: %s", k + 1, exc)
+                out.append({"error": str(exc)})
+                if upload and (qdir / "video.mp4").exists():
+                    self._keep_pending_short(sslug, parent_slug, k, qdir)
+        return out
+
     # --- 心理学まくら: 寝落ち向け 30 分の本編 + 参加型テストの Shorts ---------------
     def produce_honpen(self, topic: topics_mod.Topic, slot_index: int = 0,
                        upload: bool = True, slug: str | None = None) -> dict[str, Any]:
@@ -334,6 +593,7 @@ class Pipeline:
         どの段階も出来ていれば読み込んで続きから（再試行で作り直さない）。
         """
         import dataclasses
+
         from . import finals
         from . import honpen as honpen_mod
         from . import quiz as quiz_mod
@@ -471,6 +731,7 @@ class Pipeline:
     def upload_pending_shorts(self) -> int:
         """前の実行で上げられなかった Shorts を、本編の公開より後の枠で予約投稿する。上げた本数を返す."""
         import shutil
+
         from .metadata import Metadata
         times = self.cfg.get("shorts.publish_times_jst") or None
         n = 0
