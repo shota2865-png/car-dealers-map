@@ -144,6 +144,7 @@ def test_retry_resumes_same_slug_and_never_reuploads(tmp_path, monkeypatch):
     from ytecon.state import Store
     cfg = copy.deepcopy(load_config())
     cfg.raw["pipeline"]["workdir"] = str(tmp_path)
+    cfg.raw["pipeline"]["format"] = "classic"            # 今までの形の再試行を確かめる（docu は test_docu_pipeline）
     cfg.raw.setdefault("shorts", {})["per_video"] = 0
     store = Store(tmp_path / "s.sqlite3")
     pipe = Pipeline(cfg, store=store)
