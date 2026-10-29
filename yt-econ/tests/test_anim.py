@@ -42,3 +42,9 @@ def test_person_returns_hand_and_paints():
     hand = anim.person(anim.Pen(img), 200, 380, 300, walk=1.0, mood="tired", hold="coin")
     assert 100 < hand[0] < 320 and 150 < hand[1] < 400
     assert img.getbbox() is not None
+
+
+def test_jar_with_tiny_level_does_not_crash():
+    img = Image.new("RGBA", (600, 600), (0, 0, 0, 0))
+    for lv in (0.0, 0.001, 0.02, 1.0):
+        anim.jar(anim.Pen(img), 300, 500, 200, 260, lv)

@@ -72,6 +72,9 @@ class Pen:
             self.circle(x, y, r, fill=fill, outline=None)
 
     def rrect(self, x0, y0, x1, y1, r, fill=None, outline=INK, w=4):
+        if x1 <= x0 or y1 <= y0:                       # 伸び始めの 0 に近い大きさは描かない
+            return
+        r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)
         k = self.k
         self.d.rounded_rectangle([x0 * k, y0 * k, x1 * k, y1 * k], int(r * k), fill=fill, outline=outline, width=int(w * k) if outline else 0)
 
