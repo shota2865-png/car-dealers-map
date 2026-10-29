@@ -1,0 +1,15 @@
+{
+ "title": "新NISA、2026年前半だけで13.8兆円。みんな何を買った？ #Shorts",
+ "readings": {"新NISA": "しんニーサ", "NISA": "ニーサ", "1〜6月": "いちがつからろくがつ", "50代": "ごじゅうだい"},
+ "scenes": [
+  {"type": "kinetic", "bg": "red", "lead": 0.05, "text": "新NISA\n[13.8兆円]の行き先", "size": 80, "per_line": false, "lines": ["新NISAで、今年1月から6月に買われたのは、13兆8,214億円"]},
+  {"type": "hbars", "lead": 0.05, "items": [{"label": "投資信託", "value": 61.9, "text": "61.9%"}, {"label": "上場株式", "value": 34.5, "text": "34.5%", "hl": true}, {"label": "ETF", "value": 3.3, "text": "3.3%"}],
+   "source": "出典：金融庁（2026年6月末）", "lines": ["6割は投資信託、3割半は株"]},
+  {"type": "radio", "lead": 0.05, "question": "つみたて枠で一番人気は？", "options": ["アクティブ投信", "インデックス投信", "ETF"], "choose": 0, "answer": 1, "at_choose": 0, "at_answer": 1,
+   "lines": ["つみたて投資枠で一番買われたのは？", "インデックス投信。88%です"]},
+  {"type": "anim", "preset": "coin_stacks", "lead": 0.05, "values": [14.1, 13.0], "labels": ["オルカン", "S&P500"], "tops": ["約14.1兆円", "約13兆円"], "hl": [0], "at": [0, 0],
+   "source": "出典：三菱UFJ銀行・マネックス証券（2026年10月下旬）", "lines": ["一番人気のオルカンは、約14.1兆円まで大きくなりました"]},
+  {"type": "statement", "lead": 0.05, "text": "最多は[50代]", "text2": "口座600万・3.2兆円", "size": 100, "size2": 64, "source": "出典：金融庁", "lines": ["口座も、買った金額も、一番多いのは50代です"]},
+  {"type": "kinetic", "bg": "red", "lead": 0.05, "tail": 0.1, "text": "あなたは\n[何を]買ってる？", "size": 96, "per_line": false, "lines": ["あなたは、新NISAで何を買っていますか"]}
+ ]
+}

@@ -756,7 +756,7 @@ class Renderer:
         for i, (it, (x, y)) in enumerate(zip(items, pos)):
             p = self.P(sc, int(it.get("at", i)), t)
             lab = self.txt(str(it.get("label", "")), 34, weight="bold", color=GRAY)
-            val = self.fit(str(it.get("value", "")), float(s.get("size", 96)), (self.W / (n + 0.4)) if not self.v else self.W * 0.86)
+            val = self.fit(str(it.get("value", "")), float(s.get("size", 96)), (self.W / (n + 1) * 0.92) if not self.v else self.W * 0.86)
             paste(c, lab, x, y - val.height / 2 - self.S(16), p)
             paste(c, val, x, y, p)
             if it.get("note"):
@@ -1515,11 +1515,12 @@ class Renderer:
         hl = [i in [int(x) for x in s.get("hl") or []] for i in range(len(vals))]
         ats = [int(x) for x in (s.get("at") or list(range(len(vals))))]
         lay = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
-        infos = space.draw_bars3d(Image.new("RGBA", (8, 8)), vals, hl, p=1.0, only=-1)
+        cam = space.CAM if len(vals) <= 5 else space.Camera(pos=(1.9, 3.6, 14.5), target=(1.9, 1.45, 0.0), fov=44.0)   # 本数が多いときはカメラを引く
+        infos = space.draw_bars3d(Image.new("RGBA", (8, 8)), vals, hl, p=1.0, cam=cam, only=-1)
         for i in range(len(vals)):
             k = ease_out((t - sc.at(ats[i])) / 0.8)
             if k > 0:
-                space.draw_bars3d(lay, vals, hl, p=k, only=i)
+                space.draw_bars3d(lay, vals, hl, p=k, cam=cam, only=i)
         d = ImageDraw.Draw(lay)
         for i, inf in enumerate(infos):
             k = ease_out((t - sc.at(ats[i]) - 0.5) / 0.4)
@@ -1537,17 +1538,24 @@ class Renderer:
             lay = lay.resize((self.W, int(1080 * sw)), Image.BILINEAR)
             c.alpha_composite(lay, (0, int(self.H * 0.45 - lay.height / 2)))
         else:
-            c.alpha_composite(lay)
+            k = 0.9 if len(vals) == 5 else 1.0                       # 5 本は少し縮めて、左右が切れないように
+            if s.get("side"):
+                k = min(k, 0.88)
+            if k < 1:
+                small = lay.resize((int(1920 * k), int(1080 * k)), Image.BILINEAR)
+                c.alpha_composite(small, (int((self.W - small.width) / 2), int(self.H - small.height - self.H * 0.04)))
+            else:
+                c.alpha_composite(lay)
         if s.get("title"):
             tt = self.fit(str(s["title"]), 60, self.W * 0.86)
-            paste(c, tt, self.W / 2, self.H * (0.1 if not self.v else 0.2), self.P(sc, 0, t))
+            paste(c, tt, self.W / 2, self.H * (0.09 if not self.v else 0.2), self.P(sc, 0, t))
         if s.get("side"):
-            side = self.fit(str(s["side"]), 72, self.W * (0.4 if not self.v else 0.86))
+            side = self.fit(str(s["side"]), 64, self.W * (0.4 if not self.v else 0.86))
             i = int(s.get("at_side", len(sc.lines) - 1))
             if self.v:
                 paste(c, side, self.W / 2, self.H * 0.68, self.P(sc, i, t))
             else:
-                paste(c, side, self.W * 0.04 + side.width / 2, self.H * 0.24, self.P(sc, i, t))
+                paste(c, side, self.W / 2, self.H * 0.2, self.P(sc, i, t))
 
 
 def _shade(W: int, H: int) -> Image.Image:
