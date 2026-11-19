@@ -18,7 +18,8 @@ import requests
 
 log = logging.getLogger(__name__)
 
-PROMPT = """あなたは YouTube Shorts の切り抜き編集者です。マックスむらいさん（元AppBank、パズドラ実況・米国株/宇宙株の配信）の配信の一部を、番号つきの字幕で渡します。
+PROMPT = """あなたは YouTube Shorts の切り抜き編集者です。マックスむらいさん（元AppBank）のパズドラ・モンスト黄金期（2013〜2017年ごろ）の動画の一部を、番号つきの字幕で渡します。
+チャンネルのテーマは「パズドラ・モンスト黄金期の名場面」。当時見ていた人が懐かしくなり、知らない人も一瞬で状況が分かる 1 本にします。
 自動字幕なので誤字があります。意味を補って読んでください。
 
 やること:
@@ -26,14 +27,16 @@ PROMPT = """あなたは YouTube Shorts の切り抜き編集者です。マッ�
    - 起: 何の話かが一瞬で分かる行から始める（挨拶・前置き・「えー」は飛ばす）
    - 承・転: 話が進む行だけ残す。脱線・言い直し・コメント読みの寄り道・長い間は飛ばす（ジャンプカット）
    - 結: オチ・驚き・笑い・結論の一言で終わる。尻切れにしない
+   - ガチャ・降臨・ダンジョンなら「何に挑むか（回すか）→ 山場 → 結果 → リアクション」の順に。結果とリアクションは必ず入れ、リアクションのあと 2〜3 秒で終える
    - 範囲は 2〜8 個。時間の順に並べ、重ねない。各行の頭の秒数を見て、合計が {min_sec}〜{max_sec} 秒になるようにする
    - screen: その範囲でチャート・株価・画面に映っているものの話をしているなら true（画面を映す）。それ以外は false（顔を映す）
-2. Shorts のタイトル（全角 28 字以内）。実際に話している中身をそのまま言う。「マックスむらい」を入れる。
+2. Shorts のタイトル（全角 32 字以内）。頭に【パズドラ】か【モンスト】（ゲームが分からなければ付けない）。何が起きたかを具体的に（キャラ名・ダンジョン名・結果）。「マックスむらい」を入れる。
+   例「【パズドラ】ゼウス降臨を低レベル編成でクリアするマックスむらい」「【モンスト】超獣神祭10連でまさかの結果に驚くマックスむらい」
    煽り言葉（ヤバすぎ・大惨事・黒歴史・鬼畜・驚愕・衝撃・絶句・炎上 など）、起きていないこと、他人を貶める言い方は使わない（切り抜きの許可の条件）
 3. 見出し 2 つ。
-   - band1: 何の話か（全角 13 字以内。例「TOPIX除外銘柄は買い?」「ビール大手4社カルテル疑惑」）
+   - band1: 何に挑むか・何を回すか（全角 13 字以内。例「ゼウス降臨に低レベルで挑戦」「超獣神祭10連ガチャ」）
    - band2: 続きが気になる小見出し。単語ではなく文章にする。中身に無いことは書かない（全角 8〜13 字。例「果たしてバレるのか！？」「この後まさかの展開に…」「むらいが出した答えは？」）
-4. 切り抜きとしての面白さ 1〜10（内輪の話・挨拶・雑音だけなら 1〜3）
+4. 切り抜きとしての面白さ 1〜10（結果やリアクションが入っていない・内輪の話・挨拶・雑音だけなら 1〜3）
 5. 投資の話なら is_investment を true
 
 JSON だけを返す:
@@ -61,7 +64,11 @@ def chat(cfg: dict[str, Any], prompt: str, temperature: float = 0.4) -> dict[str
     key = os.environ.get(llm.get("key_env", "GEMINI_API_KEY"))
     if not key:
         return None
-    for model in llm.get("models") or []:
+    import time
+    exhausted: set[str] = set()
+    for model in [m for m in (llm.get("models") or []) for _ in (0, 1)]:   # 通信の瞬断に備えて各モデル 2 回まで
+        if model in exhausted:
+            continue
         try:
             r = requests.post(llm["base_url"].rstrip("/") + "/chat/completions", timeout=60,
                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -70,11 +77,14 @@ def chat(cfg: dict[str, Any], prompt: str, temperature: float = 0.4) -> dict[str
                                     "messages": [{"role": "user", "content": prompt}]})
             if r.status_code != 200:
                 log.warning("LLM %s: %s %s", model, r.status_code, r.text[:160].replace("\n", " "))
+                if r.status_code == 429:
+                    exhausted.add(model)          # その日の無料枠切れ。同じモデルは試さない
                 continue
             txt = r.json()["choices"][0]["message"]["content"]
             return json.loads(re.search(r"\{.*\}", txt, re.S).group(0))
         except Exception as e:  # noqa: BLE001  切り抜きは止めない
-            log.warning("LLM %s に聞けませんでした: %s", model, e)
+            log.warning("LLM %s に聞けませんでした: %s", model, str(e)[:160])
+            time.sleep(3)
     return None
 
 

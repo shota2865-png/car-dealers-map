@@ -55,11 +55,14 @@ def fresh_videos(src: dict[str, Any], exclude_words: list[str]) -> list[dict[str
     return out
 
 
-def archive_pool(handle: str, size: int) -> list[dict[str, Any]]:
+def archive_pool(handle: str, size: int, include: list[str] | None = None) -> list[dict[str, Any]]:
     """本チャンネルの通常動画を再生数順に並べて上から size 本（一覧の取得に 1〜3 分かかるので週 1 回だけ作り直す）."""
     cmd = [*ytdlp.base(), "--flat-playlist", "-J", f"https://www.youtube.com/{handle}/videos"]
     data = json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
     items = [e for e in data.get("entries", []) if e.get("id")]
     items.sort(key=lambda e: -(e.get("view_count") or 0))
+    items = items[:size]
+    if include:
+        items = [e for e in items if any(w in (e.get("title") or "") for w in include)]
     return [{"id": e["id"], "title": e.get("title", ""), "views": e.get("view_count") or 0,
-             "url": f"https://www.youtube.com/watch?v={e['id']}"} for e in items[:size]]
+             "url": f"https://www.youtube.com/watch?v={e['id']}"} for e in items]

@@ -74,10 +74,11 @@ def gather_archive(cfg: dict[str, Any], st: State, work: Path, need: int) -> lis
     a = cfg["sources"]["archive"]
     pool = st.data.get("archive_pool") or []
     built = st.data.get("archive_pool_at", "")
-    if not pool or built < (dt.date.today() - dt.timedelta(days=7)).isoformat():
+    if not pool or built < (dt.date.today() - dt.timedelta(days=7)).isoformat() or st.data.get("archive_pool_cfg") != a:
         try:
-            pool = sources.archive_pool(a["channel_handle"], int(a["pool_size"]))
+            pool = sources.archive_pool(a["channel_handle"], int(a["pool_size"]), a.get("include_title_words"))
             st.data["archive_pool"], st.data["archive_pool_at"] = pool, dt.date.today().isoformat()
+            st.data["archive_pool_cfg"] = a
         except Exception as e:  # noqa: BLE001
             log.warning("アーカイブの一覧を取れませんでした: %s", e)
     done = set(st.data.get("archive_done", []))
@@ -88,7 +89,8 @@ def gather_archive(cfg: dict[str, Any], st: State, work: Path, need: int) -> lis
     for v in rest:
         if len(got) >= need:
             break
-        v = {**v, "kind": "archive", "source_name": "マックスむらい", "per_video": 1, "show": "マックスむらい【切り抜き】"}
+        v = {**v, "kind": "archive", "source_name": "マックスむらい", "per_video": 1,
+             "show": (cfg.get("series") or {}).get("show") or "マックスむらい【切り抜き】"}
         try:
             cands = find.candidates(v, work / v["id"], cfg, 1)
         except Exception as e:  # noqa: BLE001
@@ -112,14 +114,22 @@ def dress(clip: dict[str, Any]) -> dict[str, Any]:
         y, mo, da = int(d[:4]), int(d[4:6]), int(d[6:])
         this_year = dt.date.today().year
         label = f"配信日:{mo}月{da}日" if y == this_year else f"{y}年{mo}月の動画"
+    se = cfg_series()
     return {**clip, "show": clip["video"].get("show"), "source_name": clip["video"].get("source_name"),
-            "date_label": label}
+            "date_label": label, "end_card": se.get("end_card"), "end_card_sub": se.get("end_card_sub")}
+
+
+_CFG: dict[str, Any] = {}
+
+
+def cfg_series() -> dict[str, Any]:
+    return _CFG.get("series") or {}
 
 
 def description(cfg: dict[str, Any], clip: dict[str, Any]) -> str:
     u = cfg["upload"]
     src = f"https://www.youtube.com/watch?v={clip['video']['id']}&t={int(clip['start'])}s"
-    parts = [clip["hook"] or clip["title"], ""]
+    parts = [clip["hook"] or clip["title"], "", "パズドラ・モンスト黄金期のマックスむらいの名場面を毎日投稿しています。チャンネル登録で続きをどうぞ。", ""]
     if clip.get("is_investment"):
         parts += [u["investment_note"], ""]
     parts += [u["credit"].format(source_url=src).strip(), "", "#マックスむらい #切り抜き #shorts"]
@@ -137,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
 
     cfg = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    _CFG.update(cfg)
     st = State(Path(args.state))
     tz = ZoneInfo(cfg["schedule"]["timezone"])
     now = dt.datetime.now(tz)
@@ -197,11 +208,15 @@ def main(argv: list[str] | None = None) -> int:
         if token:
             meta = {"title": clip["title"], "description": description(cfg, clip), **cfg["upload"]}
             try:
+                token = upload.access_token(cfg["channel"]["env_prefix"])   # 1 時間で切れるので投稿ごとに取り直す
                 vid = upload.upload(token, mp4, meta, times[done_before + k])
                 rec["youtube_id"] = vid
                 log.info("予約しました %s %s → https://youtu.be/%s", times[done_before + k].strftime("%m/%d %H:%M"), clip["title"], vid)
             except Exception as e:  # noqa: BLE001
                 log.warning("投稿できませんでした（%s）: %s", clip["title"], e)
+                if "exceeded the number of videos" in str(e):
+                    log.warning("YouTube の 1 日の投稿上限に当たったので、今日はここで止めます")
+                    break
                 continue
         else:
             log.info("作りました %s ← %s %d〜%d秒（%d 区間・%d 秒）", mp4.name, clip["video"]["title"][:30], clip["start"], clip["end"],
