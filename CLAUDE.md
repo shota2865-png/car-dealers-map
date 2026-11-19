@@ -42,6 +42,11 @@
 | `replace-thumbnails.yml` | `yt-econ/thumbnails/replace/<main\|psych>/<動画ID>.jpg` が main に入ったとき | その動画のサムネを差し替え |
 | `publish-file.yml` | 手動 | 手で仕上げた mp4 を投稿 |
 
+- daily-upload の中で:
+  - 毎日、動画ごとの数字（本編は通算再生）を `<workdir>/goal/videos.json` に残す（`ytecon goal`）
+  - **伸びた本編の続編**を、企画選びで 1 本ぶん差し込む（`insights.pick_sequel`。本編の中央値の 2 倍以上・200 回以上、3 日に 1 本まで、同じ本編は 1 回。設定は `topics.sequels`、記録は `goal/sequels.json`）。伸びているジャンルも企画選びに渡す
+  - **月曜は週 1 のまとめ**（`ytecon digest`）: AI が動画をジャンルと切り口に分け（`goal/genres.json`）、ジャンル別の平均・伸びた本編・なぜ伸びたか・別チャンネルに分けられそうなジャンルを出して、GitHub の Issue「週次レポート（main/psych）」に投稿（ユーザーをメンションしてスマホに通知。前の週の Issue は閉じる）
+  - ユーザーの構想: 伸びたジャンルごとに同じようなチャンネルを増やして分けていく（digest の「別のチャンネルに分けられそう」が候補）
 - daily-upload の中で、経済の**伸びなかった本編のタイトルを付け直す**（`retitle.py`。公開 3 日以上・100 回未満の本編を 1 日 1 本、検索されている言葉を頭に。元のタイトルは状態 DB の `stage.old_title`）
 
 - **状態のキャッシュ（state.sqlite3 と goal）の path は変えない**。変えると前回までの状態が読めなくなる（10/7 に起きて心理学の本編が同じ日に 2 本予約された）
@@ -99,7 +104,7 @@
 - `pipeline.py` 1 日分の流れ / `script.py` 台本 / `tts.py` 声 / `shorts.py` Shorts / `quiz.py` 心理学の Shorts
 - `thumbnail.py` サムネの入口（style で振り分け）/ `thumbpanel.py` 経済のコマ割りサムネ
 - `metadata.py` タイトル・概要欄 / `youtube.py` 投稿・クォータ / `comments.py` 要約コメント
-- `goals.py` 目標の進捗 / `compilation.py` 週 1 の総集編 / `geo.py` 地理の試作
+- `goals.py` 目標の進捗 / `insights.py` ジャンル分け・続編・週 1 のまとめ / `compilation.py` 週 1 の総集編 / `geo.py` 地理の試作
 - docu（新しい形）: `docu.py` 描画 / `anim.py` 2D・3D アニメ / `docu_script.py` AI が台本 / `docu_media.py` 引用・BGM・効果音・Veo
 - 心理学: `honpen.py` 本編の台本（今日の問い 1 本の軸・4 つの検証）/ `wide.py` 本編の場面 / `labscene.py` 空間に置く場面（冒頭・章の扉・データ・判定）/ `space.py` 動く背景・立体グラフ・ホログラム / `lab.py` 枠（SpaceFrame）・めたん・字幕・サムネ
 - ドキュメントは `yt-econ/docs/`（自動投稿の始め方、心理学チャンネルの引き継ぎ など）

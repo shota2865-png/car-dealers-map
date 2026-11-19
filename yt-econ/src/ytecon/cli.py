@@ -421,6 +421,8 @@ def cmd_goal(args: argparse.Namespace) -> int:
               "\nYOUTUBE_* を設定し、scripts/auth_youtube.py を再実行すると Analytics まで取れます。")
         return 1
     goals.daily_from_snapshots(cfg, p)
+    from . import insights
+    insights.save_videos(cfg, p.date, p.videos)
     pc = goals.pace(goal, p)
     acts = goals.recommend(goal, p, pc)
     goals.append_snapshot(cfg, p, pc)
@@ -541,6 +543,20 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_digest(args: argparse.Namespace) -> int:
+    """週 1 のまとめ（スマホで読む）。動画をジャンルに分け、伸びた本編・ジャンル別の平均・なぜ伸びたかを出す."""
+    from . import goals, insights
+    from .config import load_config
+    cfg = load_config(args.config, channel=args.channel)
+    goal = goals.load_goal(cfg)
+    text = insights.digest(cfg, target=goal.targets.get("long_avg_views", 500), min_age=goals._long_min_age(goal),
+                           use_llm=not args.no_llm)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    print(text)
+    return 0
+
+
 def cmd_compile(args: argparse.Namespace) -> int:
     """週 1 回の総集編。毎日の本編（Actions の成果物）をつなげて、章つきで予約投稿する."""
     from .config import load_config
@@ -654,6 +670,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--days", type=int, default=7)
     p.add_argument("--no-advice", action="store_true", help="LLM の打ち手を付けない")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("digest", help="週 1 のまとめ（ジャンル別・伸びた本編・なぜ伸びたか）。スマホに通知する文")
+    p.add_argument("--out", help="Markdown をこのファイルにも書く")
+    p.add_argument("--no-llm", action="store_true", help="AI のジャンル分け・文章を使わない")
+    p.set_defaults(func=cmd_digest)
 
     p = sub.add_parser("goal", help="目標（config/goals.yaml）への進捗と打ち手")
     p.add_argument("--offline", action="store_true", help="API を叩かず、目標の分解だけ表示")

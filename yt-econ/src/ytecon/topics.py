@@ -392,6 +392,16 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
         log.info("検索されている言葉: %d 個（%s ...）", len(demand), " / ".join(demand[:6]))
     demand_block = "\n".join(f"- {d}" for d in demand) or "(取得できず。視聴者が検索しそうな暮らしの言葉を自分で選ぶ)"
 
+    # 伸びた本編の続編・伸びているジャンル（insights。数字が無い間は何も足さない）
+    from . import insights
+    sequel = None
+    extra_block = ""
+    try:
+        sequel = insights.pick_sequel(cfg)
+        extra_block = (insights.sequel_block(sequel, count) if sequel else "") + insights.genre_block(cfg)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        log.warning("続編・ジャンルの材料が読めませんでした: %s", exc)
+
     recent = store.horizon_counts(30)
     balance_block = (
         f"直近30日の内訳: flow {recent['flow']}本 / bridge {recent['bridge']}本 / "
@@ -416,6 +426,7 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
 {balance_block}
 
 {_SEARCH_FIRST.format(demand=demand_block) if search_first else ""}
+{extra_block}
 # 依頼
 合計 {count} 本ぶんの企画を作ってください。内訳の目安は
 **flow {plan['flow']}本 / bridge {plan['bridge']}本 / stock {plan['stock']}本** です。
@@ -476,6 +487,8 @@ def select_topics(cfg: Config, store: Store, count: int) -> list[Topic]:
         if len(chosen) >= count:
             break
 
+    if sequel and chosen:
+        insights.mark_sequel(cfg, sequel, chosen[0].title)
     chosen = queued + chosen
     if not chosen:
         raise RuntimeError(
