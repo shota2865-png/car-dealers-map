@@ -137,8 +137,14 @@ def pace(goal: Goal, p: Progress, today: dt.date | None = None) -> dict[str, Any
         "status": status, "next_gate": gate, "last_gate": last_gate, "last_gate_ok": gate_ok,
         "ypp": ypp_status(goal, p),
         "targets": targets_status(goal.targets, subscribers=p.subscribers, long_hours=long_watch_hours(p),
-                                  shorts_views=recent_shorts_views(p.videos), day=day, days=goal.days),
+                                  shorts_views=recent_shorts_views(p.videos), day=day, days=goal.days,
+                                  long_views=recent_long_views(p.videos, min_age=_long_min_age(goal))),
     }
+
+
+def _long_min_age(goal: Goal) -> int:
+    """本編の平均に入れるのは、公開から何日たったものか（rules.long.min_age_days。既定 7 日）."""
+    return int(goal.rules.get("long", {}).get("min_age_days", 7))
 
 
 def long_watch_hours(p: Progress) -> float | None:
@@ -149,6 +155,23 @@ def long_watch_hours(p: Progress) -> float | None:
     return sum(float(v["watch_minutes"]) for v in longs) / 60
 
 
+def recent_long_views(videos: list[dict[str, Any]], n: int = 7, min_age: int = 7) -> list[int]:
+    """公開から min_age 日以上たった本編の、新しいほうから n 本の再生数（公開からの通算。無ければ期間内の再生）."""
+    longs = [v for v in videos if v.get("kind", "long") == "long" and v.get("age_days", 0) >= min_age]
+    longs.sort(key=lambda v: v.get("age_days", 0))
+    return [int(v.get("lifetime_views", v.get("views", 0))) for v in longs[:n]]
+
+
+def long_views_by_format(videos: list[dict[str, Any]], min_age: int = 7, max_age: int = 45) -> dict[str, list[int]]:
+    """本編の通算再生を作り方（docu / 今まで）ごとに分ける。1 週間テストの比較に使う."""
+    out: dict[str, list[int]] = {}
+    for v in videos:
+        if v.get("kind", "long") != "long" or not (min_age <= v.get("age_days", 0) <= max_age):
+            continue
+        out.setdefault(v.get("format") or "今まで", []).append(int(v.get("lifetime_views", v.get("views", 0))))
+    return out
+
+
 def recent_shorts_views(videos: list[dict[str, Any]], n: int = 9, min_age: int = 3) -> list[int]:
     """公開から min_age 日以上たった Shorts の、新しいほうから n 本の再生数（伸びきる前の数字で平均を下げない）."""
     shorts = [v for v in videos if v.get("kind") == "short" and v.get("age_days", 0) >= min_age]
@@ -156,19 +179,24 @@ def recent_shorts_views(videos: list[dict[str, Any]], n: int = 9, min_age: int =
     return [int(v.get("views", 0)) for v in shorts[:n]]
 
 
-_TARGET_JA = {"subscribers": "登録者", "long_watch_hours": "本編の総再生時間", "shorts_avg_views": "Shorts の平均再生"}
-_TARGET_UNIT = {"subscribers": "人", "long_watch_hours": "時間", "shorts_avg_views": "回"}
+_TARGET_JA = {"long_avg_views": "本編 1 本の平均再生", "subscribers": "登録者", "long_watch_hours": "本編の総再生時間",
+              "shorts_avg_views": "Shorts の平均再生"}
+_TARGET_UNIT = {"long_avg_views": "回", "subscribers": "人", "long_watch_hours": "時間", "shorts_avg_views": "回"}
+# 1 本ごとの数字（積み上がらない）。期間に比例した目安ではなく、目標そのものと比べる
+_PER_VIDEO = ("long_avg_views", "shorts_avg_views")
 
 
 def targets_status(targets: dict[str, float], *, subscribers: int | None, long_hours: float | None,
-                   shorts_views: list[int], day: int, days: int) -> list[dict[str, Any]]:
+                   shorts_views: list[int], day: int, days: int,
+                   long_views: list[int] | None = None) -> list[dict[str, Any]]:
     """期限の数字ごとに、今・目標・今日までに居たい数字・判定を返す.
 
     登録者と本編の総再生時間は積み上がる数字なので、期間に比例した「今日までの目安」と比べる。
-    Shorts の平均再生は 1 本ごとの数字なので、目標そのものと比べる（直近の本数で平均）。
+    本編と Shorts の平均再生は 1 本ごとの数字なので、目標そのものと比べる（直近の本数で平均）。
     """
     out = []
-    for key in ("subscribers", "long_watch_hours", "shorts_avg_views"):
+    long_views = long_views or []
+    for key in ("long_avg_views", "subscribers", "long_watch_hours", "shorts_avg_views"):
         if key not in targets:
             continue
         target = float(targets[key])
@@ -176,9 +204,11 @@ def targets_status(targets: dict[str, float], *, subscribers: int | None, long_h
             now = None if subscribers is None else float(subscribers)
         elif key == "long_watch_hours":
             now = long_hours
+        elif key == "long_avg_views":
+            now = (sum(long_views) / len(long_views)) if long_views else None
         else:
             now = (sum(shorts_views) / len(shorts_views)) if shorts_views else None
-        expected = target if key == "shorts_avg_views" else target * max(day, 0) / max(days, 1)
+        expected = target if key in _PER_VIDEO else target * max(day, 0) / max(days, 1)
         if now is None:
             status = "unknown"
         elif now >= target:
@@ -191,7 +221,8 @@ def targets_status(targets: dict[str, float], *, subscribers: int | None, long_h
             status = "behind"
         out.append({"key": key, "label": _TARGET_JA[key], "unit": _TARGET_UNIT[key], "now": now, "target": target,
                     "expected": expected, "pct": (100 * now / target) if (now is not None and target) else None,
-                    "status": status, "n": len(shorts_views) if key == "shorts_avg_views" else None})
+                    "status": status,
+                    "n": {"shorts_avg_views": len(shorts_views), "long_avg_views": len(long_views)}.get(key)})
     return out
 
 
@@ -202,7 +233,7 @@ def targets_lines(rows: list[dict[str, Any]]) -> list[str]:
     for r in rows:
         now = "—" if r["now"] is None else f"{r['now']:,.0f}"
         extra = f"（直近 {r['n']} 本）" if r.get("n") else ""
-        pace = "" if r["key"] == "shorts_avg_views" or r["status"] in ("done", "unknown") else f"  今日までの目安 {r['expected']:,.0f}"
+        pace = "" if r["key"] in _PER_VIDEO or r["status"] in ("done", "unknown") else f"  今日までの目安 {r['expected']:,.0f}"
         lines.append(f"{r['label']} {now} / {r['target']:,.0f} {r['unit']}{extra}  → {ja.get(r['status'], r['status'])}{pace}")
     return lines
 
@@ -228,12 +259,15 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
         acts.append("まだ開始前。初日は本編 1 本 + Shorts 3 本を予約し、翌日この画面で数字が取れるか確認する")
         return acts
 
-    if pc["status"] == "behind":
+    long_first = "long_avg_views" in goal.targets
+    if pc["status"] == "behind" and not long_first:
         acts.append(f"目標ペースの {pc['views'] / max(pc['expected_today'], 1):.0%}。"
                     f"残り {pc['remaining_days']} 日で 1 日 {pc['required_per_day']:,} 再生が必要")
         shorts_share = goal.mix.get("shorts", 0.85)
         acts.append(f"再生の {shorts_share:.0%} は Shorts の想定。まず shorts.per_video を +1（1 日 {goal.per_day.get('shorts', 3) + 1} 本）にし、"
                     "本編は本数を増やさない（尺と品質を守るほうが総再生時間に効く）")
+    if long_first:
+        acts += _long_actions(goal, p)
     if pc.get("last_gate") and pc.get("last_gate_ok") is False:
         g = pc["last_gate"]
         acts.append(f"{g['day']} 日目の関門（{g['views']:,} 再生 / 登録 {g['subscribers']:,}）を下回った。"
@@ -244,7 +278,7 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
     weak_long = [v for v in p.videos if v.get("kind") == "long" and v.get("age_days", 0) >= 7
                  and (v.get("views", 0) < rules_l.get("views_7d_min", 300)
                       or (v.get("avg_pct") is not None and v["avg_pct"] < rules_l.get("avg_view_pct_min", 0.30)))]
-    for v in weak_long[:3]:
+    for v in ([] if long_first else weak_long[:3]):
         why = []
         if v.get("views", 0) < rules_l.get("views_7d_min", 300):
             why.append(f"7 日で {v.get('views', 0):,} 再生")
@@ -255,7 +289,7 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
                     "視聴率が低いなら次回から hook を 1 文短く")
     weak_shorts = [v for v in p.videos if v.get("kind") == "short" and v.get("age_days", 0) >= 3
                    and v.get("avg_pct") is not None and v["avg_pct"] < rules_s.get("avg_view_pct_min", 0.75)]
-    if weak_shorts:
+    if weak_shorts and not long_first:
         acts.append(f"平均視聴率が {rules_s.get('avg_view_pct_min', 0.75):.0%} 未満の Shorts が {len(weak_shorts)} 本。"
                     "長さは今のまま（30〜40 秒。伸ばさない）で、最初の 1 文を数字か結論の疑問文にする。"
                     "視聴率の高い Shorts の 1 文目の型に寄せる")
@@ -263,10 +297,13 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
     if good_shorts and good_shorts[0].get("views", 0) >= 5 * max(1, pc["recent_avg_per_day"] / max(goal.per_day.get("shorts", 3), 1)):
         v = good_shorts[0]
         acts.append(f"Shorts「{v.get('title', '')[:28]}」が突出（{v.get('views', 0):,} 再生）。"
-                    "同じテーマの派生を schedule.yaml に 2 本入れる（当たった型は 1 週間以内に重ねる）")
+                    + ("同じテーマの本編を schedule.yaml に入れる（Shorts で反応があった話は本編でも見られやすい）" if long_first else
+                       "同じテーマの派生を schedule.yaml に 2 本入れる（当たった型は 1 週間以内に重ねる）"))
 
     for t in pc.get("targets") or []:
         if t["status"] != "behind":
+            continue
+        if t["key"] in ("shorts_avg_views", "long_avg_views") and long_first:
             continue
         if t["key"] == "shorts_avg_views":
             acts.append(f"Shorts の平均 {t['now']:,.0f} 回（目標 {t['target']:,.0f}）。最初の 1 秒（1 文目の数字・結論）と長さ（shorts.story_seconds）を見直す。"
@@ -279,6 +316,40 @@ def recommend(goal: Goal, p: Progress, pc: dict[str, Any]) -> list[str]:
                         "登録は本編を最後まで聴いた人から来る。本編の締めの登録の一言と、概要欄の登録リンクが入っているか確認する")
     if not acts:
         acts.append("ペースどおり。設定は変えず、同じ型で続ける。週 1 回は Studio でクリック率と維持率だけ確認")
+    return acts
+
+
+def _long_actions(goal: Goal, p: Progress) -> list[str]:
+    """本編 1 本の平均再生を目標にしたときの打ち手."""
+    target = goal.targets.get("long_avg_views", 500)
+    min_age = _long_min_age(goal)
+    views = recent_long_views(p.videos, min_age=min_age)
+    if not views:
+        return [f"公開から {min_age} 日たった本編がまだ無い。数字が出るまで同じ型で続ける"]
+    acts = []
+    avg = sum(views) / len(views)
+    if avg >= target:
+        acts.append(f"本編の平均 {avg:,.0f} 回で目標（{target:,.0f} 回）に届いている。型は変えずに続ける")
+    else:
+        acts.append(f"本編の平均 {avg:,.0f} 回（直近 {len(views)} 本・目標 {target:,.0f} 回）。"
+                    "本編は検索と関連動画から来る。タイトルの頭を検索される語に、サムネは一目で分かる疑問に")
+    fmt = {k: v for k, v in long_views_by_format(p.videos, min_age=min_age).items() if v}
+    if len(fmt) >= 2:
+        parts = [f"{k} {sum(v) / len(v):,.0f} 回（{len(v)} 本）" for k, v in sorted(fmt.items())]
+        best = max(fmt, key=lambda k: sum(fmt[k]) / len(fmt[k]))
+        enough = min(len(v) for v in fmt.values()) >= 3
+        acts.append("作り方ごとの本編の平均: " + " / ".join(parts)
+                    + (f"。多いほう（{best}）に寄せる" if enough else "。本数が少ないので、まだ決めない（3 本ずつそろったら比べる）"))
+    longs = [v for v in p.videos if v.get("kind", "long") == "long" and v.get("age_days", 0) >= min_age]
+    top = max(longs, key=lambda v: v.get("lifetime_views", v.get("views", 0)), default=None)
+    if top and top.get("lifetime_views", top.get("views", 0)) >= target:
+        acts.append(f"本編「{str(top.get('title', ''))[:28]}」が {top.get('lifetime_views', top.get('views', 0)):,} 回。"
+                    "同じテーマの続編を schedule.yaml に入れる（当たった話を 2 週間以内に重ねる）")
+    rl = goal.rules.get("long", {})
+    low = [v for v in longs if v.get("avg_pct") is not None and v["avg_pct"] < rl.get("avg_view_pct_min", 0.30)]
+    if low:
+        acts.append(f"平均視聴率が {rl.get('avg_view_pct_min', 0.30):.0%} 未満の本編が {len(low)} 本。"
+                    "冒頭 30 秒で答えを言い切り、章の頭で「次に何が分かるか」を言う")
     return acts
 
 
@@ -308,8 +379,38 @@ def _known_videos(store) -> list[dict[str, Any]]:
             continue
         kind = (r.stage or {}).get("kind", "long")
         out.append({"id": r.youtube_id, "title": r.title or r.slug, "kind": kind,
-                    "publish_at": r.publish_at, "slug": r.slug})
+                    "publish_at": r.publish_at, "slug": r.slug, "format": (r.stage or {}).get("format")})
+    # 新しい順（Analytics の動画別は 200 本までなので、古い動画で枠を埋めない）
+    out.sort(key=lambda v: v.get("publish_at") or "", reverse=True)
     return out
+
+
+def _analytics_ids(known: list[dict[str, Any]], limit: int = 200) -> list[str]:
+    """動画別の数字を取る動画。本編は全部、残りの枠に新しい Shorts."""
+    longs = [v["id"] for v in known if v["kind"] == "long"]
+    shorts = [v["id"] for v in known if v["kind"] != "long"]
+    return (longs + shorts)[:limit]
+
+
+def _fill_lifetime_views(svc, p: Progress, known: list[dict[str, Any]], today: dt.date) -> None:
+    """本編の公開からの通算再生（Data API の公開統計）。目標の期間より前に出た本編も正しく数える."""
+    have = {v["id"]: v for v in p.videos}
+    longs = [v for v in known if v["kind"] == "long"]
+    for i in range(0, len(longs), 50):
+        chunk = longs[i:i + 50]
+        res = svc.videos().list(part="statistics", id=",".join(v["id"] for v in chunk)).execute()
+        stats = {it["id"]: int(it.get("statistics", {}).get("viewCount", 0)) for it in res.get("items", [])}
+        for v in chunk:
+            if v["id"] not in stats:
+                continue                      # 消された・非公開の動画
+            row = have.get(v["id"])
+            if row is None:                   # 期間内の再生が 0 の本編（Analytics は行を返さない）
+                row = {"id": v["id"], "title": v["title"], "kind": "long", "views": 0, "avg_pct": None,
+                       "watch_minutes": 0.0, "age_days": _age_days(v.get("publish_at"), today)}
+                p.videos.append(row)
+                have[v["id"]] = row
+            row["lifetime_views"] = stats[v["id"]]
+            row["format"] = v.get("format")
 
 
 def _age_days(publish_at: str | None, today: dt.date) -> int:
@@ -337,9 +438,10 @@ def fetch_analytics(cfg: Config, store, goal: Goal, today: dt.date) -> Progress:
 
     p = Progress(date=today, views=sum(daily_views), watch_hours=minutes / 60, daily_views=daily_views,
                  source="analytics")
-    known = {v["id"]: v for v in _known_videos(store)}
+    known_list = _known_videos(store)
+    known = {v["id"]: v for v in known_list}
     if known:
-        ids = list(known)[:200]
+        ids = _analytics_ids(known_list)
         per = svc.reports().query(
             ids="channel==MINE", startDate=start, endDate=end,
             metrics="views,averageViewPercentage,estimatedMinutesWatched", dimensions="video",
@@ -348,16 +450,18 @@ def fetch_analytics(cfg: Config, store, goal: Goal, today: dt.date) -> Progress:
         for r in per.get("rows") or []:
             vid = r[0]
             k = known.get(vid, {})
-            p.videos.append({"id": vid, "title": k.get("title", vid), "kind": k.get("kind", "long"),
+            p.videos.append({"id": vid, "title": k.get("title", vid), "kind": k.get("kind", "long"), "format": k.get("format"),
                              "views": int(r[1]), "avg_pct": float(r[2]) / 100.0,
                              "watch_minutes": float(r[3]), "age_days": _age_days(k.get("publish_at"), today)})
     # 登録者の現在値は Data API（Analytics は増減しか返さない）
     try:
         from .youtube import build_service
-        ch = build_service(cfg).channels().list(part="statistics", mine=True).execute()
+        data = build_service(cfg)
+        ch = data.channels().list(part="statistics", mine=True).execute()
         p.subscribers = int(ch["items"][0]["statistics"].get("subscriberCount", 0))
+        _fill_lifetime_views(data, p, known_list, today)
     except Exception as exc:
-        log.warning("登録者数が取れませんでした: %s", exc)
+        log.warning("登録者数・本編の通算再生が取れませんでした: %s", exc)
     return p
 
 
@@ -386,8 +490,8 @@ def fetch_public_stats(cfg: Config, store, goal: Goal, today: dt.date) -> Progre
         stats = {it["id"]: it.get("statistics", {}) for it in res.get("items", [])}
         for v in chunk:
             s = stats.get(v["id"], {})
-            p.videos.append({"id": v["id"], "title": v["title"], "kind": v["kind"],
-                             "views": int(s.get("viewCount", 0)), "avg_pct": None,
+            p.videos.append({"id": v["id"], "title": v["title"], "kind": v["kind"], "format": v.get("format"),
+                             "views": int(s.get("viewCount", 0)), "lifetime_views": int(s.get("viewCount", 0)), "avg_pct": None,
                              "age_days": _age_days(v.get("publish_at"), today)})
     return p
 
@@ -492,8 +596,17 @@ def report(goal: Goal, p: Progress, pc: dict[str, Any], actions: list[str]) -> s
         g = pc["next_gate"]
         lines.append(f"  次の関門  {g['day']} 日目: {g['views']:,} 再生 / 登録 {g['subscribers']:,}"
                      + (f" / 本編 {g['long_hours']:,} 時間" if "long_hours" in g else ""))
+    min_age = _long_min_age(goal)
+    longs = sorted([v for v in p.videos if v.get("kind", "long") == "long"], key=lambda v: v.get("age_days", 0))
+    if longs and "long_avg_views" in goal.targets:
+        lines.append(f"  本編（新しい順。平均に入るのは公開 {min_age} 日以上）:")
+        for v in longs[:10]:
+            pct = f"{v['avg_pct']:.0%}" if v.get("avg_pct") is not None else "  -"
+            mark = " " if v.get("age_days", 0) >= min_age else "*"
+            lines.append(f"   {mark}{v.get('lifetime_views', v.get('views', 0)):>7,} 回  視聴率 {pct:>4}  {v.get('age_days', 0):>2} 日  "
+                         f"{(v.get('format') or '今まで'):<4} {str(v.get('title', ''))[:30]}")
     if p.videos:
-        lines.append("  動画別（上位）:")
+        lines.append("  動画別（期間内の再生・上位）:")
         for v in sorted(p.videos, key=lambda v: -v.get("views", 0))[:8]:
             pct = f"{v['avg_pct']:.0%}" if v.get("avg_pct") is not None else "  -"
             lines.append(f"    {v.get('kind', 'long'):<5} {v.get('views', 0):>8,}  視聴率 {pct:>4}  {str(v.get('title', ''))[:34]}")
