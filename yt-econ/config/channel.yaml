@@ -87,6 +87,16 @@ script:
 topics:
   # 手動の週間スケジュール（日付つきの企画キュー）。空欄なら config/schedule.yaml
   schedule_file: ""
+  # 伸びた本編の続編を、企画選びで 1 本ぶん差し込む（src/ytecon/insights.py）。
+  #   公開 min_age_days〜max_age_days 日の本編で、通算再生が min_views 以上かつ本編の中央値の ratio 倍以上のもの。
+  #   続編のあと min_gap_days 日は次を入れない。同じ本編の続編は 1 回だけ。記録は <workdir>/goal/sequels.json
+  sequels:
+    enabled: true
+    min_views: 200
+    ratio: 2.0
+    min_age_days: 7
+    max_age_days: 60
+    min_gap_days: 3
   model: "claude-opus-5-5"
   effort: "medium"
   # 1回の収集で何件の候補を評価するか

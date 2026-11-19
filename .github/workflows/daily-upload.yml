@@ -82,6 +82,10 @@ jobs:
             workdir: output/psych
             state_key: ytecon-psych-state
             token_env: PSY_YOUTUBE_REFRESH_TOKEN
+    # Issue は週 1 のまとめをスマホに通知するため
+    permissions:
+      contents: read
+      issues: write
     concurrency:
       group: ytecon-daily-${{ matrix.channel }}
       cancel-in-progress: false
@@ -232,6 +236,25 @@ jobs:
           if [ "$(TZ=Asia/Tokyo date +%u)" = "1" ] || [ "${{ github.event.inputs.report }}" = "true" ]; then
             python -m ytecon report | tee weekly-report.txt || true
             { echo "## 週次レポート（${{ matrix.channel }}）"; cat weekly-report.txt; } >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+
+      # 月曜だけ、週 1 のまとめ（ジャンル別・伸びた本編・なぜ伸びたか）を GitHub の Issue に出す。
+      # スマホの GitHub アプリに通知が来る。前の週の Issue は閉じる（公開リポジトリなので Issue も公開）
+      - name: 週 1 のまとめをスマホに（月曜）
+        if: steps.gate.outputs.skip != 'true' && github.event.inputs.upload != 'false'
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(TZ=Asia/Tokyo date +%u)" = "1" ] || [ "${{ github.event.inputs.report }}" = "true" ]; then
+            python -m ytecon digest --out digest.md || exit 0
+            { echo "@${{ github.repository_owner }} 今週の数字です（自動）"; echo; cat digest.md; } > issue.md
+            title="週次レポート（${{ matrix.channel }}）$(TZ=Asia/Tokyo date +%Y-%m-%d)"
+            for n in $(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "週次レポート（${{ matrix.channel }}） in:title" --json number -q '.[].number'); do
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" || true
+            done
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue.md || echo "::warning::Issue を作れませんでした"
+            { echo "## 週 1 のまとめ（${{ matrix.channel }}）"; cat digest.md; } >> "$GITHUB_STEP_SUMMARY" || true
           fi
 
       # --- 生成して投稿（本編 → Shorts 6 本） ----------------------------------
