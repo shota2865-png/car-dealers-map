@@ -60,10 +60,11 @@ def _videos_meta(cfg: Config, ids: list[str]) -> dict[str, dict[str, Any]]:
         return out
     yt = youtube.build_service(cfg)
     for i in range(0, len(ids), 50):
-        res = yt.videos().list(part="snippet,contentDetails", id=",".join(ids[i:i + 50])).execute()
+        res = yt.videos().list(part="snippet,contentDetails,statistics", id=",".join(ids[i:i + 50])).execute()
         for v in res.get("items", []):
             out[v["id"]] = {"title": v["snippet"]["title"], "seconds": _iso_seconds(v["contentDetails"].get("duration", "")),
-                            "published": v["snippet"].get("publishedAt", "")[:10]}
+                            "published": v["snippet"].get("publishedAt", "")[:10],
+                            "lifetime_views": int(v.get("statistics", {}).get("viewCount", 0))}
     return out
 
 
@@ -114,11 +115,14 @@ def _targets(cfg: Config, svc, end: dt.date) -> dict[str, Any] | None:
         return None
     rows = _q(svc, goal.start, end, metrics="views,estimatedMinutesWatched", dimensions="video", sort="-views", maxResults=200)
     meta = _videos_meta(cfg, [r[0] for r in rows])
-    long_min, shorts = 0.0, []
+    long_min, shorts, longs = 0.0, [], []
     for vid, views, minutes in rows:
         m = meta.get(vid, {})
         if m.get("seconds", 0) > LONG_SECONDS:
             long_min += minutes
+            if m.get("published"):
+                longs.append({"kind": "long", "views": views, "lifetime_views": m.get("lifetime_views", views),
+                              "age_days": (end - dt.date.fromisoformat(m["published"])).days})
         elif m.get("published"):
             age = (end - dt.date.fromisoformat(m["published"])).days
             shorts.append({"kind": "short", "views": views, "age_days": age})
@@ -130,7 +134,8 @@ def _targets(cfg: Config, svc, end: dt.date) -> dict[str, Any] | None:
         subs = None
     day = goal.day_index(end)
     status = goals.targets_status(goal.targets, subscribers=subs, long_hours=long_min / 60,
-                                  shorts_views=goals.recent_shorts_views(shorts), day=day, days=goal.days)
+                                  shorts_views=goals.recent_shorts_views(shorts), day=day, days=goal.days,
+                                  long_views=goals.recent_long_views(longs, min_age=goals._long_min_age(goal)))
     return {"deadline": goal.end.isoformat(), "day": day, "days": goal.days, "rows": status}
 
 
@@ -181,7 +186,8 @@ _ADVICE_SYSTEM = """あなたは YouTube チャンネル「{name}」（{field}�
 - 数字を根拠にする（「◯◯が△％なので」）。数字に無いことは推測だと断る
 - 目標（targets）がある場合は、遅れている数字から先に手を打つ。Shorts の平均再生は「最初の 1 秒」と「最後まで見られたか」、
   本編の総再生時間は「検索されるタイトル」と「最初の 30 秒」、登録者は「本編を最後まで聴いた人」から来る
-- いちばんの課題は、Shorts は見られているのに本編に人が来ないこと。Shorts から本編への導線、本編の最初の 30 秒、タイトルとサムネを優先して見る
+- いちばんの目標は「本編 1 本あたり平均 500 回」。Shorts は当てにしない。本編のタイトルとサムネ（検索される言葉・一目で分かる疑問）、
+  最初の 30 秒、当たった本編のテーマの続編を優先して見る
 - 自動で作っている前提なので、台本の型・タイトルの付け方・Shorts の選び方など「仕組みで変えられること」を書く
 - API では自動化できないもの（Shorts の「関連動画」の設定、コメントの固定、終了画面、サムネの A/B テスト）は「手作業」と明記する
 - すべての動画に、要約を問いかけの形で 2 行のコメントを自動で付けている（リンクは貼らない。固定表示はしていない）

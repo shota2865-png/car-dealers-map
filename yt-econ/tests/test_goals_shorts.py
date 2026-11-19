@@ -48,12 +48,85 @@ def goal(cfg, tmp_path):
 def test_goal_files_are_consistent(channel):
     import datetime as _dt
     g = goals.load_goal(load_config(channel=channel) if channel else load_config())
-    assert g.end == _dt.date(2026, 10, 31)                 # 10 月末が期限
-    assert g.targets == {"subscribers": 100, "long_watch_hours": 500, "shorts_avg_views": 10000}
-    assert g.gates[-1]["day"] == g.days and g.gates[-1]["views"] == g.views
-    assert g.gates[-1]["subscribers"] == g.targets["subscribers"] and g.gates[-1]["long_hours"] == g.targets["long_watch_hours"]
+    assert g.end == _dt.date(2026, 12, 31)                 # 12 月末が期限
+    assert g.targets["long_avg_views"] == 500              # 本編 1 本あたり平均 500 回（Shorts は目標に入れない）
+    assert "shorts_avg_views" not in g.targets
+    assert goals._long_min_age(g) == 7
     assert g.gates == sorted(g.gates, key=lambda x: x["day"])
     assert abs(sum(g.mix.values()) - 1.0) < 1e-6
+
+
+def _long(i, views, age, fmt=None, pct=0.4):
+    return {"id": f"l{i}", "title": f"本編{i}", "kind": "long", "views": views // 2, "lifetime_views": views,
+            "age_days": age, "avg_pct": pct, "watch_minutes": 10.0, "format": fmt}
+
+
+def test_long_avg_views_uses_lifetime_views_of_recent_old_enough_videos(goal):
+    goal.targets = {"long_avg_views": 500}
+    vids = [_long(1, 9999, 3), *[_long(i, 100 * i, 7 + i) for i in range(2, 10)],
+            {"id": "s1", "kind": "short", "views": 5000, "age_days": 9}]
+    assert goals.recent_long_views(vids) == [200, 300, 400, 500, 600, 700, 800]   # 公開 7 日未満と Shorts は入れない
+    p = goals.Progress(date=goal.start + dt.timedelta(days=10), videos=vids)
+    row = {r["key"]: r for r in goals.pace(goal, p)["targets"]}["long_avg_views"]
+    assert row["now"] == 500 and row["status"] == "done" and row["n"] == 7
+    assert "本編 1 本の平均再生 500 / 500 回（直近 7 本）  → 達成" in goals.targets_lines([row])[0]
+
+
+def test_recommend_long_first_drops_shorts_levers_and_compares_formats(goal):
+    goal.targets = {"long_avg_views": 500}
+    vids = [_long(1, 900, 8, "docu"), _long(2, 700, 9, "docu"), _long(3, 120, 10, pct=0.2), _long(4, 80, 11),
+            {"id": "s1", "kind": "short", "views": 5000, "age_days": 9, "avg_pct": 0.3}]
+    p = goals.Progress(date=goal.start + dt.timedelta(days=14), views=1000, subscribers=10, videos=vids)
+    acts = "\n".join(goals.recommend(goal, p, goals.pace(goal, p)))
+    assert "shorts.per_video" not in acts and "平均視聴率が 75% 未満の Shorts" not in acts
+    assert "本編の平均 450 回" in acts
+    assert "docu 800 回（2 本） / 今まで 100 回（2 本）。本数が少ないので、まだ決めない" in acts
+    p.videos += [_long(5, 600, 12, "docu"), _long(6, 50, 13)]
+    assert "多いほう（docu）に寄せる" in "\n".join(goals.recommend(goal, p, goals.pace(goal, p)))
+    assert "本編「本編1」が 900 回" in acts and "平均視聴率が 30% 未満の本編が 1 本" in acts
+    text = goals.report(goal, p, goals.pace(goal, p), [])
+    assert "本編（新しい順" in text and "docu" in text
+
+
+def test_analytics_ids_put_all_long_videos_first_then_newest_shorts():
+    known = [{"id": f"s{i}", "kind": "short"} for i in range(250)] + [{"id": "l1", "kind": "long"}]
+    ids = goals._analytics_ids(known)
+    assert ids[0] == "l1" and ids[1] == "s0" and len(ids) == 200
+
+
+def test_known_videos_are_newest_first(tmp_path):
+    from ytecon.state import Store
+    st = Store(tmp_path / "s.sqlite3")
+    for slug, at in (("old", "2026-09-22T10:00:00+00:00"), ("new", "2026-11-18T10:00:00+00:00")):
+        st.create_video(slug, None, slug)
+        st.update_video(slug, status="uploaded", youtube_id=f"Y{slug}", publish_at=at, stage={"kind": "long", "format": "docu"})
+    known = goals._known_videos(st)
+    assert [v["id"] for v in known] == ["Ynew", "Yold"] and known[0]["format"] == "docu"
+
+
+def test_fill_lifetime_views_adds_long_videos_without_rows():
+    class _Req:
+        def __init__(self, ids):
+            self.ids = ids
+
+        def execute(self):
+            return {"items": [{"id": i, "statistics": {"viewCount": "321"}} for i in self.ids.split(",") if i != "gone"]}
+
+    class _Svc:
+        def videos(self):
+            return self
+
+        def list(self, part, id):
+            return _Req(id)
+
+    p = goals.Progress(date=dt.date(2026, 11, 30), videos=[{"id": "a", "kind": "long", "views": 5}])
+    known = [{"id": "a", "kind": "long", "title": "A", "publish_at": "2026-11-20T10:00:00+00:00"},
+             {"id": "b", "kind": "long", "title": "B", "publish_at": "2026-11-10T10:00:00+00:00", "format": "docu"},
+             {"id": "gone", "kind": "long", "title": "G"}, {"id": "s", "kind": "short", "title": "S"}]
+    goals._fill_lifetime_views(_Svc(), p, known, p.date)
+    by = {v["id"]: v for v in p.videos}
+    assert by["a"]["lifetime_views"] == 321 and by["b"]["lifetime_views"] == 321 and by["b"]["age_days"] == 20
+    assert by["b"]["format"] == "docu" and "gone" not in by and "s" not in by
 
 
 def test_targets_status_and_lines(goal):
